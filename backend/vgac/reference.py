@@ -97,10 +97,10 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         # The person's own LoRAs for the views and the pose redraw (docs/PLAN-qwen-edit-loras-2026-11-18.md). A view
         # LoRA can stop the views turning, so a changed choice redraws every view it applies to.
         _param("view_addons", "edit_addons", None, label="Your LoRAs for the side views", options=list(ADDON_CHOICES),
-               description="Your own LoRAs for the side views, loaded after the built-in views LoRA. Can stop the views turning correctly; empty uses none"),
+               description="Your own LoRAs for the side views, loaded after the built-in views LoRA. Can stop the views turning correctly; when not set, the ones you set to start on for this kind of asset (System, Your library)"),
         _param("pose_addons", "edit_addons", None, categories=["humanoid"], label="Your LoRAs for the pose redraw",
                options=list(ADDON_CHOICES),
-               description="Your own LoRAs for the pose redraw only. The posed picture feeds the 3D build; empty uses none"),
+               description="Your own LoRAs for the pose redraw only. The posed picture feeds the 3D build; when not set, the ones you set to start on for this kind of asset (System, Your library)"),
         _param("seed", "integer", None, min=0, max=2**31 - 1),
         _param("auto_reroll", "boolean", True, description="Re-roll a failing view up to 2 times"),
         # Before any angle is drawn the front picture is edited once (stages/turnaround.py POSE_READY); the original stays.
@@ -177,7 +177,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                description="When the face in the picture is small, draw a close-up of it and use it if it is still the same face"),
         # Your own LoRAs for the face close-up only (never the sharpening redraw): docs/PLAN-qwen-edit-loras-2026-11-18.md.
         _param("face_addons", "edit_addons", None, categories=["humanoid"], label="Your LoRAs for the face close-up",
-               options=list(ADDON_CHOICES), description="Your own LoRAs for the face close-up only; empty uses none"),
+               options=list(ADDON_CHOICES), description="Your own LoRAs for the face close-up only; when not set, the ones you set to start on for this kind of asset (System, Your library)"),
         _param("face_closeup_guided", "boolean", True, categories=["humanoid"], label="Guide the close-up by your face picture (optional)",
                description="With your own close-up, or a face picture given with the new asset, the close-up is drawn with that face's features; off draws it from the painting alone"),
         # The two three-quarter pictures painted onto the model (vgac/srcproject.py) and the face pass's cheeks; off
@@ -232,8 +232,15 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                label="What may sway on the head",
                description="Automatic: only hair sways, and a headscarf, ribbon or veil named in the description; a hat's brim, a hood or a helmet moves with the head. Hair only, or everything that hangs (as before). Nothing on the head sways holds the head still, hair included, built-in or from the library"),
         # How far the arms hang from the sides in the built-in walk, idle and turn moves (blender/gait.py ARM_POSE_SHIFT_DEG).
-        _param("arm_pose", "select", "relaxed", options=["close", "relaxed", "open"], categories=["humanoid"], label="Arm pose",
+        _param("arm_pose", "select", "relaxed", options=["close", "relaxed", "open"], categories=["humanoid"], label="Arm pose", group="Resting pose",
                description="How far the arms hang from the sides in the walk, the stand still and the turns. Close tucks them in, Relaxed is the usual pose, Open holds them a little further out. The character's body and skin are not changed"),
+        # WP-76: the resting hand in every built-in move (blender/procanim.py HAND_SHAPES); the rest pose and the skin stay open.
+        _param("hand_pose", "select", "relaxed", options=["open", "relaxed", "fist"], categories=["humanoid"], label="Hand shape", group="Resting pose",
+               description="How the hands hold themselves in the moves. Relaxed is a gentle curl that rises from the index finger to the little finger, with the thumb tucked a little and the wrist bent a touch. Loose fist curls them further. Open keeps the hands flat, as before. Attacks still close the hand into a grip. The rest pose and the skin are not changed"),
+        _param("finger_curl", "number", 1.0, min=0, max=1.5, step=0.1, label="Finger curl", group="Resting pose", categories=["humanoid"],
+               description="How far the chosen hand shape curls the fingers: 0 leaves them straight, 1 is the shape as designed, 1.5 curls more"),
+        _param("neutral_pose", "boolean", False, categories=["humanoid"], label="Neutral pose clip",
+               description="Adds one still frame, a clip named Neutral pose, that holds the stand-still arm angle (with the Arm pose setting). Off by default. The rest pose and the skin are not changed"),
     ],
     "export": [
         _param("lods", "string", None, description="LOD ratios after LOD0, comma separated, e.g. 0.5, 0.25, 0.1; category default when empty"),
@@ -554,8 +561,8 @@ def style_presets() -> list[dict[str, Any]]:
 #
 # The registry is the only list of add-ons: the tested ones in data/addons.yaml, then the person's own from
 # <library_path>/my_addons.json (user_addons.entries(), each `mine: true`). A user entry whose id is a built-in one is
-# dropped, so it never shadows a built-in add-on. Nothing in the app lists a models folder except user_addons.py,
-# which lists only its own VGAC/mine/ folder. An add-on applies only when the chosen model is in its base_models.
+# dropped, so it never shadows a built-in add-on. Nothing in the app lists a models folder except lora_folders.py,
+# which lists only the LoRA folders the person linked. An add-on applies only when the chosen model is in its base_models.
 
 
 def _user_addons() -> dict[str, dict[str, Any]]:
@@ -571,7 +578,7 @@ def _user_addons() -> dict[str, dict[str, Any]]:
 
 
 def _mine_file_present(a: dict[str, Any]) -> bool:
-    """Whether a user add-on's file is still where it was kept (VGAC/mine/, or the one place a file used where it is was registered)."""
+    """Whether a user add-on's file is still where the person chose it (one of their LoRA folders)."""
     from . import user_addons
 
     try:

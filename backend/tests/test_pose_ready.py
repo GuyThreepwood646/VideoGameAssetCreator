@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -207,9 +208,11 @@ def pose_mine(settings_path, tmp_path, monkeypatch):
 
     from vgac import config, db, reference
 
-    cfg = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
-    cfg["loras_dir"] = str(tmp_path / "loras")
-    settings_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    loras = tmp_path / "loras"
+    loras.mkdir(exist_ok=True)
+    machine = tmp_path / "machine.json"
+    machine.write_text(json.dumps({"backend": {"lora_folders": [str(loras)]}}), encoding="utf-8")
+    monkeypatch.setenv("VGAC_MACHINE", str(machine))
     monkeypatch.setenv("VGAC_CONFIG", str(settings_path))
     config.reset_settings()
     db.reset_engine()
@@ -219,13 +222,13 @@ def pose_mine(settings_path, tmp_path, monkeypatch):
     config.reset_settings()
 
 
-def test_a_kept_pose_carries_its_record_on_three_versions_in_a_row(env, pose_mine, tmp_path):
+def test_a_kept_pose_carries_its_record_on_three_versions_in_a_row(env, pose_mine, tmp_path, monkeypatch):
     """Three versions with the same pose choice: one draw, then two keeps; the record is present on all three and the
     kept pictures are not redrawn."""
     import json
     import struct
 
-    from vgac import reference, user_addons
+    from vgac import config, reference, user_addons
     from vgac.graphs.concept import lora_name
 
     key = "lora_unet_block.lora_A.weight"  # no family words in the tensor names; the metadata names Qwen-Image-Edit
@@ -233,9 +236,10 @@ def test_a_kept_pose_carries_its_record_on_three_versions_in_a_row(env, pose_min
               "__metadata__": {"modelspec.architecture": "qwen-image-edit-2511/lora"}}
     raw = json.dumps(header).encode()
     raw += b" " * (-len(raw) % 8)
-    d = user_addons.mine_dir(create=True)
+    d = Path(config.get_settings().lora_folders[0])
     (d / "pose.safetensors").write_bytes(struct.pack("<Q", len(raw)) + raw + b"\x01" * 64)
-    pid = user_addons.register("pose.safetensors", "Pose look", [reference.EDIT_MODEL])["id"]
+    monkeypatch.setattr(user_addons, "_engine_choices", lambda: ["pose.safetensors"])
+    pid = user_addons.register("pose.safetensors", "", "Pose look", [reference.EDIT_MODEL])["id"]
     listed = [lora_name(reference.addon(pid)["file"])]
     clients = {"a": _Lister(listed), "b": _Lister(listed)}
     params = {"pose_ready": True, "pose_addons": {pid: "normal"}}

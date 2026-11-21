@@ -119,6 +119,14 @@ def test_project_list_summary(client, fake_execute):
     v = client.get(f"/api/versions/{r['version']['id']}").json()
     assert row["asset_count"] == 1 and row["covers"] == [v["files"]["cutout"]]
     assert row["last_activity"] >= p["created_at"]
+    # "Show on the project tile" off: the asset still counts, its picture leaves the cover; on again brings it back
+    assert client.get(f"/api/assets/{a['id']}").json()["show_on_project"] is True
+    assert client.put(f"/api/assets/{a['id']}", json={"show_on_project": False}).json()["show_on_project"] is False
+    row = next(x for x in client.get("/api/projects").json() if x["id"] == p["id"])
+    assert row["asset_count"] == 1 and row["covers"] == []
+    client.put(f"/api/assets/{a['id']}", json={"show_on_project": True})
+    row = next(x for x in client.get("/api/projects").json() if x["id"] == p["id"])
+    assert row["covers"] == [v["files"]["cutout"]]
 
 
 def _project_asset(client, category="humanoid"):
@@ -245,19 +253,37 @@ def test_material_routing(client, fake_execute):
         wait_job(client, out["job"]["id"])
 
 
+def _next_event(ws, timeout: float = 30.0) -> dict[str, Any]:
+    """The next websocket event, or a failure after `timeout` seconds (a job that errors sends no 'done', and a plain
+    receive would wait forever)."""
+    import threading
+
+    got: list[dict[str, Any]] = []
+    reader = threading.Thread(target=lambda: got.append(ws.receive_json()), daemon=True)
+    reader.start()
+    reader.join(timeout)
+    assert got, f"no websocket event for {timeout:.0f} seconds"
+    return got[0]
+
+
 def test_websocket_events(client):
     p, a = _project_asset(client)
     with client.websocket_connect("/api/ws/events") as ws:
-        assert ws.receive_json()["type"] == "hello"
+        assert _next_event(ws)["type"] == "hello"
         out = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={}).json()
-        seen_types, seen_statuses = set(), set()
+        seen_types, seen_statuses, final = set(), set(), None
         for _ in range(20):
-            ev = ws.receive_json()
+            ev = _next_event(ws)
             seen_types.add(ev["type"])
             if ev["type"] == "job":
                 seen_statuses.add(ev["job"]["status"])
-            if ev["type"] == "version" and ev["version"]["status"] == "done":
+                if ev["job"]["status"] in ("done", "error"):
+                    final = ev["job"]
+                    break
+            if ev["type"] == "version" and ev["version"]["status"] in ("done", "error"):
+                final = {"status": ev["version"]["status"], "id": out["job"]["id"]}
                 break
+        assert final is not None and final["status"] == "done", f"the concept job ended as {final}"
         assert seen_types == {"job", "version"}
         assert {"queued", "running", "done"} <= seen_statuses
         wait_job(client, out["job"]["id"])

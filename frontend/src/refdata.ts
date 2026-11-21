@@ -44,3 +44,10 @@ export function platformLabel(ref: RefData | null, id: string): string {
 export function categoryLabel(ref: RefData | null, id: string): string {
   return ref?.categories.find((c) => c.id === id)?.label ?? id
 }
+
+// Category id -> the plain name the app shows for it ("Humanoid", "Rigid prop").
+export function useCategoryLabels(): Map<string, string> {
+  const { ref } = useRefData()
+  return new Map((ref?.categories ?? []).map((c) => [c.id, c.label]))
+}
+

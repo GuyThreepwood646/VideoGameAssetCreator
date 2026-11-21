@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -15,14 +18,58 @@ if str(BACKEND) not in sys.path:
 BAKEOFF = BACKEND.parent / "bakeoff"
 
 
+# The app refuses a library folder path over 89 characters (library.library_path_problem), so a test library cannot sit
+# in pytest's own temporary folders (C:\Users\...\pytest-of-...\...), which are longer. The owner's rule is that all
+# work stays on F: inside the project, so a test library goes in the project's bakeoff/t folder, in a short folder of
+# its own, removed after the test. The project is the main checkout (the git common folder's parent), so a worktree
+# uses the same folder. If even that is too deep, the test is skipped with the reason. The folder-length tests
+# (test_long_paths.py) still prove the refusal on deep paths.
+
+
+def _project_root() -> Path:
+    try:
+        out = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=BACKEND, capture_output=True, text=True,
+                             timeout=30, check=True).stdout.strip()
+        common = Path(out)
+        if not common.is_absolute():
+            common = BACKEND / common
+        return common.resolve().parent
+    except (OSError, subprocess.SubprocessError):
+        return BACKEND.parent
+
+
+LIBRARY_SCRATCH = (_project_root() / "bakeoff" / "t").resolve()
+
+
+def _short_library_root() -> Path:
+    from vgac import library
+
+    root = LIBRARY_SCRATCH / ("vgac-" + uuid.uuid4().hex[:8])
+    if library.library_path_problem(str(root / "library")) is not None:
+        pytest.skip("the project folder is too deep for a test library (its library folder would be over 89 characters); "
+                    "move the project to a shorter folder")
+    return root
+
+
 @pytest.fixture
-def settings_path(tmp_path: Path) -> Path:
+def short_library_root():
+    """A short folder under the project's bakeoff/t to hold a test library; removed after the test."""
+    root = _short_library_root()
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.fixture
+def settings_path(tmp_path: Path, short_library_root: Path) -> Path:
     cfg = {
         "instances": {
             "a": {"url": "http://127.0.0.1:9", "gpu": "test", "role": "3d"},
             "b": {"url": "http://127.0.0.1:10", "gpu": "test", "role": "images", "output_dir": str(tmp_path / "comfy_out")},
         },
-        "library_path": str(tmp_path / "library"),
+        "library_path": str(short_library_root / "library"),
         "blender_exe": None,
         "unity_exe": None,
         "comfy_input_dir": str(tmp_path / "comfy_in"),
@@ -110,14 +157,17 @@ def _own_addons_stay_out_of_tests_without_a_temporary_library(request, tmp_path,
 
     real = user_addons.registry_path
     base = Path(tmp_path_factory.getbasetemp()).resolve()
+    temporary = [base, LIBRARY_SCRATCH]
 
     def guarded() -> Path:
         p = real()
-        try:
-            Path(p).resolve().relative_to(base)
-            return p
-        except ValueError:
-            return tmp_path / "no_library" / user_addons.REGISTRY_FILE
+        for root in temporary:
+            try:
+                Path(p).resolve().relative_to(root)
+                return p
+            except ValueError:
+                continue
+        return tmp_path / "no_library" / user_addons.REGISTRY_FILE
 
     monkeypatch.setattr(user_addons, "registry_path", guarded)
 

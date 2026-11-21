@@ -1249,6 +1249,7 @@ button.btn-lg {
   padding: var(--s2) var(--s2) var(--s2) var(--s3);
   text-align: left;
   min-width: 0;
+  white-space: normal;
 }
 .rail-stage:hover {
   background: var(--panel-2);
@@ -1263,10 +1264,13 @@ button.btn-lg {
 }
 .rail-label {
   font-weight: 500;
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 .rail-meta {
   font-size: var(--fs-xs);
   color: var(--muted);
+  white-space: nowrap;
 }
 .rail-prompt {
   padding: var(--s3);
@@ -1396,6 +1400,19 @@ button.btn-lg {
 }
 .step-settings .adjust-grid > * {
   min-width: 0;
+}
+/* The step settings take the width of the place they sit in (the Make it card and the New asset form, which can be
+   laid out as a row). Without this a section measured its longest unbroken line (2457 px on the rig step), and the
+   sections ran over each other. Zero intrinsic width, then stretch to the host; the labels wrap inside. */
+.step-settings {
+  width: 0;
+  min-width: 100%;
+}
+/* A long unbroken value (a rig template or file name, about 120 characters with no spaces) breaks inside its section
+   instead of running past the edge over the next section. */
+.step-settings-group {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .slider-row {
   display: flex;
@@ -2170,9 +2187,9 @@ button.btn-lg {
 .rail-stage.kept .rail-meta {
   color: var(--ok);
 }
-.rail-label {
-  display: inline-flex;
-  align-items: center;
+.rail-stage > .info-wrap {
+  flex: none;
+  margin-left: 0;
 }
 .rail-label .info-wrap {
   opacity: 0;
@@ -4675,4 +4692,66 @@ button.preset-card:hover:not(:disabled) {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+}
+/* Save as a new version when it is not available: it takes the same look as the disabled Undo and Redo beside it. */
+.touch-up .btn.primary:disabled {
+  background: var(--btn-bg);
+  color: var(--text);
+  border-color: var(--border-control);
+  font-weight: 400;
+}
+
+/* Your LoRAs for one step (FineTune, EditLoras.tsx) and where one starts on (StartOn.tsx). */
+.your-loras {
+  margin-top: var(--s3);
+}
+.edit-lora-row {
+  padding: var(--s1) 0;
+}
+.edit-lora-summary {
+  margin: var(--s1) 0;
+}
+.start-on-line {
+  margin-top: var(--s1);
+}
+.start-on-form {
+  margin: var(--s2) 0;
+}
+.start-on-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s3);
+  margin: var(--s1) 0 var(--s2);
+}
+.edit-lora-limit {
+  margin-top: var(--s1);
+  font-weight: 600;
+}
+/* An off LoRA's strengths and a LoRA that cannot be switched on stay readable (secondary text, not faded). */
+.edit-loras .segmented > .seg:disabled {
+  opacity: 1;
+  color: var(--muted);
+}
+.edit-loras .switch:disabled {
+  opacity: 0.85;
+}
+/* Resting pose group on the rig step (WP-76): the three settings and the hand preview under them. */
+.resting-group {
+  border: 1px solid var(--border, #c9c9c9);
+  border-radius: 6px;
+  margin: 0.75rem 0;
+  padding: 0.5rem 0.75rem 0.75rem;
+}
+.resting-group > legend {
+  font-weight: 600;
+  padding: 0 0.25rem;
+}
+.resting-preview {
+  margin-top: 0.5rem;
+}
+.resting-preview-picture {
+  display: block;
+  max-width: 100%;
+  margin-top: 0.5rem;
+  border: 1px solid var(--border, #c9c9c9);
 }

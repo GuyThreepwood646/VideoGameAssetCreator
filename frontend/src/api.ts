@@ -161,6 +161,8 @@ export type ItemSuggestionState = {
   job_id?: string
 }
 export type SuggestionAnswer = { version_id: string; installed: boolean; eligible: SuggestedItem[]; state: ItemSuggestionState | null }
+export type PosePreviewState = { state: 'none' | 'queued' | 'running' | 'done' | 'failed'; reason?: string; settings?: Record<string, unknown>; picture?: boolean }
+export type PosePreviewAnswer = { version_id: string; state: PosePreviewState }
 
 export type FixTool = 'parts_editor' | 'front_picker' | 'hair_picker'
 // op "refine": run the refine on the version the check is on with `instruction` ("Redraw it ready for 3D").
@@ -238,6 +240,8 @@ export type Asset = {
   hair?: HairChoice | null
   // "The face matters" (true unless turned off): off skips the face detail pass in step 4 (a hidden or very simple face).
   face_matters?: boolean
+  // "Show on the project tile" (true unless turned off): off keeps this asset's picture off the project's cover.
+  show_on_project?: boolean
   // What the character is made of (step 1 tick boxes): the answer in force, and whether the person has given it. The
   // clean-up reads these instead of guessing from the description.
   wears_armour?: boolean
@@ -307,6 +311,8 @@ export type StyleFromImage = PaletteResult & { job: Job | null; needs_review_eng
 export type Category = {
   id: string
   label: string
+  // The app's plain word for this kind of asset ("character", "prop"; backend reference.CATEGORY_NOUNS).
+  noun?: string
   rig_engine: string
   symmetric: boolean
   pose_block: string
@@ -355,6 +361,8 @@ export type AdjustParam = {
   description?: string
   help?: HelpText
   simple?: boolean
+  // A named group of settings shown together under one heading (WP-76: Resting pose).
+  group?: string
   // Plain words for select and multiselect values ({value: label}); help.ts OPTION_LABELS is the fallback.
   option_labels?: Record<string, string>
   // The categories this knob applies to; absent means every category (2.3).
@@ -422,56 +430,52 @@ export type AddonEntry = {
   // Only on GET /api/recipe addon_entries: whether the recipe switches it on, and at which step.
   on?: boolean
   strength?: StrengthName
-  // True for the person's own add-ons (GET /api/my-addons), which also carry their file name in VGAC/mine/.
+  // True for the person's own add-ons (GET /api/my-addons), which also carry the file name ComfyUI lists them under.
   mine?: boolean
   file_name?: string
   added_at?: string
   // Your own add-ons only: how the file is kept (see AddonPlacement).
   placement?: AddonPlacement
+  // Your own add-ons only: the kinds of assets and step settings it starts on in (backend lora_defaults.py).
+  start_on?: StartOn
 }
 
-// How one of your LoRA files is kept. mode: 'in_place' (used where it is), 'link' (a second name made by the app, same drive), 'copy' (a copy
-// made by the app) or '' (a file you put in the app's folder yourself). `note` is the plain sentence to show, and says when the file or its
-// original is gone.
-export type AddonPlacement = { mode: 'in_place' | 'link' | 'copy' | ''; note: string; source: string; source_missing: boolean; file_missing: boolean }
+// Which kinds of assets (category ids) and step settings one of your LoRAs starts on in (PUT /api/my-addons/{id}/start-on).
+export type StartOn = { categories: string[]; uses: string[] }
+
+// How one of your LoRA files is kept: 'in_place' (used where it is, in one of your LoRA folders). `note` is the plain sentence to
+// show, and says when the file is gone.
+export type AddonPlacement = { mode: 'in_place' | ''; note: string; source: string; source_missing: boolean; file_missing: boolean }
 
 // Your own add-ons (backend user_addons.py, docs/API.md "your own LoRAs").
 export type MyAddonsListing = {
   addons: AddonEntry[]
   // The picture-edit model a LoRA can be made for (user_addons.listing: edit_models).
   edit_models?: { id: string; label: string }[]
-  // The one folder the app keeps add-on files in (VGAC/mine/ inside ComfyUI's loras folder).
-  folder: string
-  folder_exists: boolean
+  // The LoRA folders the person linked (lora_folders.py), each with its state.
+  folders: LoraFolderState[]
   strengths: Record<StrengthName, number>
   painters: { id: string; label: string }[]
 }
 // What the short form can start with, read from the file's header (never its data).
 export type AddonPrefill = { label: string; base_models: string[]; trigger: string; family: string; painter_note: string; made_for?: MadeFor | ''; warning?: string }
-export type UploadedAddon = { file_name: string; bytes: number; prefill: AddonPrefill }
-export type UnregisteredAddon = { file_name: string; bytes: number; prefill?: AddonPrefill; error?: string }
-export type MyAddonIn = { file_name: string; label: string; base_models: string[]; trigger?: string; default_strength?: StrengthName; source?: string; in_place?: boolean; made_for?: MadeFor | '' }
-export type MyAddonChange = Omit<MyAddonIn, 'file_name' | 'in_place'>
-// POST /api/my-addons/place (desktop app): what was done with the file at a real path, or (copy_needed) what a copy would do.
-export type AddonPlaced = {
-  route: 'in_place' | 'already_here' | 'link' | 'copy' | 'copy_needed'
-  file_name: string
-  in_place: boolean
-  bytes: number
-  prefill: AddonPrefill
-  source: string
-  message: string
-  folder?: string
-  can_copy?: boolean
-  free?: number
-}
+// A LoRA file in one of the person's LoRA folders that is not set up yet (GET /api/my-addons/available).
+export type AvailableAddon = { folder: string; file_name: string; path: string; bytes: number; prefill?: AddonPrefill; error?: string }
+// Set up a LoRA from one of the folders: the name ComfyUI lists it under, and that folder (as the list gives it).
+export type MyAddonIn = { file_name: string; folder: string; label: string; base_models: string[]; trigger?: string; default_strength?: StrengthName; source?: string; made_for?: MadeFor | '' }
+export type MyAddonChange = Omit<MyAddonIn, 'file_name' | 'folder'>
 export type RemovedAddon = { removed: string; file_name: string; file_kept: boolean; file_removed: boolean; mode: string; message: string }
+
+// The person's LoRA folders (backend lora_folders.py): each folder's state, and what to do about ComfyUI after a change.
+export type LoraFolderState = { path: string; exists: boolean; readable: boolean; lora_files: number; problem: string }
+export type LoraRestartNote = { card: string; state: 'restart' | 'starts_later' | 'not_app' | 'external'; text: string }
+export type LoraFolders = { folders: LoraFolderState[]; max_folders: number; restart: LoraRestartNote[]; restart_cards: string[]; note: string; message?: string; added?: string; removed?: string }
 
 // Your LoRAs for the picture-edit uses (picture_loras.py). Each use has its own choice; a LoRA is for picture edits when its stage is edit.
 export type EditChoice = 'off' | 'subtle' | 'normal' | 'strong'
 // What a picture-edit LoRA was made for (user_addons.MADE_FOR_EDIT / MADE_FOR_PLAIN). Plain also covers "not sure".
 export type MadeFor = 'qwen_image_edit' | 'qwen_image'
-export type EditLora = { id: string; label: string; stage?: string; warning?: string; mine?: boolean; file_name?: string; made_for?: string }
+export type EditLora = { id: string; label: string; stage?: string; warning?: string; mine?: boolean; file_name?: string; made_for?: string; default_strength?: StrengthName; start_on?: StartOn }
 export type EditListing = { addons: EditLora[]; edit_models?: { id: string; label: string }[] }
 export type Recipe = {
   id: string
@@ -997,6 +1001,9 @@ export const api = {
   getSuggestion: (vid: string) => get<SuggestionAnswer>(`/api/versions/${vid}/suggestion`),
   startSuggestion: (vid: string) => post<SuggestionAnswer>(`/api/versions/${vid}/suggestion`, {}),
   markSuggestion: (vid: string, state: 'dismissed' | 'kept') => post<SuggestionAnswer>(`/api/versions/${vid}/suggestion/${state}`, {}),
+  // The resting pose preview on a rig version (WP-76, pose_preview.py): the hands in the chosen resting pose, before a rig run.
+  getPosePreview: (vid: string) => get<PosePreviewAnswer>(`/api/versions/${vid}/pose-preview`),
+  startPosePreview: (vid: string, settings: Record<string, unknown>) => post<PosePreviewAnswer>(`/api/versions/${vid}/pose-preview`, { settings }),
   // The same model file again, turned 90, 180 or 270 degrees (counter-clockwise seen from above).
   turnModel: (vid: string, turn: 90 | 180 | 270) => post<RunResult>(`/api/versions/${vid}/turn-model`, { turn }),
   // Your own close-up of the face (humanoids): the clean-up step's face pass paints from it instead of drawing one.
@@ -1015,7 +1022,7 @@ export const api = {
   styleFromImage: (pid: string, image: string) => post<StyleFromImage>(`/api/projects/${pid}/style-from-image`, { image }),
   getAsset: (id: string) => get<Asset>(`/api/assets/${id}`),
   createVariant: (aid: string, body: { change: string; name?: string }) => post<VariantResult>(`/api/assets/${aid}/variants`, body),
-  updateAsset: (id: string, body: Partial<Pick<Asset, 'name' | 'prompt' | 'category' | 'parts' | 'platform_target' | 'face_matters' | 'wears_armour' | 'body_is_metal'>>) =>
+  updateAsset: (id: string, body: Partial<Pick<Asset, 'name' | 'prompt' | 'category' | 'parts' | 'platform_target' | 'face_matters' | 'wears_armour' | 'body_is_metal' | 'show_on_project'>>) =>
     put<Asset>(`/api/assets/${id}`, body),
   deleteAsset: (id: string) => del<DeleteResult>(`/api/assets/${id}`),
 
@@ -1071,45 +1078,16 @@ export const api = {
   addMyAddon: (body: MyAddonIn) => post<AddonEntry>('/api/my-addons', body),
   removeMyAddon: (id: string) => del<RemovedAddon>(`/api/my-addons/${encodeURIComponent(id)}`),
   updateMyAddon: (id: string, body: MyAddonChange) => put<AddonEntry>(`/api/my-addons/${encodeURIComponent(id)}`, body),
-  placeAddon: (path: string, makeCopy = false) => post<AddonPlaced>('/api/my-addons/place', { path, make_copy: makeCopy }),
-  unregisteredAddons: () => get<UnregisteredAddon[]>('/api/my-addons/unregistered'),
-  openAddonFolder: () => post<{ opened: boolean; folder: string; front?: boolean | null }>('/api/my-addons/open-folder'),
-  uploadAddon: (file: File, onProgress?: (fraction: number) => void) => uploadAddonFile(file, onProgress),
+  setStartOn: (id: string, body: StartOn) => put<AddonEntry>(`/api/my-addons/${encodeURIComponent(id)}/start-on`, body),
+  availableAddons: () => get<AvailableAddon[]>('/api/my-addons/available'),
+  loraFolders: () => get<LoraFolders>('/api/lora-folders'),
+  addLoraFolder: (path: string) => post<LoraFolders>('/api/lora-folders', { path }),
+  removeLoraFolder: (path: string) => post<LoraFolders>('/api/lora-folders/remove', { path }),
   pack: (kit: string) => get<PackKit>(`/api/packs/${encodeURIComponent(kit)}`),
   packStart: (kit: string, choices: string[]) => post<PackKit>(`/api/packs/${encodeURIComponent(kit)}/start`, { choices }),
   packCancel: (kit: string) => post<PackKit>(`/api/packs/${encodeURIComponent(kit)}/cancel`),
   packClean: (kit: string) => post<PackKit>(`/api/packs/${encodeURIComponent(kit)}/clean`),
   packZip: (kit: string, source: string, file: File, onProgress?: (fraction: number) => void) => uploadPackZipFile(kit, source, file, onProgress),
-}
-
-// POST /api/my-addons/upload: the file itself is the body, streamed from disk by the browser (never read into the
-// page). XMLHttpRequest reports upload progress; the mock backend only intercepts fetch, so mock mode uses fetch.
-function uploadAddonFile(file: File, onProgress?: (fraction: number) => void): Promise<UploadedAddon> {
-  const path = '/api/my-addons/upload?name=' + encodeURIComponent(file.name)
-  if (isMock()) return request<UploadedAddon>('POST', path + '&bytes=' + file.size)
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', path)
-    xhr.setRequestHeader('content-type', 'application/octet-stream')
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total)
-    }
-    xhr.onerror = () => reject(new ApiError(0, 'The file could not be sent to the app. Is the app still running?'))
-    xhr.onload = () => {
-      let body: unknown = null
-      try {
-        body = JSON.parse(xhr.responseText)
-      } catch {
-        // not JSON
-      }
-      if (xhr.status >= 200 && xhr.status < 300) resolve(body as UploadedAddon)
-      else {
-        const d = (body as { detail?: unknown } | null)?.detail
-        reject(new ApiError(xhr.status, typeof d === 'string' ? d : `The upload failed (HTTP ${xhr.status}).`, body))
-      }
-    }
-    xhr.send(file)
-  })
 }
 
 // GET /api/packs: the optional content packs the app can get for the person (backend/vgac/packs.py).

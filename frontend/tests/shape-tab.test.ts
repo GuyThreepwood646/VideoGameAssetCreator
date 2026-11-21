@@ -9,6 +9,7 @@ import {
   focusCentre,
   nearestArm,
   shapeBody,
+  shapeCheckLine,
   startWords,
 } from '../src/pipeline/views/shapeModel'
 import type { ShapeArm } from '../src/api'
@@ -90,4 +91,13 @@ test('a refused separation shows the engine reasons in plain words, not the exce
   assert.ok(text.startsWith('The left arm was not changed'), text)
   assert.ok(!text.includes('ShapeRefused'), text)
   assert.ok(text.includes('Try another arm'), text)
+})
+
+test('the model check is told in words, never as raw counts', () => {
+  const ok = { ok: true, changed: true, cuts: 2, skipped: [], open_edges: 0, bad_edges: 0, pieces: 1, new_crossings: 0, caps_placed: 4 }
+  const line = shapeCheckLine(ok)
+  assert.match(line, /one closed piece with no holes/)
+  assert.match(line, /4 new surfaces/)
+  assert.doesNotMatch(line, /open edges|bad edges|crossings|Pieces/)
+  assert.match(shapeCheckLine({ ...ok, open_edges: 3 }), /found holes/)
 })

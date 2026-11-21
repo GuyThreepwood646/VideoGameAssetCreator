@@ -44,9 +44,11 @@ def safetensors_bytes(meta: dict[str, str] | None = None) -> bytes:
 def mine_settings(settings_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from vgac import config, db, reference
 
-    cfg = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
-    cfg["loras_dir"] = str(tmp_path / "loras")
-    settings_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    loras = tmp_path / "loras"
+    loras.mkdir(exist_ok=True)
+    machine = tmp_path / "machine.json"
+    machine.write_text(json.dumps({"backend": {"lora_folders": [str(loras)]}}), encoding="utf-8")
+    monkeypatch.setenv("VGAC_MACHINE", str(machine))
     monkeypatch.setenv("VGAC_CONFIG", str(settings_path))
     config.reset_settings()
     db.reset_engine()
@@ -58,11 +60,16 @@ def mine_settings(settings_path: Path, tmp_path: Path, monkeypatch: pytest.Monke
 
 def own_lora(mine_settings, name: str, label: str, meta: dict[str, str] | None = None) -> dict[str, Any]:
     """Register a picture-edit LoRA the person owns; -> the public entry."""
-    from vgac import user_addons
+    from vgac import config, user_addons
 
-    d = user_addons.mine_dir(create=True)
+    d = Path(config.get_settings().lora_folders[0])
     (d / name).write_bytes(safetensors_bytes(meta or {"modelspec.architecture": "qwen-image-edit-2511/lora"}))
-    return user_addons.register(name, label, ["qwen_edit"])
+    mp = pytest.MonkeyPatch()  # ComfyUI is not running here: its LoRA list is the folder's own files
+    mp.setattr(user_addons, "_engine_choices", lambda: [p.name for p in d.glob("*.safetensors")])
+    try:
+        return user_addons.register(name, "", label, ["qwen_edit"])
+    finally:
+        mp.undo()
 
 
 class FakeClient:

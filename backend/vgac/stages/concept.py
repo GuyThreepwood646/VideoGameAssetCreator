@@ -567,7 +567,8 @@ def refine_own_choices(params: dict[str, Any]) -> dict[str, Any]:
     """The refine's own LoRA choice: the request's `edit_addons`, or None when it sent none. Written over the parent's
     value, so a refine of a combined picture never shows a choice that did not draw it. The record of what was applied is
     written by picture_loras.edit_loras in this run."""
-    return {"edit_addons": params.get("edit_addons"), "edit_addons_applied": None}
+    return {"edit_addons": params.get("edit_addons"), "edit_addons_applied": None,
+            "edit_addons_by_default": params.get("edit_addons_by_default") or []}
 
 
 async def refine(sc: StageContext, instruction: str, view: str | None, mask_png: Path | None, params: dict[str, Any]) -> None:

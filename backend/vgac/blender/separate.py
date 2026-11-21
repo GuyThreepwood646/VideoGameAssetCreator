@@ -3,35 +3,57 @@
 Run: blender -b --python separate.py -- <step4.glb> <labels_rig.glb> <out.glb> --report <json>
          [--side L|R|both] [--gap 0.006] [--start 0.3] [--rigged-out <rig_out.glb>] [--debug]
 
-WP-25, proved on the stored blacksmith (upper arms grown into the torso) and mage (sleeves grown into the robe); the
-evidence is in bakeoff/wp25 (local). Steps, per arm:
+WP-25, proved on the stored blacksmith (upper arms grown into the torso) and mage (sleeves grown into the robe); WP-27
+added the weights, the cap colour and the rest pose (evidence in bakeoff/wp25 and bakeoff/wp27, local). Steps, per arm:
+0. Labels. Each step 4 point takes the skin weights of its rig point, found by face corners (the rig keeps the step 4
+   model's triangles in order; passes after the rig such as palm-down moved some points, so the nearest point can be
+   the wrong one), or the nearest rig point when the corners do not line up.
 1. The weight line. Each point's arm share is the summed skin weight of that side's upper arm bone and every bone below
-   it (finger bones the app added included), copied from the nearest rig point and smoothed. Where the build fused the
-   arm to the body the share falls from 1 to 0 across the fused strip; the line where it crosses one half, beyond
-   `start` (a share of the upper arm from the shoulder joint, so the shoulder stays whole), is found per triangle.
+   it (finger bones the app added included), smoothed. Where the build fused the arm to the body the share falls from
+   1 to 0 across the fused strip; the line where it crosses one half, beyond `start` (a share of the upper arm from the
+   shoulder joint, so the shoulder stays whole), is found per triangle.
 2. A flat cut. The plane that best fits each weight-line piece cuts the triangles within BAND of it. A cut along the
    weight line itself is not flat, and its two caps crossed each other and the surface on every real model tried.
 3. The true section. Every other place the plane crosses the surface inside the cut's outline (a robe's inner layer, an
    air pocket) is cut too and becomes a hole in the cap, so the cap is exactly the plane's section of the solid. A cut
    piece whose inner cut does not close is refused (reason `inner_cut_not_closed`; for example a flat wall lying in the
    plane), and so is a closed cut that would only fence off a small patch.
-4. The gap. Inside the outline, every surface point within gap/2 of the plane, the cut's own copies included, moves
-   straight off the plane to its own side (at most gap/2), so a cloth layer lying along the plane cannot poke through a
-   cap. The gap narrows to nothing over RAMP at the cut's ends, which stay put: they are the ends of the new armpit.
+4. The gap (after step 5's weights, which are read on the surface as cut). Each side's end is rounded (WP-74):
+   every copy moves off the plane to its own side by gap/2 plus a dome height (DOME_SHARE of the cap's half-width, at
+   most DOME_MAX), and every other surface point near the plane inside the outline or beside the cut is drawn back
+   with it, less the further it is (drawn_back keeps the order of points along the normal, so a cloth layer lying
+   along the plane cannot poke through a cap and no layers cross). It all
+   narrows to nothing over RAMP at the cut's ends, which stay put: they are the ends of the new armpit. At rest the
+   two sides meet in a crease, as an arm against a torso, not a slot between two walls.
 5. Weights. Each side of the fused strip lets go of the other side's weights (fading in past `start`).
-6. Caps. One constrained Delaunay triangulation of the outline with inner points gives both caps, parallel copies a
-   gap apart, joined at the new armpit edge; inner points blend the weights of the nearest edge points.
-7. Texture. Caps get texture space of their own (uvfit.place_islands in the atlas's free space, at the surface's texel
-   density, smaller if short of room), coloured from the surface along their edge; normal maps get a flat normal.
-8. Checks against the input: open edges, edges with three or more faces, pieces, and triangle pairs crossing that did
+6. Caps. One constrained Delaunay triangulation of the outline with inner points gives both caps, joined at the
+   new armpit edge. Each is a dome (dome_field: a membrane over the outline, with an elliptical section), from its
+   drawn-back edge to gap/2 off the plane at its crown, so the arm's end and the body's side are both rounded and a
+   gap apart at their closest. Inner points blend the weights of the nearest edge points. A dome that still makes
+   surfaces cross is made again lower at that cut (DOME_STEP each pass, flat under DOME_LEAST; `dome_lowered`).
+7. Weights again (WP-27, _rederive). The arm's own surface is flooded from the arm side of its cuts; on it only the
+   arm's bones stay, everywhere else past the shoulder this arm's bones go (hair or robe the build skinned to the arm),
+   points left with nothing are filled from their own side, and each side is smoothed on its own with a volume limit.
+8. The raise. Each arm is raised 90 degrees out to the side, before and after, and the edges near its cut (and over the
+   whole model) stretched past STRETCH_RATIO are counted. An arm whose near-cut count rose is put back as it was
+   (reason `stretch_rose`).
+9. Texture. Caps get texture space of their own (uvfit.place_islands in the atlas's free space, at the surface's texel
+   density, smaller if short of room). Their colour comes from the surface round their ring: each ring point's colour
+   is read just inside the surface triangles beside it (only texels the surface covers), cap pixels blend those by
+   inverse distance, and the surface's own detail is mirrored across the ring within a small swing. Every picture of
+   the material is filled so; normal maps get a flat normal. Cap corners get shading normals blended from the surface
+   round the ring (and half the dome's own facing there, never more than 60 degrees off it), turning to the dome's
+   own facing further in. Nothing else in any picture
+   changes. The report lists each cap's texture triangles (the paint tools find the caps there) and its colour match.
+10. Checks against the input: open edges, edges with three or more faces, pieces, and triangle pairs crossing that did
    not cross before. `ok` is false when any of them got worse.
-9. The raise. Each arm is raised 90 degrees out to the side, before and after, and the edges near its cut stretched
-   past STRETCH_RATIO are counted. An arm whose count rose is put back as it was (reason `stretch_rose`).
+11. The rigged copy (--rigged-out) is put in the rig's rest pose: each point moves by the offset of the nearest place on
+   the input surface between the step 4 model and its rig (palm-down hands), so rig.carry can use it as the new rig.
 Refused, with the model unchanged: a weight-line piece that starts past the upper arm (`not_upper_arm`: the low-poly
 dwarf, whose arm weights begin on the forearm). When no cut is left the script writes no model (`changed` false).
 No booleans and no remesh: the rest of the surface keeps its points, triangles and texture coordinates. Not handled:
-hair that carries arm weight (a weights fault, WP-27), and arms whose weight line never leaves the shoulder (the
-low-poly dwarf). Runs are repeatable: every set is walked in an order fixed by position.
+arms whose weight line never leaves the shoulder (the low-poly dwarf). Runs are repeatable: every set is walked in an
+order fixed by position.
 
 Everything above main() is plain numpy so the backend tests can run it without Blender.
 """
@@ -55,10 +77,47 @@ RELEASE_RAMP = 0.15  # share of the upper arm past `start` over which the lettin
 RELEASE_NEAR = 0.06  # m: within this of the cut a point's side is its side of the plane, further out its arm share
 SLAB_MARGIN = 0.0005  # m kept between a pushed point and the cap
 CAP_SPACING_MIN = 0.02  # m: the least spacing of a cap's inner points (twice the cut's edge length otherwise)
+CAP_SPACING_MAX = 0.05  # m: the most
+UPRIGHT_FULL = 0.7  # an outline running up and down at least this much (the height part of its direction) is upright
+UPRIGHT_LEAST = 0.4  # a level part of the outline is still drawn back this share: its edges keep clear of the surface
+LIP_SHARP = 60.0  # degrees: a cap's edge point whose surface turns back along the cap closer than this is a lip
+LIP_RINGS = 1  # rings of points round a lip relaxed with it
+LIP_PASSES = 8  # halfway relaxing steps at a lip
+NECK = 0.02  # m: where the cap is narrower than this (half-width), it is drawn back in proportion
+CROWN_TILT = 0.3  # how far the surface between the caps leans across them, per metre: the slit's front and back
+# halves sit at different heights, so no straight line of sight runs through it
+CROWN_GAP = 0.0002  # m between the two caps along their crowns: they all but touch, so no background shows at rest
+SPOT_R = 0.04  # m round a crossing within which a cut's dome is lowered first, before the whole dome is
+DOME_SHARE = 0.3  # a cap's dome height as a share of its half-width (the furthest a point inside it is from its edge)
+DOME_MAX = 0.02  # m: the highest dome
+DRAW_REACH = 2.5  # the surface beside a cut is drawn back over this many times (gap/2 + dome height) from the plane
+GAP_NEAR = 0.01  # m: outside the outline the gap alone (WP-27's) fades out over this
+DRAW_NEAR = 1.5  # outside the cut's outline, the drawing back fades out over this many reaches from the cut
+DOME_STEP = 0.7  # a dome that made surfaces cross is made again at this share of its height
+DOME_LEAST = 0.2  # under this share it is made flat (the gap alone, as before WP-74)
+CAP_NORMAL_FADE = 0.03  # m: a cap point this far from its ring shades by its own dome alone
 NOT_UPPER_ARM = 0.35  # a weight-line piece starting this far past `start` (in upper-arm lengths) is not an upper-arm join
 RAISE_DEG = 90.0  # the test raise: the upper arm swung out to the side, about the front axis at the shoulder joint
 STRETCH_RATIO = 1.6  # an edge longer than this times its rest length in the raise is stretched
 STRETCH_NEAR = 0.08  # m: edges with a point this close to the side's cut count as near the cut
+CORNER_TOL = 1e-4  # m: a step 4 face corner and the rig's are the same point when this close
+CORNER_SHARE = 0.5  # the corners line up when at least this share of them are the same point
+WEIGHT_PASSES = 2  # neighbour averaging passes over the points whose weights were re-derived (each side on its own)
+WEIGHT_RINGS = 2  # rings round the re-derived points that are smoothed with them
+WEIGHT_LIMIT = 0.3  # the volume limit: a point's weights may move at most this far in the smoothing
+RING_INSET = 0.35  # an edge point's colour is read this far from it toward the middle of each surface triangle beside it
+SAMPLE_RADIUS_PX = 2  # texels round that read point averaged (only those the surface covers)
+IDW_NEAREST = 12  # a cap pixel blends the colours of this many nearest edge points
+CAP_LEAST_FACING = 0.5  # a cap's shading normal stays within 60 degrees of the way the cap faces
+CAP_NORMAL_SHARE = 0.5  # how much of a cap's own facing is kept in its shading normals (the rest from its ring)
+MIRROR_REACH = 0.1  # m: the surface a cap mirrors from lies within the cap's size plus this of its middle
+MIRROR_SWING = 0.08  # the most the mirrored detail moves a cap pixel off the blended ring colour (of 1)
+MIRROR_LAND = 0.03  # m: a mirrored point further than this from that surface keeps the blended ring colour
+RECOLOUR_UV_TOL = 1e-4  # texture distance within which a face of the rig is a cap triangle of caps.json
+RECOLOUR_FOUND_SHARE = 0.9  # share of a cap's triangles that must be found for it to be coloured again
+CAP_PAD_PX = 2  # pixels a cap's colour is grown past its edge in the picture
+ARM_SURFACE_SHARE = 0.1  # away from a cut, the arm's own surface is where its arm share is over this
+LEAK_SHARE = 0.4  # an arm's own surface reaching more than this share of the model has leaked into the body
 
 
 def arm_share(weights, groups, arm_names):
@@ -133,6 +192,21 @@ def seg_distance(P, A, B):
     return np.sqrt(((P[:, None, :] - Q) ** 2).sum(axis=2)).min(axis=1)
 
 
+def closest_on_segments(P, A, B, chunk=2048):
+    """For 3D points P (n, 3), the nearest point on any of the segments A[i]-B[i] (m, 3) -> (n, 3)."""
+    P, A, B = (np.asarray(x, dtype=float) for x in (P, A, B))
+    AB = B - A
+    L2 = np.maximum((AB ** 2).sum(axis=1), 1e-18)
+    out = np.empty_like(P)
+    for s in range(0, len(P), chunk):
+        Q = P[s:s + chunk]
+        t = np.clip(((Q[:, None, :] - A[None]) * AB[None]).sum(axis=2) / L2[None], 0, 1)
+        C = A[None] + t[..., None] * AB[None]
+        k = np.argmin(((Q[:, None, :] - C) ** 2).sum(axis=2), axis=1)
+        out[s:s + chunk] = C[np.arange(len(Q)), k]
+    return out
+
+
 def raise_arm(P, share, pivot, axis, deg=RAISE_DEG):
     """Linear blend skinning of one pose: every bone of the arm turned by `deg` about `axis` through `pivot`, the rest
     still. A point moves by its arm share of the turn."""
@@ -155,6 +229,133 @@ def raise_stretch(P, edges, share, pivot, axis, near, ratio=STRETCH_RATIO):
     now = np.linalg.norm(Q[E[:, 0]] - Q[E[:, 1]], axis=1)
     ok = rest > 1e-6
     return int(len(E)), int((now[ok] > ratio * rest[ok]).sum())
+
+
+def corner_map(s_corners, s_pos, r_corners, r_pos, tol=CORNER_TOL, min_share=CORNER_SHARE):
+    """Which rig point each step 4 point is, from the two meshes' face corners in the same order (the rig is made from
+    the step 4 model and keeps its triangles; passes after the rig such as palm-down move some points, so position alone
+    can name the wrong point). s_corners, r_corners: the point index of every face corner, flattened in face order.
+    -> (rig index per step 4 point (-1 where no corner names one), rig rest position minus step 4 position (n, 3)), or
+    None when the corners do not line up (different counts, or fewer than min_share of them in the same place)."""
+    s_corners, r_corners = np.asarray(s_corners, int), np.asarray(r_corners, int)
+    s_pos, r_pos = np.asarray(s_pos, float), np.asarray(r_pos, float)
+    if s_corners.shape != r_corners.shape or not len(s_corners):
+        return None
+    d = np.linalg.norm(s_pos[s_corners] - r_pos[r_corners], axis=1)
+    if float((d < tol).mean()) < min_share:
+        return None
+    rig_of = np.full(len(s_pos), -1, dtype=int)
+    rig_of[s_corners] = r_corners
+    off = np.zeros_like(s_pos)
+    ok = rig_of >= 0
+    off[ok] = r_pos[rig_of[ok]] - s_pos[ok]
+    return rig_of, off
+
+
+def flood(seeds, nbrs, allowed):
+    """Points reached from `seeds` stepping only onto points where `allowed` is true -> (n,) bool."""
+    reached = np.zeros(len(nbrs), dtype=bool)
+    stack = [int(s) for s in seeds if allowed[s]]
+    reached[stack] = True
+    while stack:
+        i = stack.pop()
+        for j in nbrs[i]:
+            if not reached[j] and allowed[j]:
+                reached[j] = True
+                stack.append(j)
+    return reached
+
+
+def keep_side(weights, is_arm, in_arm, t, start, ramp=RELEASE_RAMP):
+    """Each point past `start` keeps only its own side's bones: on the arm's own surface (`in_arm`) the arm's bones,
+    elsewhere every other bone. The change fades in over `ramp` past `start` so the shoulder keeps its blend.
+    -> (new weights, indices changed, indices left with nothing of their side (to fill from neighbours))."""
+    out = [dict(d) for d in weights]
+    changed, need = set(), set()
+    for i, d in enumerate(weights):
+        if t[i] <= start or not d:
+            continue
+        tot = sum(d.values())
+        mine = {g: w for g, w in d.items() if bool(is_arm[g]) == bool(in_arm[i])}
+        if len(mine) == len(d) or tot <= 1e-9:
+            continue
+        kt = sum(mine.values())
+        s = min(1.0, max(0.0, (t[i] - start) / ramp))
+        if kt <= 1e-6:
+            if s >= 1.0:
+                need.add(i)
+            continue
+        out[i] = {g: (1 - s) * d.get(g, 0.0) / tot + s * mine.get(g, 0.0) / kt for g in set(d) | set(mine)}
+        out[i] = {g: w for g, w in out[i].items() if w > 1e-6}
+        changed.add(i)
+    return out, changed, need
+
+
+def fill_from_neighbours(weights, need, nbrs, cls, max_iter=200):
+    """Points in `need` take the mean weights of their neighbours of the same class (`cls`) that have weights, ring by
+    ring inward. -> (weights, how many were left unfilled (they keep what they had))."""
+    out = [dict(d) for d in weights]
+    todo = set(need)
+    for _ in range(max_iter):
+        if not todo:
+            break
+        done = {}
+        for i in sorted(todo):
+            src = [j for j in nbrs[i] if j not in todo and cls[j] == cls[i] and out[j]]
+            if not src:
+                continue
+            acc = {}
+            for j in src:
+                for g, w in out[j].items():
+                    acc[g] = acc.get(g, 0.0) + w / len(src)
+            done[i] = acc
+        if not done:
+            break
+        for i, acc in done.items():
+            out[i] = acc
+        todo -= set(done)
+    return out, len(todo)
+
+
+def smooth_weights(weights, idx, nbrs, cls, passes=WEIGHT_PASSES, limit=WEIGHT_LIMIT):
+    """Neighbour averaging of the weights of points `idx` over neighbours of the same class only (so the two sides of a
+    cut never blend), `passes` times. The volume limit: a point whose weights would move by more than `limit` (half the
+    summed absolute change) from where they started keeps them as they were.
+    -> (weights, how many points the limit held)."""
+    out = [dict(d) for d in weights]
+    idx = sorted(set(idx))
+    start_w = {i: dict(weights[i]) for i in idx}
+    for _ in range(passes):
+        new = {}
+        for i in idx:
+            src = [j for j in nbrs[i] if cls[j] == cls[i]]
+            if not src:
+                continue
+            ti = sum(out[i].values()) or 1.0
+            acc = {g: 0.5 * w / ti for g, w in out[i].items()}
+            for j in src:
+                tj = sum(out[j].values()) or 1.0
+                for g, w in out[j].items():
+                    acc[g] = acc.get(g, 0.0) + 0.5 * w / tj / len(src)
+            new[i] = acc
+        for i, acc in new.items():
+            out[i] = acc
+    held = 0
+    for i in idx:
+        a, b = start_w[i], out[i]
+        ta, tb = sum(a.values()) or 1.0, sum(b.values()) or 1.0
+        move = 0.5 * sum(abs(a.get(g, 0.0) / ta - b.get(g, 0.0) / tb) for g in set(a) | set(b))
+        if move > limit:
+            out[i] = a
+            held += 1
+    return out, held
+
+
+def top_influences(d, k=4):
+    """The k largest weights of a point, summing to one."""
+    items = sorted(((w, g) for g, w in d.items() if w > 1e-6), reverse=True)[:k]
+    tot = sum(w for w, _ in items)
+    return {g: w / tot for w, g in items} if tot > 1e-9 else {}
 
 
 def cap_grid(loops, spacing):
@@ -183,8 +384,190 @@ def cap_grid(loops, spacing):
     return G[seg_distance(G, A, B) > spacing / 2]
 
 
-def main(skip=None):  # pragma: no cover - runs inside Blender
-    """skip: sides already put back by an earlier pass (their report parts), when a cut made the raise worse."""
+def half_width(loops, spacing=0.005):
+    """How far the point deepest inside a cap outline (loops as cap_grid takes them) is from its edge, in metres."""
+    G = cap_grid(loops, spacing)
+    if not len(G):
+        return 0.0
+    A = np.vstack([np.asarray(lp, dtype=float) for lp in loops])
+    B = np.vstack([np.roll(np.asarray(lp, dtype=float), -1, axis=0) for lp in loops])
+    return float(seg_distance(G, A, B).max())
+
+
+def dome_height(loops, gap):
+    """A cap's dome height: DOME_SHARE of its half-width, at most DOME_MAX (never under nothing)."""
+    return float(min(DOME_MAX, DOME_SHARE * half_width(loops, max(0.002, gap))))
+
+
+def dome_field(pts, loops, spacing, passes=6):
+    """The rounded shape of a cap, 0 at its edge to 1 along its crown: each point's distance from the outline over the
+    cap's own half-width there (the deepest point within reach of it, found by a few passes), through a quarter
+    ellipse, so every part of the cap reaches its crown however narrow it is, and the edge rises steeply. pts (n, 2);
+    loops as cap_grid takes them."""
+    pts = np.asarray(pts, dtype=float).reshape(-1, 2)
+    if not len(pts):
+        return np.zeros(0)
+    A = np.vstack([np.asarray(lp, dtype=float) for lp in loops])
+    B = np.vstack([np.roll(np.asarray(lp, dtype=float), -1, axis=0) for lp in loops])
+    s_ = seg_distance(pts, A, B)
+    D = np.linalg.norm(pts[:, None, :] - pts[None], axis=2)
+    w = np.full(len(pts), s_.max())
+    for _ in range(passes):  # the half-width here: the deepest point no further than it could be (w - s) away
+        reach = (w - s_ + 1.01 * spacing)[:, None]
+        w = np.where(D <= reach, s_[None], 0.0).max(axis=1)
+    x = np.clip(s_ / np.maximum(w, 1e-9), 0.0, 1.0)
+    return np.sqrt(1.0 - (1.0 - x) ** 2)
+
+
+def drawn_back(d, g, reach):
+    """Distances from the plane after drawing the surface back from a cut: a point at signed distance d moves to
+    d + sign(d) * g * (1 - |d|/reach)^2, so the cut itself sits g off the plane, points at `reach` stay put, and the
+    order of points along the normal is kept (reach >= 2 g). g may be one value or one per point."""
+    d = np.asarray(d, dtype=float)
+    g = np.broadcast_to(np.asarray(g, dtype=float), d.shape)
+    a = np.abs(d)
+    k = np.clip(1.0 - a / reach, 0.0, None) ** 2
+    s = np.where(d >= 0, 1.0, -1.0)
+    return s * (a + g * k)
+
+
+def draw_weights(P2, loops, ramps, fade, chord=None, clear=0.0, chunk=4096):
+    """How much of the drawing back each place on the cut plane gets (0 to 1), as a function of the place alone so the
+    drawing back moves the space round the cut as a whole and cannot make surfaces cross: the ramp of the nearest
+    outline point (0 at the cut's ends), fading out smoothly over `fade` outside the outline, and, for an open cut,
+    nothing within `clear` of the line between its ends (the shoulder there is not cut). P2 (n, 2); loops as
+    cap_grid takes them; ramps: one array per loop; chord: the two ends (2D) or None."""
+    P2 = np.asarray(P2, dtype=float).reshape(-1, 2)
+    B = np.vstack([np.asarray(lp, dtype=float) for lp in loops])
+    R = np.concatenate([np.asarray(r, dtype=float) for r in ramps])
+    outer = np.asarray(loops[0], dtype=float)
+    A_o, B_o = outer, np.roll(outer, -1, axis=0)
+    w = np.zeros(len(P2))
+    for s in range(0, len(P2), chunk):
+        Q = P2[s:s + chunk]
+        near = np.argmin(((Q[:, None, :] - B[None]) ** 2).sum(axis=2), axis=1)
+        ws = R[near]
+        out = ~inside_polygon(Q, outer)
+        if out.any():  # smoothly: flat at the outline, so the surface just outside goes as far as the cap's edge
+            x = np.clip(seg_distance(Q[out], A_o, B_o) / fade, 0.0, 1.0)
+            ws[out] *= 1.0 - x * x * (3.0 - 2.0 * x)
+        if chord is not None and clear > 0:
+            ws *= np.clip(seg_distance(Q, chord[0][None], chord[1][None]) / clear, 0.0, 1.0)
+        w[s:s + chunk] = ws
+    return w
+
+
+def upright(P, closed, full=UPRIGHT_FULL, passes=15, least=0.0):
+    """How upright a cut's outline runs at each point (P (n, 3) in order): 1 where it runs up and down at least
+    `full` (the size of the height part of its direction), less as it lies level (to `least`), smoothed along the
+    outline. A level edge is seen along its length from the front or the back, so any opening along it shows
+    through."""
+    P = np.asarray(P, dtype=float).reshape(-1, 3)
+    n = len(P)
+    if n < 2:
+        return np.ones(n)
+    nxt = np.roll(P, -1, axis=0) if closed else np.vstack([P[1:], P[-1:]])
+    prv = np.roll(P, 1, axis=0) if closed else np.vstack([P[:1], P[:-1]])
+    t = nxt - prv
+    t /= np.maximum(np.linalg.norm(t, axis=1, keepdims=True), 1e-12)
+    u = np.clip(np.abs(t[:, 2]) / full, 0.0, 1.0)
+    for _ in range(passes):
+        a = np.roll(u, 1) if closed else np.r_[u[:1], u[:-1]]
+        b = np.roll(u, -1) if closed else np.r_[u[1:], u[-1:]]
+        u = (a + 2 * u + b) / 4
+    return least + (1.0 - least) * u
+
+
+def local_width(P2, loops, step=0.005, chunk=2048):
+    """How wide the cap is where each place lies: the radius of the largest circle inside the outline (loops as
+    cap_grid takes them) that holds it (for a place outside the outline, that holds the nearest place on the
+    outline). P2 (n, 2) -> (n,)."""
+    P2 = np.asarray(P2, dtype=float).reshape(-1, 2)
+    Q = cap_grid(loops, step)
+    if not len(Q):
+        return np.zeros(len(P2))
+    A = np.vstack([np.asarray(lp, dtype=float) for lp in loops])
+    B = np.vstack([np.roll(np.asarray(lp, dtype=float), -1, axis=0) for lp in loops])
+    r = seg_distance(Q, A, B)
+    outer = np.asarray(loops[0], dtype=float)
+    A3, B3 = np.c_[A, np.zeros(len(A))], np.c_[B, np.zeros(len(B))]
+    out = np.zeros(len(P2))
+    for s in range(0, len(P2), chunk):
+        X = P2[s:s + chunk].copy()
+        o = ~inside_polygon(X, outer)
+        if o.any():  # a place outside takes the width where the outline is nearest it
+            X[o] = closest_on_segments(np.c_[X[o], np.zeros(int(o.sum()))], A3, B3)[:, :2]
+        D = np.linalg.norm(X[:, None, :] - Q[None], axis=2)
+        out[s:s + chunk] = np.where(D <= r[None] + step, r[None], 0.0).max(axis=1)
+    return out
+
+
+def crosses_itself(loop):
+    """Whether a closed outline (n, 2) crosses itself (two edges that share no point meet)."""
+    L = np.asarray(loop, dtype=float).reshape(-1, 2)
+    n = len(L)
+    if n < 4:
+        return False
+    A, B = L, np.roll(L, -1, axis=0)
+
+    def orient(p, q, r):
+        return np.sign((q[..., 0] - p[..., 0]) * (r[..., 1] - p[..., 1])
+                       - (q[..., 1] - p[..., 1]) * (r[..., 0] - p[..., 0]))
+    a, b = A[:, None], B[:, None]
+    c, d = A[None], B[None]
+    hit = (orient(a, b, c) * orient(a, b, d) < 0) & (orient(c, d, a) * orient(c, d, b) < 0)
+    i, j = np.meshgrid(np.arange(n), np.arange(n), indexing="ij")
+    near = (np.abs(i - j) <= 1) | (np.abs(i - j) == n - 1)
+    return bool((hit & ~near).any())
+
+
+def spot_share(P, spots, r=SPOT_R):
+    """How much of the dome is kept at points P (n, 3): nothing at a spot (where an earlier pass crossed), all of it
+    `r` away and beyond, smoothly between. 1 everywhere with no spots."""
+    P = np.asarray(P, dtype=float).reshape(-1, 3)
+    if not len(spots):
+        return np.ones(len(P))
+    S = np.asarray(spots, dtype=float).reshape(-1, 3)
+    d = np.linalg.norm(P[:, None, :] - S[None], axis=2).min(axis=1)
+    x = np.clip(d / r, 0.0, 1.0)
+    return x * x * (3 - 2 * x)
+
+
+def new_spots(spots, hits, r=SPOT_R):
+    """Spots after a pass that crossed at `hits` ({cut: [points]}): each hit not already within r/2 of a spot of its
+    cut becomes one. None when every hit is at a spot already (lowering there did not help)."""
+    out = {k: list(v) for k, v in spots.items()}
+    changed = False
+    for cut, pts in hits.items():
+        for p in pts:
+            if all(np.linalg.norm(np.asarray(p) - np.asarray(q)) > r / 2 for q in out.get(cut, [])):
+                out.setdefault(cut, []).append([float(x) for x in p])
+                changed = True
+    return out if changed else None
+
+
+def lower_domes(lower, sides, step=DOME_STEP, least=DOME_LEAST):
+    """The next dome shares after a pass whose domes made surfaces cross at the cuts `sides` (keys as "R0"): each of
+    those times `step`, and flat (0) once under `least`; None when every one of them is flat already (nothing to
+    lower)."""
+    out = dict(lower)
+    changed = False
+    for sd in sides:
+        x = out.get(sd, 1.0)
+        if x <= 0:
+            continue
+        x *= step
+        out[sd] = x if x >= least else 0.0
+        changed = True
+    return out if changed else None
+
+
+def main(skip=None, lower=None, spots=None):  # pragma: no cover - runs inside Blender
+    """skip: sides already put back by an earlier pass (their report parts), when a cut made the raise worse. lower:
+    {side and cut number, as "R0": share of the dome height} for cuts whose domes made surfaces cross in an earlier
+    pass (lower_domes)."""
+    lower = dict(lower or {})
+    spots = dict(spots or {})
     import bmesh
     import bpy
     from mathutils import Vector
@@ -218,8 +601,26 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
     me = mo.data
     me.transform(mo.matrix_world)
     mo.matrix_world.identity()
+    # which rig point each step 4 point is: by face corners when the two meshes line up (WP-27), else the nearest point
+    rmw = rig_mesh.matrix_world
+    corr = None
+    if [p.loop_total for p in me.polygons] == [p.loop_total for p in rig_mesh.data.polygons]:
+        corr = corner_map([lp.vertex_index for lp in me.loops], [v.co[:] for v in me.vertices],
+                          [lp.vertex_index for lp in rig_mesh.data.loops],
+                          [(rmw @ v.co)[:] for v in rig_mesh.data.vertices])
     bm = bmesh.new()
     bm.from_mesh(me)
+    rest_off = bm.verts.layers.float_vector.new("rest_off")
+    rig_ix = bm.verts.layers.int.new("rig_ix")
+    bm.verts.layers.float_vector.new("pre_draw")  # where a point drawn back from a cut was (_clear_slab, _rederive)
+    bm.verts.layers.int.new("drawn")
+    bm.verts.ensure_lookup_table()
+    for v in bm.verts:
+        if corr is not None and corr[0][v.index] >= 0:
+            v[rig_ix] = int(corr[0][v.index])
+            v[rest_off] = Vector(corr[1][v.index])
+        else:
+            v[rig_ix] = -1
     n_in = len(bm.verts)
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
     bm.verts.ensure_lookup_table()
@@ -231,8 +632,8 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
     in_cross = [bm.faces[i].calc_center_median().copy() for i in chk0["crossing_faces"]]
     bm.verts.ensure_lookup_table()
 
-    # labels: nearest rig point, weights copied into a deform layer (interpolated by the cuts below)
-    rmw = rig_mesh.matrix_world
+    # labels: the rig point by face corners (else the nearest), weights copied into a deform layer (interpolated by the
+    # cuts below)
     kd = KDTree(len(rig_mesh.data.vertices))
     for v in rig_mesh.data.vertices:
         kd.insert(rmw @ v.co, v.index)
@@ -245,11 +646,17 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
     for v in bm.verts:
         _, j, d = kd.find(v.co)
         far += d > 1e-4
+        if v[rig_ix] >= 0:
+            j = v[rig_ix]
         dv = v[dl]
         for ge in rig_mesh.data.vertices[j].groups:
             if ge.weight > 0:
                 dv[ge.group] = ge.weight
     report["input"]["points_off_rig"] = int(far)
+    report["input"]["labels"] = "corners" if corr is not None else "nearest"
+    report["input"]["rest_moved_points"] = int((np.linalg.norm(corr[1], axis=1) > 1e-4).sum()) if corr is not None else 0
+    # the input surface with each corner's rest offset, so any point of the result can be put in the rig's rest pose
+    rest_src = _rest_source(bm, rest_off) if corr is not None else None
 
     def joints(prefix):
         b = arm_obj.data.bones
@@ -282,7 +689,11 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
         mw = arm_obj.matrix_world
         head, tail = mw @ bone.head_local, mw @ bone.tail_local
         axis = (0.0, -1.0, 0.0) if tail.x > head.x else (0.0, 1.0, 0.0)  # out and up, the character facing -Y
-        return raise_stretch(P, E, arm_share(weights, groups, arm_names), np.array(head[:]), axis, near)
+        share = arm_share(weights, groups, arm_names)
+        n_near, s_near = raise_stretch(P, E, share, np.array(head[:]), axis, near)
+        # the whole model too: hair or robe that took arm weight stretches far from the cut
+        n_all, s_all = raise_stretch(P, E, share, np.array(head[:]), axis, np.ones(len(P), dtype=bool))
+        return n_near, s_near, n_all, s_all
 
     for side in sides:
         if skip and side in skip:  # an earlier run found this side's cut made the raise worse: left as it was
@@ -357,12 +768,17 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
             if why:
                 caps.append({"ok": False, "reason": why, "plane_flatness_m": round(flat, 4)})
                 continue
-            info = _cut_and_cap(bm, comp, Vector(c), Vector(n), gap, tv, dl, groups, arm_names, start, holes, ash)
+            info = _cut_and_cap(bm, comp, Vector(c), Vector(n), gap, tv, dl, groups, arm_names, start, holes, ash,
+                                lower.get(f"{side}{len(caps)}", 1.0), spots.get(f"{side}{len(caps)}", ()))
             info.update(plane_flatness_m=round(flat, 4), band_m=round(reach, 4), plane_pieces=len(comps),
                         weight_line_m=round(pc["length"], 4))
             caps.append(info)
+        rep["lips_smoothed"] = sum(_smooth_lips(bm, cp) for cp in caps if cp.get("ok"))
+        # weights derived again round the cut and off the arm's own surface (WP-27)
+        if any(cp.get("ok") for cp in caps):
+            rep["weights"] = _rederive(bm, dl, groups, arm_names, chain, caps, start)
         # 9. the raise, before and after, near this side's new cut
-        cap_pts = sorted({v.co.copy().freeze() for cp in caps for f in cp.get("faces", []) if f and f.is_valid
+        cap_pts =sorted({v.co.copy().freeze() for cp in caps for f in cp.get("faces", []) if f and f.is_valid
                           for v in f.verts}, key=tuple)
         if cap_pts:
             bm.verts.index_update()
@@ -370,15 +786,18 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
             P1 = np.array([v.co[:] for v in bm.verts])
             E1 = np.array([[e.verts[0].index, e.verts[1].index] for e in bm.edges])
             name = "Left" if side == "L" else "Right"
-            nb, sb = raised(name, arm_names, *before, cap_pts)
-            na, sa = raised(name, arm_names, P1, E1, [dict(v[dl].items()) for v in bm.verts], cap_pts)
+            nb, sb, ab, wb = raised(name, arm_names, *before, cap_pts)
+            na, sa, aa, wa = raised(name, arm_names, P1, E1, [dict(v[dl].items()) for v in bm.verts], cap_pts)
             rep["stretch"] = {"raise_deg": RAISE_DEG, "near_edges_before": nb, "stretched_before": sb,
-                              "near_edges_after": na, "stretched_after": sa}
+                              "near_edges_after": na, "stretched_after": sa,
+                              "edges_before": ab, "stretched_all_before": wb, "edges_after": aa, "stretched_all_after": wa}
             if sa > sb:  # the cut made the raise worse: start again from the files with this side left as it was
                 rep["caps"] = [{**{k: v for k, v in cp.items() if k != "faces" and not k.startswith("_")},
                                 **({"ok": False, "reason": "stretch_rose"} if cp.get("ok") else {})} for cp in caps]
                 bm.free()
-                return main(skip={**(skip or {}), side: rep})
+                return main(skip={**(skip or {}), side: rep}, lower=lower, spots=spots)
+        for cp in caps:
+            cp["_side"] = side
         rep["caps"] = [{k: v for k, v in cp.items() if k != "faces" and not k.startswith("_")} for cp in caps]
         rep.setdefault("_caps", caps)
 
@@ -403,31 +822,65 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
     report["check"]["crossing_faces_on_caps"] = on_caps
     capset = {f for sd in report["sides"].values() for cp in sd.get("_caps", []) for f in cp.get("faces", []) if f.is_valid}
     kinds = {"cap_cap": 0, "cap_surface": 0, "surface_surface": 0, "surface_surface_new": 0}
+    new_pairs = []
     for i, j in report["check"].pop("_pairs"):
         k = (bm.faces[i] in capset) + (bm.faces[j] in capset)
         kinds[("surface_surface", "cap_surface", "cap_cap")[k]] += 1
+        cs = [bm.faces[x].calc_center_median() for x in (i, j)]
         if k == 0:
-            cs = [bm.faces[x].calc_center_median() for x in (i, j)]
-            if not all(any((c - q).length < 0.01 for q in in_cross) for c in cs):
-                kinds["surface_surface_new"] += 1
+            if all(any((c - q).length < 0.01 for q in in_cross) for c in cs):
+                continue
+            kinds["surface_surface_new"] += 1
+        new_pairs.append([[round(x, 4) for x in c] + [int(bm.faces[f] in capset)] for c, f in zip(cs, (i, j))])
     report["check"]["crossing_kinds"] = kinds
     report["check"]["new_crossings"] = kinds["cap_cap"] + kinds["cap_surface"] + kinds["surface_surface_new"]
+    if report["check"]["new_crossings"]:
+        # a dome that made surfaces cross is lowered at its cut and the whole run made again (down to flat caps)
+        planes = [(f"{sd}{k}", cp["_plane"]) for sd, s_ in report["sides"].items()
+                  for k, cp in enumerate(s_.get("_caps", [])) if cp.get("ok") and "_plane" in cp]
+        # first the dome is lowered only round each crossing (spots); where that did not help, the cut's whole dome
+        hits = {}
+        for pair in new_pairs:
+            sd = _nearest_side(pair, planes)
+            if sd:
+                hits.setdefault(sd, []).append([(a + b) / 2 for a, b in zip(pair[0][:3], pair[1][:3])])
+        nsp = new_spots(spots, hits)
+        if nsp is not None:
+            bm.free()
+            return main(skip=skip, lower=lower, spots=nsp)
+        nxt = lower_domes(lower, list(hits))
+        if nxt is not None:
+            bm.free()
+            return main(skip=skip, lower=nxt, spots=spots)
+    report["dome_lowered"] = {sd: round(x, 3) for sd, x in lower.items() if x < 1.0}
+    report["dome_spots"] = {sd: len(v) for sd, v in spots.items()}
     report["check"].pop("crossing_faces")
     if _common.flag("--debug"):
         # for looking at a run: cap faces red and crossing faces yellow in the outputs, cap points for the stretch test
         report["debug_face_fail"] = _FACE_FAIL
+        report["debug_new_crossings"] = new_pairs  # each pair: two face centres, each with 1 when it is a cap face
         report["debug_cap_points"] = [[round(c, 4) for c in v.co] for v in sorted({v for f in capset for v in f.verts},
                                                                                    key=lambda v: tuple(v.co))][::3]
         report["debug_crossing_xyz"] = [[round(c, 3) for c in f.calc_center_median()] for f in list(xf)[:400]]
         _debug_colours(bm, me, report, xf)
     all_caps = [cp for s in report["sides"].values() for cp in s.pop("_caps", [])]
     report["uv"] = _cap_uvs(bm, me, mo, all_caps)
+    cap_normals = report["uv"].pop("_normals", {})
+    bm.faces.index_update()
+    cap_normals = {f.index: ns for f, ns in cap_normals.items() if f.is_valid}
     for cp in all_caps:
         cp.pop("_plane", None)
         cp.pop("faces", None)
         cp.pop("edge_verts", None)
     bm.to_mesh(me)
     me.update()
+    if cap_normals:  # the caps' blended shading normals; every other corner keeps the normal it has
+        corner = [tuple(c.vector) for c in me.corner_normals]
+        for pi, ns in cap_normals.items():
+            for li, n in zip(me.polygons[pi].loop_indices, ns):
+                corner[li] = n
+        me.normals_split_custom_set(corner)
+        report["uv"]["cap_normals"] = len(cap_normals)
     bm.free()
 
     # step 4 output: the mesh alone
@@ -437,6 +890,14 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
     groups_saved = [g.name for g in mo.vertex_groups]
     if rigged_out:
         rm = rig_mesh
+        # the rigged copy sits in the rig's rest pose (palm-down and other passes baked after the rig moved some points)
+        rest = None
+        if rest_src is not None:
+            P_now = np.array([v.co[:] for v in me.vertices])
+            rest = rest_offsets(P_now, rest_src)
+            report["rest_offset_points"] = int((np.linalg.norm(rest, axis=1) > 1e-4).sum())
+            for v, o in zip(me.vertices, rest):
+                v.co += Vector(o)
         mod = mo.modifiers.new("Armature", "ARMATURE")
         mod.object = arm_obj
         mo.parent = arm_obj
@@ -449,6 +910,9 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
         mo.modifiers.remove(mod)
         mo.parent = None
         mo.matrix_world.identity()
+        if rest is not None:
+            for v, o in zip(me.vertices, rest):
+                v.co -= Vector(o)
         del rm
     mo.vertex_groups.clear()
     bpy.ops.object.select_all(action="DESELECT")
@@ -460,6 +924,16 @@ def main(skip=None):  # pragma: no cover - runs inside Blender
     report["ok"] = (ck["open_edges"] <= ik["open_edges"] and ck["bad_edges"] <= ik["bad_edges"]
                     and ck["new_crossings"] == 0 and ck["shells"] <= ik["shells"])
     return _finish(report, report_path)
+
+
+def _nearest_side(pair, planes):  # pragma: no cover
+    """The cut (side and number) whose plane passes nearest a crossing pair's first face (face centres as in the debug
+    list)."""
+    if not planes:
+        return None
+    c = np.array(pair[0][:3])
+    return min(planes, key=lambda sp_: abs(float((c - np.array(sp_[1][0][:])) @ np.array(sp_[1][1][:])))
+               + 0.1 * float(np.linalg.norm(c - np.array(sp_[1][0][:]))))[0]
 
 
 def _finish(report, path):  # pragma: no cover
@@ -573,9 +1047,11 @@ def _arm_bones(arm_obj, prefix):  # pragma: no cover
     return {top.name} | {c.name for c in top.children_recursive}
 
 
-def _cut_and_cap(bm, comp, pc, pn, gap, tv, dl, groups, arm_names, start, holes=(), ash=None):  # pragma: no cover
-    """Split the mesh along one flat cut piece (plane point pc, normal pn toward the arm), open the gap, let each side
-    go of the other's weights, and close each side with a flat cap."""
+def _cut_and_cap(bm, comp, pc, pn, gap, tv, dl, groups, arm_names, start, holes=(), ash=None,
+                 dome_share=1.0, spots=()):  # pragma: no cover
+    """Split the mesh along one flat cut piece (plane point pc, normal pn toward the arm), let each side go of the
+    other's weights, open the gap and draw the surface back, and close each side with a domed cap (its height
+    `dome_share` of the full dome, lowered when an earlier pass crossed)."""
     import bmesh
     from mathutils import geometry
 
@@ -621,45 +1097,73 @@ def _cut_and_cap(bm, comp, pc, pn, gap, tv, dl, groups, arm_names, start, holes=
     for copies in (arm_side, body_side):
         for src, v in copies.items():
             tv[v] = t_path[src]
-    # open the gap: clear a slab of half-width gap/2 round the plane inside the cut's outline. Every copy, and every
-    # other surface point inside the slab there (a cloth layer lying along the plane, a grazing fold), moves straight
-    # off the plane to its own side; the slab narrows to nothing at the cut's ends, which stay put.
-    moved = _clear_slab(bm, path, hole_paths, arm_side, body_side, ends, ramp, pc, pn, gap, tv, start)
+    # each side's end is rounded (WP-74): a dome of this height, and the surface beside the cut drawn back by it
+    to2, _ = _plane_frame(path, pc, pn)
+    dome = dome_share * dome_height([to2([v.co[:] for v in lp]) for lp in [path] + hole_paths], gap)
+    # weights first, on the surface as cut (drawing it back moves points nearer or further from the cut)
     released = _release(bm, arm_side, body_side, dl, groups, arm_names, set(ends), pc, pn, tv, start, ash)
-    # flat caps
+    # open the gap: every copy moves off the plane to its own side by gap/2 plus the dome height, and every other
+    # surface point near the plane inside the cut's outline or beside the cut (a cloth layer lying along the plane, a
+    # grazing fold, the surface rolling into the cut) is drawn back with it, less the further it is; all of it narrows
+    # to nothing at the cut's ends, which stay put.
+    # drawn back along the upright parts of the outline only (the front and back of the cut, where an arm meets a
+    # torso in a crease): along a level part the opening would be seen end on from the front or the back
+    # (the bare gap, without the dome, keeps UPRIGHT_LEAST of it there, so the edges stay clear of the surface)
+    draw_ramp, low_ramp = dict(ramp), dict(ramp)
+    # (an outline that crosses itself is filled plainly: its edges keep one height all round, or the fill dips
+    # under the surface where the outline crosses)
+    to2_, _ = _plane_frame(path, pc, pn)
+    tangled = any(crosses_itself(to2_([v.co[:] for v in lp])) for lp in [path] + hole_paths)
+    for lp, cl in ([] if tangled else [(path, closed)] + [(hp, True) for hp in hole_paths]):
+        P_ = [v.co[:] for v in lp]
+        for v, u_, l_ in zip(lp, upright(P_, cl), upright(P_, cl, least=UPRIGHT_LEAST)):
+            draw_ramp[v] = ramp.get(v, 1.0) * float(u_)
+            low_ramp[v] = ramp.get(v, 1.0) * float(l_)
+    moved, plan = _clear_slab(bm, path, hole_paths, arm_side, body_side, ends, ramp, pc, pn, gap, dome, closed,
+                              draw_ramp, spots, low_ramp)
     faces = []
     info = {"ok": True, "closed": bool(closed), "points": len(path), "length_m": round(length, 4), "released": released,
-            "moved_points": moved,
+            "moved_points": moved, "dome_m": round(dome, 4),
             "t_range": [round(min(t_path.values()), 3), round(max(t_path.values()), 3)]}
     if not closed:
         info["new_armpit_m"] = round((path[0].co - path[-1].co).length, 4)
     info["holes"] = len(hole_paths)
-    faces, uv2d, why = _flat_caps(bm, path, hole_paths, arm_side, body_side, ramp, pc, pn, gap, dl)
+    faces, uv2d, why = _dome_caps(bm, plan, arm_side, body_side, dl)
     if why:
         info["cap_fill"] = why
     info["_uv2d"] = uv2d
+    info["_arm_copies"] = [v for v in arm_side.values() if v not in ends]
+    info["_body_copies"] = [v for v in body_side.values() if v not in ends]
+    info["_ends"] = list(ends)
     faces = [f for f in faces if f is not None]
     info["cap_triangles"] = len(faces)
     info["faces"] = faces
     info["_plane"] = (pc.copy(), pn.copy())
+    if "--debug" in sys.argv:
+        info["debug_plane"] = [[round(x, 5) for x in pc], [round(x, 5) for x in pn]]
     del on_path
     return info
 
 
-def _flat_caps(bm, path, hole_paths, arm_side, body_side, ramp, pc, pn, gap, dl):  # pragma: no cover
-    """Both caps from one constrained Delaunay triangulation of the cut's outline (holes left open) with inner points
-    at the cut's own edge spacing, so the two caps are parallel copies and their triangles stay small enough to bend
-    near the new armpit. Inner points take their weights from the nearest edge points of their own side.
-    -> (faces, {vert: (u, v) metres on the plane}, reason or None)."""
+def _cap_plan(bm, path, hole_paths, arm_side, field, pc, pn, gap, dome, spots=()):  # pragma: no cover
+    """Both caps' shape, laid out before the surface beside them is drawn back: one constrained Delaunay
+    triangulation of the cut's outline (holes left open) with inner points at the cut's own edge spacing, and each
+    point's lift and lean off the plane. Each cap is a dome (WP-74): from its edge (the copies, already moved) it rises
+    toward the other side until the two all but touch along their crowns (CROWN_GAP), leaning a little across the cap
+    there (CROWN_TILT), so no background shows between them at rest.
+    -> {to2, frame, L2, flat_src, pts, tri, G, lift, lean, rf, plain, gap, height(P2) -> (lift, lean)}."""
     from mathutils import Vector, geometry
 
-    to2, _ = _plane_frame(path, pc, pn)
+    pre, drawn = bm.verts.layers.float_vector["pre_draw"], bm.verts.layers.int["drawn"]
+    to2, _ = _plane_frame(path, pc, pn, at=lambda v: v[pre][:] if v[drawn] else v.co[:])
     c0, ax_u, ax_v, nn = to2.frame
     loops_src = [list(path)] + [list(hp) for hp in hole_paths]
     L2 = [to2([v.co[:] for v in lp]) for lp in loops_src]
+    flat_src = [v for lp in loops_src for v in lp]
+    b_lift = np.array([float((arm_side[v].co - pc).dot(pn)) for v in flat_src])
     seg = np.concatenate([np.linalg.norm(np.diff(np.vstack([l_, l_[:1]]), axis=0), axis=1) for l_ in L2])
-    spacing = float(min(0.05, max(CAP_SPACING_MIN, 2.0 * np.median(seg))))
-    G = cap_grid(L2, spacing)
+    spacing = float(min(CAP_SPACING_MAX, max(CAP_SPACING_MIN, 2.0 * np.median(seg))))
+    G = np.asarray(cap_grid(L2, spacing), dtype=float).reshape(-1, 2)
     pts = np.vstack(L2 + [G]) if len(G) else np.vstack(L2)
     edges, off = [], 0
     for l_ in L2:
@@ -674,33 +1178,92 @@ def _flat_caps(bm, path, hole_paths, arm_side, body_side, ramp, pc, pn, gap, dl)
         off += len(l_)
     out = geometry.delaunay_2d_cdt([Vector(p) for p in pts], edges, loop_faces, 0, 1e-9, True)
     o_verts, o_faces, o_orig, o_face_src = out[0], out[2], out[3], out[5]
-    flat_src = [v for lp in loops_src for v in lp]
-    faces = []
-    uv2d = {}
+    plan = {"to2": to2, "frame": to2.frame, "L2": L2, "flat_src": flat_src, "gap": gap, "loops_src": loops_src}
     if any(len(o) == 0 for o in o_orig) or len(o_verts) != len(pts):
-        # the outline crosses itself: fall back to a plain fill
-        for copies in (arm_side, body_side):
-            loops = [[copies[v] for v in lp] for lp in loops_src]
-            flat_v = [v for lp in loops for v in lp]
-            for i, j, k in geometry.tessellate_polygon([[v.co for v in lp] for lp in loops]):
-                faces.append(_face(bm, (flat_v[i], flat_v[j], flat_v[k])))
-            for v, p in zip(flat_v, np.vstack(L2)):
-                uv2d[v] = (float(p[0]), float(p[1]))
-        return [f for f in faces if f is not None], uv2d, "plain_fill"
-    idx = [o[0] for o in o_orig]  # output vertex -> input index
-    # inside the outline and outside every hole: the triangle lies in an odd number of the input loops
-    tri = [[idx[k] for k in f] for f, src in zip(o_faces, o_face_src) if len(src) % 2 == 1]
-    B2 = np.vstack(L2)
+        # the outline crosses itself: a plain fill of the outline as it lies (the arm's side), no inner points
+        tri = [tuple(t) for t in geometry.tessellate_polygon([[arm_side[v].co for v in lp] for lp in loops_src])]
+        plan.update(plain=True, pts=np.vstack(L2), tri=tri, G=np.zeros((0, 2)), lift=b_lift,
+                    lean=np.zeros(len(b_lift)), rf=np.zeros(0))
+    else:
+        idx = [o[0] for o in o_orig]  # output vertex -> input index
+        # inside the outline and outside every hole: the triangle lies in an odd number of the input loops
+        tri = [tuple(idx[k] for k in f) for f, src in zip(o_faces, o_face_src) if len(src) % 2 == 1]
+        crown = dome_field(G, L2, spacing) if len(G) else np.zeros(0)
+        v_c = float(np.vstack(L2)[:, 1].mean())
+        if len(G):
+            G3 = c0 + G @ np.vstack([ax_u, ax_v])
+            rg, rf, rl = field(G3)
+            dome = dome * spot_share(G3, spots)  # lowered round spots where an earlier pass crossed
+        else:
+            rg, rf, rl = np.zeros(0), np.zeros(0), np.zeros(0)
+        g_lift = np.maximum.reduce([rg * (CROWN_GAP / 2 + (gap / 2 + dome - CROWN_GAP / 2) * (1.0 - crown)),
+                                    rl * (CROWN_GAP / 2 + (gap / 2 - CROWN_GAP / 2) * (1.0 - crown)),
+                                    CROWN_GAP / 2 * rf]) if len(G) else np.zeros(0)
+        # the lean fades where the drawing back does (a neck, the new armpit, near uncut surface) and is never more
+        # than the dome is high
+        g_lean = (np.clip(CROWN_TILT * (G[:, 1] - v_c) * crown * rg, -(gap / 2 + dome), gap / 2 + dome) if len(G)
+                  else np.zeros(0))
+        plan.update(plain=False, pts=pts, tri=tri, G=G, lift=np.r_[b_lift, g_lift],
+                    lean=np.r_[np.zeros(len(b_lift)), g_lean], rf=np.asarray(rf, dtype=float))
+    T = np.array(plan["tri"], dtype=int).reshape(-1, 3)
+    PT, LI, LE = plan["pts"], plan["lift"], plan["lean"]
+
+    def height(Q, chunk=512):
+        """The arm cap's lift and both caps' lean at 2D places Q (n, 2), by the plan's triangles; 0 outside them."""
+        Q = np.asarray(Q, dtype=float).reshape(-1, 2)
+        lift, lean = np.zeros(len(Q)), np.zeros(len(Q))
+        if not len(T):
+            return lift, lean
+        A_ = PT[T[:, 0]]
+        v0, v1 = PT[T[:, 1]] - A_, PT[T[:, 2]] - A_
+        den = v0[:, 0] * v1[:, 1] - v0[:, 1] * v1[:, 0]
+        ok = np.abs(den) > 1e-14
+        den = np.where(ok, den, 1.0)
+        for s_ in range(0, len(Q), chunk):
+            X = Q[s_:s_ + chunk]
+            dx = X[:, None, :] - A_[None]
+            b1 = (dx[..., 0] * v1[None, :, 1] - dx[..., 1] * v1[None, :, 0]) / den[None]
+            b2 = (v0[None, :, 0] * dx[..., 1] - v0[None, :, 1] * dx[..., 0]) / den[None]
+            b0 = 1 - b1 - b2
+            inside = ok[None] & (b0 >= -1e-9) & (b1 >= -1e-9) & (b2 >= -1e-9)
+            hit = inside.any(axis=1)
+            li = b0 * LI[T[:, 0]][None] + b1 * LI[T[:, 1]][None] + b2 * LI[T[:, 2]][None]
+            # where triangles overlap on the plane (a plain fill of an outline that crosses itself) the highest
+            t = np.argmax(np.where(inside, li, -np.inf), axis=1)
+            r = np.arange(len(X))
+            tt = T[t]
+            w0, w1, w2 = b0[r, t], b1[r, t], b2[r, t]
+            lift[s_:s_ + chunk] = np.where(hit, li[r, t], 0.0)
+            lean[s_:s_ + chunk] = np.where(hit, w0 * LE[tt[:, 0]] + w1 * LE[tt[:, 1]] + w2 * LE[tt[:, 2]], 0.0)
+        return lift, lean
+
+    plan["height"] = height
+    return plan
+
+
+def _dome_caps(bm, plan, arm_side, body_side, dl):  # pragma: no cover
+    """Both caps, made as _cap_plan laid them out: the arm's at +lift + lean off the plane, the body's at -lift +
+    lean (its edge points are the body's copies themselves). Inner points take their weights from the nearest edge
+    points of their own side. -> (faces, {vert: (u, v) metres on the plane}, reason or None)."""
+    from mathutils import Vector
+
+    pre, drawn = bm.verts.layers.float_vector["pre_draw"], bm.verts.layers.int["drawn"]
+    c0, ax_u, ax_v, nn = plan["frame"]
+    flat_src, pts, G, tri = plan["flat_src"], plan["pts"], plan["G"], plan["tri"]
+    nb_ = len(flat_src)
+    B2 = np.vstack(plan["L2"])
+    faces, uv2d = [], {}
     for copies, sign in ((arm_side, 1.0), (body_side, -1.0)):
         bverts = [copies[v] for v in flat_src]
-        rmp = [ramp.get(v, 1.0) for v in flat_src]
         allv = list(bverts)
-        for p in G:
+        for gi, p in enumerate(G):
             d = np.linalg.norm(B2 - p, axis=1)
             near = np.argsort(d)[:4]
-            r = float(rmp[near[0]])
-            co = c0 + ax_u * p[0] + ax_v * p[1] + nn * (sign * gap / 2 * r)
-            nv = bm.verts.new(Vector(co))
+            lift, lean = float(plan["lift"][nb_ + gi]), float(plan["lean"][nb_ + gi])
+            nv = bm.verts.new(Vector(c0 + ax_u * p[0] + ax_v * p[1] + nn * (sign * lift + lean)))
+            # where along the arm it is: as a flat cap a gap apart (WP-27), so the weights do not depend on the dome
+            nv[pre] = Vector(c0 + ax_u * p[0] + ax_v * p[1] + nn * (sign * plan["gap"] / 2 * float(plan["rf"][gi])))
+            nv[drawn] = 1
             w = 1.0 / np.maximum(d[near], 1e-6)
             w /= w.sum()
             acc = {}
@@ -714,14 +1277,18 @@ def _flat_caps(bm, path, hole_paths, arm_side, body_side, ramp, pc, pn, gap, dl)
             faces.append(_face(bm, (allv[i], allv[j], allv[k])))
         for v, p in zip(allv, pts):
             uv2d[v] = (float(p[0]), float(p[1]))
-    return [f for f in faces if f is not None], uv2d, None
+    return [f for f in faces if f is not None], uv2d, ("plain_fill" if plan["plain"] else None)
 
 
-def _plane_frame(path, pc, pn):  # pragma: no cover
-    """2D coordinates on the cut plane: -> (to2(P) -> (n, 2), outline polygon (m, 2))."""
+def _plane_frame(path, pc, pn, at=None):  # pragma: no cover
+    """2D coordinates on the cut plane: -> (to2(P) -> (n, 2), outline polygon (m, 2)). at: point -> position used for
+    the frame's axes (default where it is)."""
     c0 = np.array(pc[:])
     nn = np.array(pn[:])
     P = np.array([v.co[:] for v in path]) - c0
+    if at is not None:  # the cut's points where WP-27 left them, a gap apart, so the caps' inner points are laid out
+        # as WP-27 laid them out (the weights round the cut are derived from them)
+        P = np.array([at(v) for v in path]) - c0
     _, _, vt = np.linalg.svd(P, full_matrices=False)
     ax_u = vt[0] - nn * (vt[0] @ nn)
     ax_u /= np.linalg.norm(ax_u)
@@ -735,50 +1302,116 @@ def _plane_frame(path, pc, pn):  # pragma: no cover
     return to2, to2(np.array([v.co[:] for v in path]))
 
 
-def _clear_slab(bm, path, hole_paths, arm_side, body_side, ends, ramp, pc, pn, gap, tv, start):  # pragma: no cover
+def _clear_slab(bm, path, hole_paths, arm_side, body_side, ends, ramp, pc, pn, gap, dome=0.0,
+                closed=True, draw_ramp=None, spots=(), low_ramp=None):  # pragma: no cover
+    """Open the gap and draw the surface back from the cut (drawn_back, by draw_weights): each copy goes gap/2 + dome
+    off the plane to its own side, and every other point within the reach of the plane goes with it, less the further
+    it is from the plane and, outside the cut's outline, from the outline. The amount depends only on where a point
+    is, so surfaces keep their order along the normal and none cross."""
+    full = gap / 2 + dome
+    reach = DRAW_REACH * full
+    side_of, src_of = {}, {}
+    for src, v in arm_side.items():
+        side_of[v], src_of[v] = 1.0, src
+    for src, v in body_side.items():
+        side_of[v], src_of[v] = -1.0, src
+    endset = {arm_side[v] for v in ends} | set(ends)
+    cand = [v for v in bm.verts if v not in endset and (v in side_of or abs((v.co - pc).dot(pn)) < reach)]
+    if not cand:
+        return 0, _cap_plan(bm, path, hole_paths, arm_side,
+                            _draw_field(path, hole_paths, draw_ramp or ramp, pc, pn, closed, reach, low=low_ramp), pc,
+                            pn, gap, dome, spots)
+    base = _draw_field(path, hole_paths, draw_ramp or ramp, pc, pn, closed, reach, low=low_ramp)
+    w, fl, lw = base([v.co[:] for v in cand])
+    # surface that crosses the plane whole where it would be drawn back (not cut here: a piece another cut of this
+    # arm closes, the shoulder past the cut's ends) must not be pulled apart: nothing moves there, fading in over the
+    # reach round it
+    wi = {v: max(x, y, z) for v, x, y, z in zip(cand, w, fl, lw)}
+    whole = [v.co.copy() for v in cand if v not in side_of and wi[v] > 0 and any(
+        wi.get(e.other_vert(v), 0.0) > 0 and e.other_vert(v) not in side_of
+        and ((v.co - pc).dot(pn)) * ((e.other_vert(v).co - pc).dot(pn)) < -1e-12 for e in v.link_edges)]
+    field = base
+    if whole:
+        field = _draw_field(path, hole_paths, draw_ramp or ramp, pc, pn, closed, reach, whole, low=low_ramp)
+        w, fl, lw = field([v.co[:] for v in cand])
+    # each moved point remembers where it was, so the weights are derived from the surface as cut (_rederive)
+    pre, drawn = bm.verts.layers.float_vector["pre_draw"], bm.verts.layers.int["drawn"]  # made in main (a new layer
+    # would free every point reference held here)
+    moved = 0
+    wfl = {v: (x, y, z) for v, x, y, z in zip(cand, w, fl, lw)}
+    # the dome kept at each point (all of it but round spots where an earlier pass crossed)
+    full_at = dict(zip(cand, gap / 2 + dome * spot_share([v.co[:] for v in cand], spots)))
+    for v in cand:  # the cut's copies first: they are the caps' edges
+        if v not in side_of:
+            continue
+        d = (v.co - pc).dot(pn)
+        wv, fv, lv = wfl[v]
+        v[pre] = v.co + pn * (side_of[v] * gap / 2 * ramp[src_of[v]] - d)  # a copy as WP-27 left it
+        v[drawn] = 1
+        v.co += pn * (side_of[v] * max(full_at[v] * wv, gap / 2 * lv, CROWN_GAP / 2 * fv) - d)
+        moved += 1
+    plan = _cap_plan(bm, path, hole_paths, arm_side, field, pc, pn, gap, dome, spots)
+    # every other point: drawn back by the field, and inside the outline at least past its own side's cap there, so
+    # no surface is left between the caps (the caps' shape is known before anything else moves)
+    inner = [v for v in cand if v not in side_of]
+    lift = lean = np.zeros(len(inner))
+    if inner:
+        # the caps lie at lean + lift (the arm's) and lean - lift (the body's): the surface is sorted about the leaned
+        # middle between them, not the plane
+        lift, lean = plan["height"](plan["to2"]([v.co[:] for v in inner]))
+    for i, v in enumerate(inner):
+        wv, fv, lv = wfl[v]
+        d = (v.co - pc).dot(pn)
+        if not v[drawn]:
+            v[pre] = v.co
+            v[drawn] = 1
+        g = max((full_at[v] + SLAB_MARGIN) * wv, (gap / 2 + SLAB_MARGIN) * lv, (CROWN_GAP / 2 + SLAB_MARGIN) * fv,
+                lift[i] + SLAB_MARGIN if lift[i] > 0 else 0.0)
+        if g <= 0:
+            continue
+        dm = d - lean[i]
+        nd = lean[i] + float(drawn_back(np.array([dm if abs(dm) > 1e-9 else 1e-9]), g, max(reach, 2 * g))[0])
+        if abs(nd - d) < 1e-7:
+            continue
+        v.co += pn * (nd - d)
+        moved += 1
+    return moved, plan
+
+
+def _draw_field(path, hole_paths, ramp, pc, pn, closed, reach, whole=(), low=None):  # pragma: no cover
+    """draw_weights for this cut, less where the cap is narrow (local_width under NECK), fading to nothing within the
+    reach of `whole` (points where the surface crosses the plane uncut): -> f(points (n, 3)) -> (weights (n,), floor
+    (n,), low (n,)). The floor is the gap alone as WP-27 opened it (the ramp inside the outline and within GAP_NEAR
+    beside it), which every point keeps at least, so the two sides' copies never lie on each other where the drawing
+    back fades out. `low` is the weights by the `low` ramps (the bare gap's, which a level outline keeps some of)."""
+    from mathutils import Vector
     from mathutils.kdtree import KDTree
 
     to2, poly = _plane_frame(path, pc, pn)
-    every = list(path) + [v for hp in hole_paths for v in hp]
-    kd = KDTree(len(every))
-    for i, v in enumerate(every):
-        kd.insert(v.co, i)
-    kd.balance()
-    half = gap / 2
-    side_of = {}
-    for src, v in arm_side.items():
-        side_of[v] = (1.0, src)
-    for src, v in body_side.items():
-        side_of[v] = (-1.0, src)
-    moved = 0
-    cand = [v for v in bm.verts if v in side_of or (tv.get(v, 0.0) > start and abs((v.co - pc).dot(pn)) < half + SLAB_MARGIN)]
-    if not cand:
-        return 0
-    near_out = [kd.find(v.co)[2] < 0.01 for v in cand]
-    inside = inside_polygon(to2([v.co[:] for v in cand]), poly)
-    for v, ins, near in zip(cand, inside, near_out):
-        if v in side_of:
-            sign, src = side_of[v]
-            if src in ends:
-                continue
-            h = half * ramp[src]
-            d = (v.co - pc).dot(pn)
-            v.co += pn * (sign * h - d)
-            moved += 1
-            continue
-        if not (ins or near):
-            continue
-        _, j, _ = kd.find(v.co)
-        h = half * ramp[every[j]]
-        if h <= 0:
-            continue
-        d = (v.co - pc).dot(pn)
-        if abs(d) >= h + SLAB_MARGIN:
-            continue
-        sign = 1.0 if d > 0 else -1.0
-        v.co += pn * (sign * (h + SLAB_MARGIN) - d)
-        moved += 1
-    return moved
+    loops = [poly] + [to2([v.co[:] for v in hp]) for hp in hole_paths]
+    ramps = [[ramp.get(v, 1.0) for v in lp] for lp in [path] + list(hole_paths)]
+    lows = [[(low or ramp).get(v, 1.0) for v in lp] for lp in [path] + list(hole_paths)]
+    chord = None if closed else (poly[0], poly[-1])
+    loops2 = [np.asarray(lp, dtype=float) for lp in loops]
+    kw = None
+    if len(whole):
+        kw = KDTree(len(whole))
+        for i, c in enumerate(whole):
+            kw.insert(c, i)
+        kw.balance()
+
+    def f(P):
+        P = np.asarray(P, dtype=float).reshape(-1, 3)
+        P2 = to2(P)
+        w = draw_weights(P2, loops, ramps, DRAW_NEAR * reach, chord, reach)
+        wl = draw_weights(P2, loops, lows, DRAW_NEAR * reach, chord, reach)
+        # where the cap is narrow (a neck narrower than NECK), both sides are drawn back less, so they nearly meet
+        # there as they do along a wide cap's crown
+        k = np.clip(local_width(P2, loops2) / NECK, 0.0, 1.0)
+        if kw is not None:
+            k = k * np.array([min(1.0, kw.find(Vector(p))[2] / reach) for p in P])
+        return w * k, draw_weights(P2, loops, ramps, GAP_NEAR), wl * k
+    return f
 
 
 def _inner_loops(bm, comp, pc, pn, tv, start):  # pragma: no cover
@@ -927,6 +1560,202 @@ def _release(bm, arm_side, body_side, dl, groups, arm_names, ends, pc, pn, tv, s
     return out
 
 
+def _rederive(bm, dl, groups, arm_names, chain, caps, start):  # pragma: no cover
+    """WP-27: the weights of a cut arm, derived again. The arm's own surface is every point reached from the arm side of
+    its cuts without crossing a cut (near a cut a point's side is its side of the plane), the shoulder (t below `start`)
+    or a cut's end. On it only the arm's bones stay; everywhere else this arm's bones go (hair or robe that took arm
+    weight from the 3D build's fusing). Points left with nothing of their side take their neighbours' weights. Then
+    each side is smoothed on its own (the volume limit holds any point that would move too far). The cut's ends are on
+    neither surface and keep their blend. Blending both sides round the ends as well made the raise stretch more on the
+    WP-25 cases (mage left 32 against 28 without), so it is not done. Four influences, summing to one."""
+    from mathutils import Vector
+    from mathutils.kdtree import KDTree
+
+    cut = [cp for cp in caps if cp.get("ok") and cp.get("_arm_copies")]
+    if not cut:
+        return {}
+    bm.verts.index_update()
+    bm.verts.ensure_lookup_table()
+    n = len(bm.verts)
+    P = np.array([v.co[:] for v in bm.verts])
+    # where along the arm each point is, on the surface as cut (before it was drawn back from the cut, WP-74)
+    pre, drawn = bm.verts.layers.float_vector.get("pre_draw"), bm.verts.layers.int.get("drawn")
+    P0 = np.array([v[pre][:] if pre is not None and v[drawn] else v.co[:] for v in bm.verts]) if pre else P
+    t, _ = chain_param(P0, chain)
+    nbrs = [[e.other_vert(v).index for e in v.link_edges] for v in bm.verts]
+    is_arm = np.array([g in arm_names for g in groups], dtype=bool)
+    ends = sorted({v.index for cp in cut for v in cp["_ends"] if v.is_valid})
+    pts, planes = [], []
+    for k, cp in enumerate(cut):
+        for v in cp["_arm_copies"] + cp["_body_copies"]:
+            if v.is_valid:
+                pts.append(Vector(P0[v.index]))
+                planes.append(k)
+    kd = KDTree(len(pts))
+    for i, c in enumerate(pts):
+        kd.insert(c, i)
+    kd.balance()
+    side = np.zeros(n)
+    near = np.zeros(n, dtype=bool)
+    for v in bm.verts:
+        co = Vector(P0[v.index])
+        _, j, d = kd.find(co)
+        pc, pn = cut[planes[j]]["_plane"]
+        side[v.index] = (co - pc).dot(pn)
+        near[v.index] = d < RELEASE_NEAR
+    W0 = [dict(v[dl].items()) for v in bm.verts]
+    share0 = arm_share(W0, groups, arm_names)
+    # near a cut a point's side is its side of the plane; further out the arm's surface ends where its weights do
+    allowed = (t > start) & np.where(near, side > 0, share0 > ARM_SURFACE_SHARE)
+    allowed[ends] = False
+    seeds = [v.index for cp in cut for v in cp["_arm_copies"] if v.is_valid]
+    seeds += [v.index for cp in cut for f in cp.get("faces", []) if f.is_valid for v in f.verts
+              if (v.co - cp["_plane"][0]).dot(cp["_plane"][1]) > 0]
+    in_arm = flood(sorted(set(seeds)), nbrs, allowed)
+    rep = {"arm_surface_points": int(in_arm.sum())}
+    if in_arm.sum() > LEAK_SHARE * n:  # the arm's surface ran into the body: leave the weights as the cut made them
+        rep["reason"] = "arm_surface_leaked"
+        return rep
+    W, share_before = W0, share0
+    W, changed, need = keep_side(W, is_arm, in_arm, t, start)
+    W, unfilled = fill_from_neighbours(W, need, nbrs, in_arm)
+    region = set(changed) | set(need)
+    for _ in range(WEIGHT_RINGS):
+        region |= {j for i in region for j in nbrs[i] if t[j] > start}
+    W, held = smooth_weights(W, region, nbrs, in_arm)
+    for v in bm.verts:
+        d = v[dl]
+        new = top_influences(W[v.index])
+        if not new:
+            continue
+        for g in list(d.keys()):
+            del d[g]
+        for g, w in new.items():
+            d[g] = w
+    share_after = arm_share([dict(v[dl].items()) for v in bm.verts], groups, arm_names)
+    off_arm = ~in_arm & (t > start + RELEASE_RAMP)
+    rep.update(released=len(changed), filled=len(need) - unfilled, unfilled=unfilled, smoothed=len(region),
+               held_by_limit=held,
+               arm_weight_off_arm_before=int((share_before[off_arm] > 0.02).sum()),
+               arm_weight_off_arm_after=int((share_after[off_arm] > 0.02).sum()))
+    return rep
+
+
+def barycentric(p, a, b, c):
+    """Barycentric weights (3,) of point p's projection on triangle abc."""
+    p, a, b, c = (np.asarray(x, float) for x in (p, a, b, c))
+    v0, v1, v2 = b - a, c - a, p - a
+    d00, d01, d11 = v0 @ v0, v0 @ v1, v1 @ v1
+    d20, d21 = v2 @ v0, v2 @ v1
+    den = d00 * d11 - d01 * d01
+    if abs(den) < 1e-18:
+        return np.array([1.0, 0.0, 0.0])
+    v = (d11 * d20 - d01 * d21) / den
+    w = (d00 * d21 - d01 * d20) / den
+    bc = np.clip(np.array([1.0 - v - w, v, w]), 0.0, 1.0)
+    return bc / bc.sum()
+
+
+def _rest_source(bm, rest_off):  # pragma: no cover
+    """(BVH tree of the input triangles, their corner points (n, 3, 3), their corner rest offsets (n, 3, 3))."""
+    from mathutils.bvhtree import BVHTree
+
+    bm.verts.index_update()
+    tris = [[v.index for v in f.verts] for f in bm.faces]
+    co = [v.co.copy() for v in bm.verts]
+    off = np.array([v[rest_off][:] for v in bm.verts])
+    P = np.array([c[:] for c in co])
+    T = np.array(tris)
+    return BVHTree.FromPolygons(co, tris, all_triangles=True), P[T], off[T]
+
+
+def rest_offsets(points, rest_src):  # pragma: no cover
+    """Each point's offset into the rig's rest pose: that of the nearest place on the input surface."""
+    tree, corners, offs = rest_src
+    out = np.zeros((len(points), 3))
+    from mathutils import Vector
+
+    for i, p in enumerate(points):
+        hit = tree.find_nearest(Vector(p))
+        if hit[2] is None:
+            continue
+        k = hit[2]
+        bc = barycentric(hit[0][:], *corners[k])
+        out[i] = bc @ offs[k]
+    return out
+
+
+def lip_angle(v_co, cap_nb, surf_nb):
+    """The angle (degrees) at a cap's edge point between the way into its cap and the way onto the surface beside it
+    (each the mean direction to those neighbours): near 180 where the surface carries straight on from the cap, small
+    where the surface turns back along the cap (a thin lip)."""
+    a = np.mean(np.asarray(cap_nb, dtype=float) - v_co, axis=0)
+    b = np.mean(np.asarray(surf_nb, dtype=float) - v_co, axis=0)
+    na, nb_ = np.linalg.norm(a), np.linalg.norm(b)
+    if na < 1e-12 or nb_ < 1e-12:
+        return 180.0
+    return float(np.degrees(np.arccos(np.clip(a @ b / (na * nb_), -1.0, 1.0))))
+
+
+def _smooth_lips(bm, cp, sharp=LIP_SHARP, rings=LIP_RINGS, passes=LIP_PASSES):  # pragma: no cover
+    """Blunt the thin lips at a cut's edge: where the surface beside a cap turns back along it (lip_angle under
+    `sharp`), that edge point and `rings` rings of points round it on its own side are relaxed toward their neighbours
+    (`passes` halfway steps). Positions only: each moved point keeps where it was cut for the weights (pre_draw).
+    -> points moved."""
+    pre, drawn = bm.verts.layers.float_vector["pre_draw"], bm.verts.layers.int["drawn"]
+    capv = {v for f in cp.get("faces", []) if f and f.is_valid for v in f.verts}
+    ends = set(cp.get("_ends", []))
+    region = set()
+    for rim in (cp.get("_arm_copies", []), cp.get("_body_copies", [])):
+        other = set(cp.get("_body_copies", []) if rim is cp.get("_arm_copies") else cp.get("_arm_copies", []))
+        for v in rim:
+            if not v.is_valid:
+                continue
+            nbs = [e.other_vert(v) for e in v.link_edges]
+            cap_nb = [w.co[:] for w in nbs if w in capv and w not in rim]
+            surf_nb = [w.co[:] for w in nbs if w not in capv]
+            if not cap_nb or not surf_nb or lip_angle(np.array(v.co[:]), cap_nb, surf_nb) >= sharp:
+                continue
+            grow = {v}
+            for _ in range(rings):
+                grow |= {e.other_vert(x) for x in grow for e in x.link_edges}
+            region |= {x for x in grow if x not in ends and x not in other}
+    region = [v for v in region if v.is_valid]
+    if not region:
+        return 0
+    near = {f for v in region for f in v.link_faces}
+    before = _crossings_at(bm, near)
+    was = {v: (v.co.copy(), v[pre].copy(), v[drawn]) for v in region}
+    for v in region:
+        if not v[drawn]:
+            v[pre] = v.co
+            v[drawn] = 1
+    for _ in range(passes):
+        new = {v: sum((e.other_vert(v).co for e in v.link_edges), v.co * 0) / max(1, len(v.link_edges))
+               for v in region}
+        for v, c in new.items():
+            v.co = v.co * 0.5 + c * 0.5
+    if _crossings_at(bm, near) > before:  # it made something cross: the cut keeps its lips
+        for v, (co, pr, dr) in was.items():
+            v.co, v[pre], v[drawn] = co, pr, dr
+        return 0
+    return len(region)
+
+
+def _crossings_at(bm, faces):  # pragma: no cover
+    """How many face pairs cross (no shared point) with at least one face in `faces`."""
+    from mathutils.bvhtree import BVHTree
+
+    bm.faces.ensure_lookup_table()
+    tree = BVHTree.FromBMesh(bm, epsilon=0.0)
+    n = 0
+    for i, j in tree.overlap(tree):
+        if (i < j and (bm.faces[i] in faces or bm.faces[j] in faces)
+                and not set(bm.faces[i].verts) & set(bm.faces[j].verts)):
+            n += 1
+    return n
+
+
 def _check(bm):  # pragma: no cover
     import bmesh
     from mathutils.bvhtree import BVHTree
@@ -1002,6 +1831,108 @@ def texel_density(uv_tris, xyz_tris):
     return float(np.median(np.sqrt(ua[ok] / xa[ok]))) if ok.any() else 0.0
 
 
+def sample_covered(px, covered, uv, radius=SAMPLE_RADIUS_PX):
+    """The mean colour of the texels round texture point uv (0..1, v up) that the surface covers (`covered`, (h, w)
+    bool, row 0 at v 0), so a read at an island's border never takes the empty atlas beside it. With none in reach, the
+    texel under the point."""
+    h, w = covered.shape
+    xi, yi = int(math.floor(float(uv[0]) * w)), int(math.floor(float(uv[1]) * h))
+    for r in (radius, 2 * radius, 4 * radius):
+        y0, y1, x0, x1 = max(0, yi - r), min(h, yi + r + 1), max(0, xi - r), min(w, xi + r + 1)
+        if y1 <= y0 or x1 <= x0:
+            continue
+        m = covered[y0:y1, x0:x1]
+        if m.any():
+            return px[y0:y1, x0:x1][m].mean(axis=0)
+    return px[min(h - 1, max(0, yi)), min(w - 1, max(0, xi))]
+
+
+def sample_many(px, covered, uvs):
+    """The texel under each texture point (n, 2), or where that texel is not on the surface, sample_covered's read."""
+    h, w = covered.shape
+    xi = np.clip(np.floor(uvs[:, 0] * w).astype(int), 0, w - 1)
+    yi = np.clip(np.floor(uvs[:, 1] * h).astype(int), 0, h - 1)
+    out = px[yi, xi].astype(np.float64)
+    for k in np.nonzero(~covered[yi, xi])[0]:
+        out[k] = sample_covered(px, covered, uvs[k], radius=1)
+    return out
+
+
+def facing_normals(n, own, least=CAP_LEAST_FACING):
+    """Unit normals (n, 3) turned toward `own` (the cap's facing) until they face it by at least `least` (a cosine), so
+    a blend from a ring whose surface faces away never shades the cap from behind."""
+    n = np.asarray(n, float)
+    own = np.broadcast_to(np.asarray(own, float), n.shape)
+    out = n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
+    for a in np.linspace(0.1, 1.0, 10):
+        low = (out * own).sum(axis=1) < least - 1e-9
+        if not low.any():
+            break
+        m = (1 - a) * n[low] / np.maximum(np.linalg.norm(n[low], axis=1, keepdims=True), 1e-9) + a * own[low]
+        out[low] = m / np.maximum(np.linalg.norm(m, axis=1, keepdims=True), 1e-9)
+    return out
+
+
+def cap_shading(ring_n, own, far, fade=CAP_NORMAL_FADE, share=CAP_NORMAL_SHARE):
+    """Shading normals for cap corners: ring_n (the ring's normals blended to each corner) plus `share` of the corner's
+    own facing `own` (n, 3) at the ring, turning to `own` alone at `fade` from it (far: each corner's distance from the
+    ring), never facing away from `own`."""
+    ring_n = np.asarray(ring_n, float)
+    own = np.asarray(own, float)
+    t = np.clip(np.asarray(far, float) / fade, 0.0, 1.0)[:, None]
+    rn = ring_n / np.maximum(np.linalg.norm(ring_n, axis=1, keepdims=True), 1e-9)
+    return facing_normals((1 - t) * (rn + share * own) + t * own, own)
+
+
+def idw_colour(pts, ring_xyz, ring_col, k=IDW_NEAREST, power=2.0, chunk=4096):
+    """Colours for points (n, 3) blended from the ring's colours by inverse distance over the k nearest ring points."""
+    pts, ring_xyz, ring_col = (np.asarray(x, float) for x in (pts, ring_xyz, ring_col))
+    k = min(k, len(ring_xyz))
+    out = np.empty((len(pts), ring_col.shape[1]))
+    for s in range(0, len(pts), chunk):
+        d = np.linalg.norm(pts[s:s + chunk, None, :] - ring_xyz[None, :, :], axis=2)
+        nn = np.argpartition(d, k - 1, axis=1)[:, :k]
+        dn = np.take_along_axis(d, nn, axis=1)
+        wt = 1.0 / np.maximum(dn, 1e-5) ** power
+        wt /= wt.sum(axis=1, keepdims=True)
+        out[s:s + chunk] = (wt[..., None] * ring_col[nn]).sum(axis=1)
+    return out
+
+
+def dilate_fill(px, mask, rings):
+    """Grow the pixels of `mask` outward by `rings` pixels, each new pixel the mean of its filled 8-neighbours, so
+    texture filtering at a cap's edge does not pull in the atlas round it. px (h, w, c) in place -> the grown mask."""
+    H, W = mask.shape
+    ys_, xs_ = np.nonzero(mask)
+    if not len(ys_):
+        return mask.copy()
+    y0, y1 = max(0, ys_.min() - rings - 1), min(H, ys_.max() + rings + 2)
+    x0, x1 = max(0, xs_.min() - rings - 1), min(W, xs_.max() + rings + 2)
+    full = px
+    px = full[y0:y1, x0:x1]  # a view: writes land in the picture
+    done = mask[y0:y1, x0:x1].copy()
+    h, w = done.shape
+    for _ in range(int(rings)):
+        acc = np.zeros(px.shape, dtype=np.float64)
+        cnt = np.zeros((h, w))
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if not dy and not dx:
+                    continue
+                # neighbour at (y + dy, x + dx) seen from (y, x)
+                ys, yd = (slice(dy, h), slice(0, h - dy)) if dy >= 0 else (slice(0, h + dy), slice(-dy, h))
+                xs, xd = (slice(dx, w), slice(0, w - dx)) if dx >= 0 else (slice(0, w + dx), slice(-dx, w))
+                m = done[ys, xs]
+                acc[yd, xd] += np.where(m[..., None], px[ys, xs], 0.0)
+                cnt[yd, xd] += m
+        new = (cnt > 0) & ~done
+        px[new] = (acc[new] / cnt[new][:, None]).astype(px.dtype)
+        done |= new
+    out = mask.copy()
+    out[y0:y1, x0:x1] |= done
+    return out
+
+
 def raster_cover(tris_px, w, h):
     """Pixels whose centre lies in any triangle (n, 3, 2) in pixel units (x right, y down) -> (rows, cols, tri,
     barycentric (k, 3))."""
@@ -1026,18 +1957,114 @@ def raster_cover(tris_px, w, h):
     return np.concatenate(rows), np.concatenate(cols), np.concatenate(tid), np.vstack(bary)
 
 
+def ring_plane(ring_pts, beside_pts):
+    """A cap's cut plane found again from the finished model (WP-75 recolour): the best-fit plane through the cap's
+    ring points, and which side of it the cap's own surface lies on (the mean of the surface points beside the ring).
+    -> (point, unit normal, sign +1 or -1)."""
+    R = np.asarray(ring_pts, dtype=float).reshape(-1, 3)
+    pc = R.mean(axis=0)
+    pn = np.linalg.svd(R - pc)[2][-1] if len(R) >= 3 else np.array([0.0, 0.0, 1.0])
+    pn = pn / max(np.linalg.norm(pn), 1e-12)
+    side = (np.asarray(beside_pts, dtype=float).reshape(-1, 3) - pc) @ pn
+    return pc, pn, (1 if side.mean() >= 0 else -1) if len(side) else 1
+
+
+def match_faces(face_uv_centres, cap_uv_tris, tol=RECOLOUR_UV_TOL):
+    """Which faces are a cap's, found by their texture triangles (caps.json): every face whose texture centre lies
+    within `tol` of a cap triangle's centre (a dome can give several faces the same texture triangle, so one centre
+    may match more than one face). -> (sorted face indices, how many of the cap's triangles found a face)."""
+    F = np.asarray(face_uv_centres, dtype=float).reshape(-1, 2)
+    T = np.asarray(cap_uv_tris, dtype=float).reshape(-1, 3, 2).mean(axis=1)
+    faces, found = np.zeros(len(F), dtype=bool), 0
+    for s_ in range(0, len(T), 512):
+        d = np.linalg.norm(T[s_:s_ + 512, None, :] - F[None, :, :], axis=2) <= tol
+        faces |= d.any(axis=0)
+        found += int(d.any(axis=1).sum())
+    return np.where(faces)[0].tolist(), found
+
+
+def recolour_main():  # pragma: no cover - runs inside Blender
+    """WP-75: colour a separated rig's caps again from a new picture (a repainted clean-up), the way the cut coloured
+    them (_colour_caps). The caps are found by their texture triangles in caps.json; nothing else of the picture
+    changes. Run: blender -b --python separate.py -- --recolour <rig.glb> <caps.json> <picture.png> <out.png>
+    --report <json>"""
+    import bmesh
+    import bpy
+    from mathutils import Vector
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import _common
+
+    argv = [a for a in _common.after_double_dash() if a != "--recolour"]
+    rig, caps_path, picture, out_png = (os.path.abspath(p) for p in argv[:4])
+    report_path = _common.opt("--report", None)
+    report = {"ok": False, "caps": []}
+    _common.open_glb(rig)
+    mo = max((o for o in bpy.context.scene.objects if o.type == "MESH"), key=lambda o: len(o.data.vertices), default=None)
+    caps = json.load(open(caps_path, encoding="utf-8")).get("caps", [])
+    if mo is None or not mo.data.uv_layers or not caps:
+        report["reason"] = "no_mesh" if mo is None else ("no_uv" if not mo.data.uv_layers else "no_caps")
+        return _finish(report, report_path)
+    bm = bmesh.new()
+    bm.from_mesh(mo.data)
+    bm.transform(mo.matrix_world)
+    # the export split points along texture seams (every cap's edge is one); join them so a cap meets its ring again
+    # (texture points are kept per face corner)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
+    bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 3])
+    bm.faces.ensure_lookup_table()
+    uvl = bm.loops.layers.uv.active
+    centres = np.array([np.mean([l[uvl].uv[:] for l in f.loops], axis=0) for f in bm.faces])
+    island_faces, island_uvs, kept = [], [], []
+    for cap in caps:
+        tris = cap.get("uv_tris") or []
+        idx, found = match_faces(centres, tris)
+        rec = {"side": cap.get("side"), "of": cap.get("of"), "triangles": len(tris), "found": found}
+        report["caps"].append(rec)
+        if not tris or found < RECOLOUR_FOUND_SHARE * len(tris):
+            rec["reason"] = "not_found"
+            continue
+        fs = [bm.faces[i] for i in idx]
+        island_faces.append(fs)
+        island_uvs.append(np.array([[l[uvl].uv[:] for l in f.loops] for f in fs]))
+        kept.append(rec)
+    capset = {f for fs in island_faces for f in fs}
+    planes = []
+    for fs in island_faces:
+        ring = {v for f in fs for v in f.verts if any(g not in capset for g in v.link_faces)}
+        beside = [g.calc_center_median()[:] for v in ring for g in v.link_faces if g not in capset]
+        pc, pn, sign = ring_plane([v.co[:] for v in ring], beside)
+        planes.append((Vector(pc), Vector(pn), sign))
+    img = bpy.data.images.load(picture)
+    img.colorspace_settings.name = "sRGB"
+    images, rings = _colour_caps(bm, island_faces, island_uvs, planes, capset, [(img, False)]) if island_faces else ({}, [])
+    for rec, rr in zip(kept, rings):
+        rec.update(rr)
+    img.file_format = "PNG"
+    img.save(filepath=out_png)
+    report.update(ok=bool(island_faces), recoloured=len(island_faces), images=images)
+    if not island_faces:
+        report["reason"] = "caps_not_found"
+    _finish(report, report_path)
+
+
 def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
     """Texture space for the caps in the atlas's free space (uvfit.place_islands, every existing piece stays put), at
-    the surface's own texel density (smaller if the free space is short), and their colour from the surface along
-    their edge: each cap pixel takes the mean colour of the three nearest edge points of its cap, sampled where the
-    surface meets the cap. Normal maps get a flat normal there."""
+    the surface's own texel density (smaller if the free space is short), and their colour from the surface round
+    their edge (WP-27): each edge point's colour is read just inside the surface triangles beside it, from texels the
+    surface really covers (never the empty atlas round an island), and each cap pixel blends the colours of the edge
+    points nearest it by inverse distance, so a cap follows its ring where the ring changes colour. Every picture of
+    the material is filled the same way; normal maps get a flat normal. Cap corners get blended shading normals
+    (_cap_normals). The report lists each cap's texture triangles (so the paint tools can find the caps) and how far
+    its colour at the ring is from the surface beside it."""
     import uvfit
 
     uvl = bm.loops.layers.uv.active
     if uvl is None or not caps:
         return {"placed": 0, "reason": "no_uv" if uvl is None else "no_caps"}
     capset = set()
-    islands = []  # (faces, {vert: (u, v) metres})
+    islands = []  # (faces, {vert: (u, v) metres}, side, "arm" or "body")
+    planes = []  # each island's cut plane and which side of it the island faces
     for cp in caps:
         fs = [f for f in cp.get("faces", []) if f.is_valid]
         if not fs or "_plane" not in cp:
@@ -1047,8 +2074,11 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
         for sign in (1, -1):
             side = [f for f in fs if ((f.calc_center_median() - pc).dot(pn) > 0) == (sign > 0)]
             if side:
-                islands.append((side, uv2d))
+                islands.append((side, uv2d, cp.get("_side"), "arm" if sign > 0 else "body"))
+                planes.append((pc, pn, sign))
         capset.update(fs)
+    for f in capset:
+        f.smooth = True  # shaded by the normals blended from its ring (_cap_normals), not as one flat plane
     surf = [f for f in bm.faces if f not in capset]
     uv_t = np.array([[l[uvl].uv[:] for l in f.loops] for f in surf])
     xyz_t = np.array([[l.vert.co[:] for l in f.loops] for f in surf])
@@ -1057,7 +2087,7 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
     scale, placed = 1.0, None
     while scale >= 0.2:
         isl_tris = []
-        for fs, uv2d in islands:
+        for fs, uv2d, _, _ in islands:
             isl_tris.append(np.array([[np.array(uv2d.get(l.vert, (0.0, 0.0))) * k * scale for l in f.loops]
                                       for f in fs]))
         placed = uvfit.place_islands(uv_t, isl_tris, res=1024, pad_cells=2)
@@ -1069,15 +2099,66 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
         return out
     out["scale"] = round(scale, 3)
     new_uv = []
-    for (fs, _), tris, pl in zip(islands, isl_tris, placed):
+    for (fs, _, _, _), tris, pl in zip(islands, isl_tris, placed):
         moved = uvfit.apply_placement(tris, pl)
         for f, tuv in zip(fs, moved):
             for l, uv in zip(f.loops, tuv):
                 l[uvl].uv = (float(uv[0]), float(uv[1]))
         new_uv.append(moved)
-    # colour: every image the material uses
+    out["cap_islands"] = [{"side": sd, "of": of, "triangles": len(fs), "uv_tris": np.round(muv, 6).tolist()}
+                          for (fs, _, sd, of), muv in zip(islands, new_uv)]
     imgs = _material_images(mo)
-    out["images"] = {}
+    out["images"], ring_report = _colour_caps(bm, [isl[0] for isl in islands], new_uv, planes, capset, imgs)
+    for isl, rr in zip(out["cap_islands"], ring_report):
+        isl.update(rr)
+    out["placed"] = len(placed)
+    out["_normals"] = _cap_normals([isl[0] for isl in islands], capset)
+    return out
+
+
+def _colour_caps(bm, island_faces, island_uvs, planes, capset, imgs):  # pragma: no cover
+    """WP-27's cap colouring, for the caps' islands already placed in texture space (`island_uvs`: each island's
+    texture triangles, in face order): each ring point's colour is read just inside the surface triangles beside it,
+    from texels the surface really covers; each cap pixel blends the ring colours nearest it by inverse distance, and
+    the surface's own detail is mirrored across the ring within MIRROR_SWING. Normal maps get a flat normal. `planes`:
+    each island's (cut point, cut normal, which side of it the island faces), for the mirror. Writes into `imgs`
+    ((image, is_normal) pairs) in place. -> ({image name: report}, [per island ring report]). Used by _cap_uvs and by
+    the recolour run (recolour_main), so a repainted picture gets its caps coloured the same way."""
+    uvl = bm.loops.layers.uv.active
+    surf = [f for f in bm.faces if f not in capset]
+    uv_t = np.array([[l[uvl].uv[:] for l in f.loops] for f in surf])
+    # each island's ring: its edge points, their position, where to read the surface colour beside each, and where
+    # the point sits on the cap
+    rings = []
+    for fs in island_faces:
+        reads_of = {}
+        for f in fs:
+            for v in f.verts:
+                if v in reads_of:
+                    continue
+                reads = []
+                for l in v.link_loops:
+                    if l.face in capset:
+                        continue
+                    cen = np.mean([x[uvl].uv[:] for x in l.face.loops], axis=0)
+                    uv = np.array(l[uvl].uv[:])
+                    reads.append(uv + RING_INSET * (cen - uv))
+                if reads:
+                    reads_of[v] = reads
+        cap_uv = {}
+        for f in fs:
+            for l in f.loops:
+                if l.vert in reads_of:
+                    cap_uv[l.vert] = l[uvl].uv[:]
+        rv = sorted(reads_of, key=lambda v: tuple(v.co))
+        rings.append((np.array([v.co[:] for v in rv]).reshape(-1, 3), [reads_of[v] for v in rv],
+                      np.array([cap_uv[v] for v in rv]).reshape(-1, 2)))
+    mirrors = [_mirror_source(bm, fs, capset, surf, uvl, *pl) for fs, pl in zip(island_faces, planes)]
+    images = {}
+    cover = {}
+    mirror_uv = {}
+    ring_report = [{"ring_points": len(r[1])} for r in rings]
+    base_name = next((im.name for im, nrm in imgs if "base" in im.name.lower()), imgs[0][0].name if imgs else None)
     for img, is_normal in imgs:
         w, h = img.size
         if not w or not h:
@@ -1085,49 +2166,42 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
         px = np.empty(w * h * img.channels, dtype=np.float32)
         img.pixels.foreach_get(px)
         px = px.reshape(h, w, img.channels)  # row 0 = v 0 (bottom)
+        if (w, h) not in cover:
+            r_, c_, _, _ = raster_cover(np.stack([uv_t[..., 0] * w, uv_t[..., 1] * h], axis=-1), w, h)
+            m = np.zeros((h, w), bool)
+            m[r_, c_] = True
+            cover[(w, h)] = m
+        covered = cover[(w, h)]
         filled = 0
-        for (fs, _), muv in zip(islands, new_uv):
-            # edge points of this cap: vertices with a surface face, their surface UV and colour
-            edge = {}
-            for f in fs:
-                for v in f.verts:
-                    if v in edge:
-                        continue
-                    for l in v.link_loops:
-                        if l.face not in capset:
-                            edge[v] = l[uvl].uv.copy()
-                            break
-            if not edge:
+        for n_isl, (fs, muv, (r_xyz, r_reads, r_cap_uv)) in enumerate(zip(island_faces, island_uvs, rings)):
+            rows, cols, tid, bary = raster_cover(np.stack([muv[..., 0] * w, muv[..., 1] * h], axis=-1), w, h)
+            if not len(rows) or not len(r_xyz):
                 continue
-            ev = list(edge)
-            e_xyz = np.array([v.co[:] for v in ev])
-            e_uv = np.array([edge[v][:] for v in ev])
-            e_col = px[np.clip((e_uv[:, 1] * h).astype(int), 0, h - 1), np.clip((e_uv[:, 0] * w).astype(int), 0, w - 1)]
-            tris_px = np.stack([muv[..., 0] * w, muv[..., 1] * h], axis=-1)
-            rows, cols, tid, bary = raster_cover(tris_px, w, h)
-            if not len(rows):
-                continue
-            # grow by two pixels so filtering does not pull in the neighbouring atlas colour
-            P3 = np.array([[l.vert.co[:] for l in f.loops] for f in fs])
-            pts = (bary[:, :, None] * P3[tid]).sum(axis=1)
             mask = np.zeros((h, w), bool)
             mask[rows, cols] = True
-            grown = uvfit.grow(mask, 2) & ~mask
-            gr, gc = np.nonzero(grown)
             if is_normal:
-                col = np.tile(np.array([0.5, 0.5, 1.0, 1.0][:img.channels], dtype=np.float32), (len(rows), 1))
-                gcol = np.tile(col[:1], (len(gr), 1))
+                px[rows, cols] = np.array([0.5, 0.5, 1.0, 1.0][:img.channels], dtype=np.float32)
             else:
-                d = np.linalg.norm(pts[:, None, :] - e_xyz[None, :, :], axis=2)
-                nn3 = np.argsort(d, axis=1)[:, :3]
-                col = e_col[nn3].mean(axis=1)
-                # grown pixels copy the nearest filled pixel
-                fr, fc = rows, cols
-                j = np.argmin((gr[:, None] - fr[None, :]) ** 2 + (gc[:, None] - fc[None, :]) ** 2, axis=1) if len(gr) else []
-                gcol = col[j] if len(gr) else np.zeros((0, img.channels))
-            px[rows, cols] = col
-            if len(gr):
-                px[gr, gc] = gcol
+                ring_col = np.array([np.mean([sample_covered(px, covered, uv) for uv in reads], axis=0)
+                                     for reads in r_reads])
+                P3 = np.array([[l.vert.co[:] for l in f.loops] for f in fs])
+                pts = (bary[:, :, None] * P3[tid]).sum(axis=1)
+                col = idw_colour(pts, r_xyz, ring_col)
+                if (n_isl, w, h) not in mirror_uv:
+                    mirror_uv[(n_isl, w, h)] = _mirror_uvs(pts, mirrors[n_isl])
+                muv_s, ok = mirror_uv[(n_isl, w, h)]
+                if ok.any():  # the surface's own detail, mirrored across the cut onto the cap, within a small swing
+                    col[ok] += np.clip(sample_many(px, covered, muv_s[ok]) - col[ok], -MIRROR_SWING, MIRROR_SWING)
+                    ring_report[n_isl]["mirrored_share"] = round(float(ok.mean()), 3)
+                px[rows, cols] = col
+            dilate_fill(px, mask, CAP_PAD_PX)
+            if not is_normal and img.name == base_name:
+                # the cap's colour at each edge point (the picture as it will be read there) against the surface's
+                got = np.array([px[min(h - 1, int(v_ * h)), min(w - 1, int(u_ * w))] for u_, v_ in r_cap_uv])
+                c3 = ring_col[:, :3]
+                ring_report[n_isl].update(
+                    ring_colour_diff=round(float(np.abs(got[:, :3] - c3).mean() * 255), 2),
+                    ring_colour_spread=round(float(np.abs(c3 - c3.mean(axis=0)).mean() * 255), 2))
             filled += len(rows)
         img.pixels.foreach_set(px.ravel())
         img.update()
@@ -1135,9 +2209,91 @@ def _cap_uvs(bm, me, mo, caps):  # pragma: no cover
             img.pack()
         except RuntimeError:
             pass
-        out["images"][img.name] = {"normal": is_normal, "pixels_filled": int(filled), "size": [w, h]}
-    out["placed"] = len(placed)
+        images[img.name] = {"normal": is_normal, "pixels_filled": int(filled), "size": [w, h]}
+    return images, ring_report
+
+
+def _cap_normals(island_faces, capset):  # pragma: no cover
+    """Shading normals for each cap corner (cap_shading): at the ring the surface normals round it blended by inverse
+    distance, plus CAP_NORMAL_SHARE of the dome's own facing there, so the cap shades on from the surface beside it;
+    further in, the dome's own facing alone. -> {face: [normal per corner]}."""
+    out = {}
+    for fs in island_faces:
+        ring, ring_n = [], []
+        for v in {v for f in fs for v in f.verts}:
+            nb = [g for g in v.link_faces if g not in capset]
+            if nb:
+                n = sum((g.normal * g.calc_area() for g in nb), type(v.co)((0.0, 0.0, 0.0)))
+                if n.length > 1e-12:
+                    ring.append(v.co[:])
+                    ring_n.append(n.normalized()[:])
+        if not ring:
+            continue
+        # each corner's own facing is the dome's there (WP-74): the area-weighted normal of the cap's faces round it
+        vn = {}
+        for f in fs:
+            for v in f.verts:
+                vn[v] = vn.get(v, 0) + np.array(f.normal[:]) * f.calc_area()
+        own = np.array([vn[lp.vert] for f in fs for lp in f.loops], dtype=float)
+        own /= np.maximum(np.linalg.norm(own, axis=1, keepdims=True), 1e-12)
+        pts = np.array([lp.vert.co[:] for f in fs for lp in f.loops])
+        R = np.array(ring)
+        far = np.array([np.linalg.norm(R - p, axis=1).min() for p in pts])
+        nb = cap_shading(idw_colour(pts, R, np.array(ring_n)), own, far)
+        k = 0
+        for f in fs:
+            out[f] = [tuple(nb[k + i]) for i in range(len(f.loops))]
+            k += len(f.loops)
     return out
+
+
+def _mirror_source(bm, fs, capset, surf, uvl, pc, pn, sign):  # pragma: no cover
+    """What a cap's colour is mirrored from: its ring as segments, and the surface on its own side of the cut near it
+    (a BVH over those triangles with their texture points)."""
+    from mathutils import Vector
+    from mathutils.bvhtree import BVHTree
+
+    fset = set(fs)
+    seg = [e for f in fs for e in f.edges if sum(1 for g in e.link_faces if g in fset) == 1]
+    if not seg:
+        return None
+    A = np.array([e.verts[0].co[:] for e in seg])
+    B = np.array([e.verts[1].co[:] for e in seg])
+    cv = np.array([v.co[:] for f in fs for v in f.verts])
+    cen = cv.mean(axis=0)
+    reach = float(np.linalg.norm(cv - cen, axis=1).max()) + MIRROR_REACH
+    near = [f for f in surf if sign * (f.calc_center_median() - pc).dot(pn) > 0
+            and (f.calc_center_median() - Vector(cen)).length < reach]
+    if not near:
+        return None
+    co = [v.co.copy() for f in near for v in f.verts]
+    polys = [(3 * i, 3 * i + 1, 3 * i + 2) for i in range(len(near))]
+    tree = BVHTree.FromPolygons(co, polys, all_triangles=True)
+    xyz = np.array([[v.co[:] for v in f.verts] for f in near])
+    uv = np.array([[l[uvl].uv[:] for l in f.loops] for f in near])
+    return A, B, tree, xyz, uv
+
+
+def _mirror_uvs(pts, src):  # pragma: no cover
+    """For each cap point, the texture point of the surface where its mirror image across the nearest place on the
+    ring lands, and whether it landed on the surface (within MIRROR_LAND of it)."""
+    from mathutils import Vector
+
+    n = len(pts)
+    if src is None or not n:
+        return np.zeros((n, 2)), np.zeros(n, dtype=bool)
+    A, B, tree, xyz, uv = src
+    R = closest_on_segments(pts, A, B)
+    M = 2 * R - pts
+    out, ok = np.zeros((n, 2)), np.zeros(n, dtype=bool)
+    for i, m in enumerate(M):
+        hit = tree.find_nearest(Vector(m))
+        if hit[2] is None or hit[3] > MIRROR_LAND:
+            continue
+        bc = barycentric(hit[0][:], *xyz[hit[2]])
+        out[i] = bc @ uv[hit[2]]
+        ok[i] = True
+    return out, ok
 
 
 def _material_images(mo):  # pragma: no cover
@@ -1156,4 +2312,7 @@ def _material_images(mo):  # pragma: no cover
 
 
 if __name__ == "__main__":  # pragma: no cover
-    main()
+    if "--recolour" in sys.argv:
+        recolour_main()
+    else:
+        main()

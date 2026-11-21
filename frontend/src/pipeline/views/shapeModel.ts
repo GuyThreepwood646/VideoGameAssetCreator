@@ -1,6 +1,6 @@
 // The Shape tab's settings and geometry helpers (WP-26). Pure functions: the tab keeps the state, the backend does the
 // cut. Ranges match backend/vgac/separate.py (GAP_RANGE, START_RANGE) and main.py ShapeIn.
-import type { ShapeArm, ShapeBody } from '../../api'
+import type { ShapeArm, ShapeBody, ShapeLog } from '../../api'
 
 export type ShapeSide = 'L' | 'R' | 'both'
 export type ShapeSettings = { side: ShapeSide; gapMm: number; startPercent: number }
@@ -86,4 +86,15 @@ export function focusCentre(arms: Partial<Record<'L' | 'R', ShapeArm>>, side: Sh
   const mid = [0, 1, 2].map((k) => starts.reduce((a, p) => a + p[k], 0) / starts.length) as [number, number, number]
   const spread = Math.max(...starts.map((p) => Math.hypot(p[0] - mid[0], p[1] - mid[1], p[2] - mid[2])))
   return { point: mid, radius: spread + 0.2 }
+}
+
+// The engine's model check in words (its numbers stay in metrics.shape_log.engine). The arm stays part of the one model
+// (it moves with the skeleton); what is new is a closed surface on the arm and on the body where they were joined.
+export function shapeCheckLine(e: ShapeLog['engine']): string {
+  const whole = e.pieces === 1 && e.open_edges === 0 && e.bad_edges === 0 && e.new_crossings === 0
+  const closed = e.caps_placed > 0 ? ` (${e.caps_placed} new surfaces in all)` : ''
+  if (whole) {
+    return `The model is still one closed piece with no holes: the arm and the body now each have their own surface where they were joined${closed}.`
+  }
+  return 'The model check found holes, overlaps or loose pieces after the cut. Look at the model closely before keeping it.'
 }

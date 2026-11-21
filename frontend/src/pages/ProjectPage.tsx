@@ -10,7 +10,7 @@ import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
 import { useEvents } from '../events'
 import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
-import { axisWord, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
+import { axisWord, CATEGORY_HELP, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
 import { hairNotes } from '../hairNotes'
 import { editLoras } from '../editLoras'
 import { EditLoras } from '../pipeline/EditLoras'
@@ -21,6 +21,9 @@ import { mergeStepParams, type StepParams } from '../pipeline/stepSettings'
 import { differentLook, lookLabelForStyle, presetById, projectStyleFor, syncLook, usePresets, type LookChoice } from '../presets'
 import { categoryLabel, useRefData } from '../refdata'
 import { useConfirm } from '../components/Confirm'
+
+// Shown as soon as Tileable material is chosen, so nobody picks it for a rock or a bush and is surprised by a flat swatch.
+const MATERIAL_NOTE = `${CATEGORY_HELP.material.meaning} ${CATEGORY_HELP.material.why}`
 
 export default function ProjectPage() {
   const { pid = '' } = useParams()
@@ -180,6 +183,14 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
         </div>
       </Link>
       <div className="asset-card-tools">
+        <label className="small tile-toggle" title="Show this asset's picture on the project's tile on the Projects page">
+          <input
+            type="checkbox"
+            checked={asset.show_on_project !== false}
+            onChange={(e) => void api.updateAsset(asset.id, { show_on_project: e.target.checked }).then(onChanged)}
+          />{' '}
+          Show on the project tile
+        </label>
         {badge && (
           <button type="button" className="chip chip-accent" aria-expanded={badge.open} onClick={badge.toggle} title="Show or hide the variants of this asset">
             {badge.text}
@@ -483,7 +494,7 @@ function CreateAssetForm({ project }: { project: Project }) {
         />
       )}
       {fromPicture && sizeNote(picture) && <div className="tool-note small">{sizeNote(picture)}</div>}
-      <Field label="1. What are you making?" term={'category.' + category} hint={cat ? (cat.rig_engine === 'none' ? 'No skeleton; it will not animate.' : 'It will get a skeleton and can be animated.') : undefined}>
+      <Field label="1. What are you making?" term={'category.' + category} hint={cat ? (cat.id === 'material' ? MATERIAL_NOTE : cat.rig_engine === 'none' ? 'No skeleton; it will not animate.' : 'It will get a skeleton and can be animated.') : undefined}>
         <div className="category-tiles" role="radiogroup" aria-label="What are you making?">
           {ref?.categories.map((c) => (
             <button key={c.id} type="button" role="radio" aria-checked={category === c.id} aria-pressed={category === c.id} className="category-tile" onClick={() => changeCategory(c.id)}>

@@ -18,12 +18,13 @@ PORT_A, PORT_B = 59481, 59482
 
 
 @pytest.fixture
-def bare(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """The tracked defaults with nothing laid over them (no machine settings yet), unused ports, a temporary library."""
+def bare(tmp_path: Path, short_library_root: Path, monkeypatch: pytest.MonkeyPatch):
+    """The tracked defaults with nothing laid over them (no machine settings yet), unused ports, a temporary library
+    (a short folder: the app refuses a library path over 89 characters, and pytest's own folders are longer)."""
     cfg = {
         "instances": {"a": {"url": f"http://127.0.0.1:{PORT_A}", "gpu": "RTX 3060", "role": "3d"},
                       "b": {"url": f"http://127.0.0.1:{PORT_B}", "gpu": "RTX 3080", "role": "images"}},
-        "library_path": str(tmp_path / "library"),
+        "library_path": str(short_library_root / "library"),
         "min_free_ram_gb": 0,
     }
     (tmp_path / "config.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
@@ -229,11 +230,11 @@ def test_folders_must_exist_and_be_writable(bare):
     f = tmp / "a.txt"
     f.write_text("x", encoding="utf-8")
     with pytest.raises(SettingError, match="is a file"):
-        set_setting("loras_dir", str(f))
+        set_setting("export_path", str(f))
     ok = tmp / "loras"
     ok.mkdir()
-    assert set_setting("loras_dir", str(ok))["applies"] == "now"
-    assert str(config.get_settings().loras_dir) == str(ok)
+    assert set_setting("export_path", str(ok))["applies"] == "now"
+    assert str(config.get_settings().export_path) == str(ok)
     proj = tmp / "unity"
     proj.mkdir()
     with pytest.raises(SettingError, match="not a Unity project"):
@@ -245,19 +246,20 @@ def test_folders_must_exist_and_be_writable(bare):
         set_setting("unity_exe", str(_fake_blender(tmp / "u")))
 
 
-def test_library_and_input_folder_wait_for_a_restart(bare):
+def test_library_and_input_folder_wait_for_a_restart(bare, short_library_root):
     tmp, machine = bare
-    lib = tmp / "other-library"
+    short = short_library_root
+    lib = short / "other-library"
     lib.mkdir()
     out = set_setting("library_path", str(lib))
     assert out["applies"] == "next_start" and "restart" in out["message"] and out["restart_needed"] == ["library_path"]
     assert _saved(machine)["backend"]["library_path"] == str(lib)
-    assert config.get_settings().library_path == tmp / "library"  # the running app still uses the old one
+    assert config.get_settings().library_path == short / "library"  # the running app still uses the old one
     listing = setup_settings.describe()["settings"]
     row = next(r for r in listing if r["key"] == "library_path")
-    assert row["pending_restart"] is True and row["value"] == str(lib) and row["in_use"] == str(tmp / "library")
+    assert row["pending_restart"] is True and row["value"] == str(lib) and row["in_use"] == str(short / "library")
     # Giving it back clears the wait.
-    assert set_setting("library_path", str(tmp / "library"))["restart_needed"] == []
+    assert set_setting("library_path", str(short / "library"))["restart_needed"] == []
 
 
 def test_engine_address_must_be_local_and_its_own(bare):

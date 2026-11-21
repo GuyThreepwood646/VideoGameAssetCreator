@@ -260,6 +260,16 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                                           "why": "Close tucks the arms in toward the body, Open holds them a little further out. Relaxed suits most characters. The character itself is not changed, only how it moves.",
                                           "technical": "arm_pose close | relaxed | open; the built-in idle, walk, run and turn drop each upper arm to a target from straight down (Relaxed 24, 23, 35 and 22 degrees; Close 8 less, Open 10 more), never closer than 10 degrees or into the hips"},
                  "options": {"close": "Close", "relaxed": "Relaxed", "open": "Open"}},
+    "hand_pose": {"simple": True, "help": {"meaning": "How the hands hold themselves in the moves: a gentle relaxed curl, a looser fist, or flat open hands.",
+                                           "why": "Relaxed suits most characters. Open is the old flat hand. Attacks still close the hand into a grip whatever this is set to. The character itself is not changed, only how it moves.",
+                                           "technical": "hand_pose open | relaxed | fist; procanim --hand-pose. Relaxed bends each finger's joints by 12, 16 and 10 degrees (first, middle, last) times a finger factor (index 0.75, middle 0.9, ring 1.0, little 1.1; thumb 0.6), wrist 6 degrees; fist 50, 65 and 35 degrees; the attack grip blends to 50, 60 and 35 over the strike (a steeper grip put the ring and little fingertips through the palm on m1). Hands with no finger bones (one-lump hands) are not curled"},
+                                           "options": {"open": "Open", "relaxed": "Relaxed", "fist": "Loose fist"}},
+    "finger_curl": {"simple": True, "help": {"meaning": "How far the chosen hand shape curls the fingers. 0 keeps them straight, 1 is as designed, up to 1.5.",
+                                             "why": "Turn it down for a calmer hand or up for a more curled one.",
+                                             "technical": "finger_curl 0 to 1.5; procanim --finger-curl scales every hand-shape angle"}},
+    "neutral_pose": {"simple": True, "help": {"meaning": "Adds one still frame of the arms at rest, a clip named Neutral pose.",
+                                              "why": "A pose to hold or blend from, at the same arm angle as the stand still (the Arm pose setting applies). Off unless wanted.",
+                                              "technical": "Adds procanim --neutral-pose: one key holding the idle arm angle (gait.arm_hold_deg, idle), exported as a clip named Neutral pose; humanoids only"}},
     "sprite_frames": {"simple": False, "help": {"meaning": "How many pictures each move gets in the 2D sprite sheet.",
                                                 "why": "More frames look smoother but make a bigger sheet; 8 is a good start for a walk or an attack.",
                                                 "technical": "Frames per clip rendered into sprite_sheet and sprite_atlas (1 to 64)"}},
@@ -273,7 +283,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                "options": {"off": "Off", "subtle": "Subtle", "normal": "Normal", "strong": "Strong"}},
     # The person's own LoRAs for the picture-edit uses (docs/PLAN-qwen-edit-loras-2026-11-18.md). Each use has its own choice.
     "edit_addons": {"simple": False, "help": {"meaning": "Your own LoRAs for this redraw: picture-edit LoRAs you added, loaded after the built-in edit LoRA.",
-                                              "why": "Only this redraw uses them; a later redraw chooses again. Check the picture after you choose one.",
+                                              "why": "Only this redraw uses them; a later redraw starts again from the ones you set to start on in Your library. Check the picture after you choose one.",
                                               "technical": "Your LoRAs (stage edit) chained after the Lightning LoRA on the edit graph (qwen_edit.add_personal_loras)"},
                     "options": {"off": "Off", "subtle": "Subtle", "normal": "Normal", "strong": "Strong"}},
     "view_addons": {"simple": False, "help": {"meaning": "Your own LoRAs for the side views: picture-edit LoRAs you added, loaded after the built-in views LoRA.",
@@ -717,7 +727,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     "library_missing": {
         "severity": "warn",
         "ok": "The shared animation library is on this PC.",
-        "fail": "The shared animation library is not on this PC, so this character has only the built-in moves: no library walk, run or jump.",
+        "fail": "The shared animation library is not on this PC, so the extra library moves are not made and the character has only the built-in moves until it is back.",
     },
     # "Add a move" (moves.py): the moves the person added from the library or their own file.
     "added_moves": {
@@ -1581,57 +1591,20 @@ def param_help(name: str) -> dict[str, Any]:
     return PARAM_HELP.get(name, {"simple": False, "help": {"meaning": name.replace("_", " "), "why": "", "technical": name}})
 
 
-# --- Your own LoRAs: how a file got where ComfyUI can read it (addon_links.py, user_addons.py) --------------------------------
-# One sentence per thing that happened, so the wording always says what was really done: registered in place, linked, or copied.
-
-
-def _size_words(n: int) -> str:
-    return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{max(1, round(n / 1e6))} MB"
-
-
-def addon_place_words(route: str, *, size: int = 0, folder: str = "", where: str = "", source: str = "") -> str:
-    """The sentence for a LoRA the person chose on this computer. route: in_place, already_here, link, copy, copy_needed, upload."""
-    if route == "in_place":
-        return f"Used where it is: this file is already in a folder ComfyUI reads ({where}). Nothing was copied or linked."
-    if route == "already_here":
-        return "This file is already in the app's LoRA folder. Nothing was copied or linked."
-    if route == "link":
-        return ("Linked: the app made a second name for your file in its own LoRA folder, on the same drive. It takes no extra space "
-                f"and your original ({source}) is untouched.")
-    if route == "copy":
-        return f"Copied: a copy of your file ({_size_words(size)}) was made in the app's LoRA folder ({folder}). Your original is untouched."
-    if route == "copy_needed":
-        return (f"This file is on another drive from ComfyUI's LoRA folder, so it cannot be linked. A copy of {_size_words(size)} will be made "
-                f"in this folder: {folder}. Your original is not changed or moved.")
-    if route == "upload":
-        return "Copied: a copy of the file you chose was made in the app's LoRA folder. Your original is untouched."
-    return ""
+# --- Your own LoRAs: a LoRA is used where it is, in one of the person's LoRA folders (user_addons.py, lora_folders.py) -----------
 
 
 ADDON_NOT_LISTED = ("ComfyUI does not list that file, so it could not use it and the app did not keep it. If ComfyUI was already running when "
                     "the file arrived, restart ComfyUI and try again.")
 ADDON_ENGINE_SILENT = ("The app could not ask ComfyUI which LoRAs it can use (it is not running or did not answer), so it did not accept the file. "
                        "Start ComfyUI, then choose the file again.")
-ADDON_NEEDS_FULL_PATH = "The app needs the full location of the file. Use the Choose a file button in the desktop app."
 
 
-def addon_placement_note(mode: str, *, source_missing: bool = False, file_missing: bool = False, has_source: bool = True) -> str:
-    """What the person is told about how a listed LoRA of theirs is kept, and whether anything is wrong with it ('' for a file
-    they put in the app's folder themselves)."""
+def addon_placement_note(mode: str, *, file_missing: bool = False) -> str:
+    """What the person is told about how a listed LoRA of theirs is kept, and whether anything is wrong with it."""
     if mode == "in_place":
         if file_missing:
-            return "The file is no longer where you registered it, so this LoRA is skipped until it is back. Removing it from the list does not delete anything."
-        return "Used where it is. The app made no copy or link, and removing it from the list never deletes your file."
-    if mode == "link":
-        if file_missing:
-            return "The app's link in its LoRA folder is gone, so this LoRA is skipped until the file is back."
-        if source_missing:
-            return ("The original file you linked from is gone. The app's link still holds the data, so the LoRA keeps working, and the link is now "
-                    "the only copy: removing the LoRA from the list will keep the file in the LoRA folder.")
-        return "Linked from your original file: no extra space used. Removing it from the list takes away only the app's link, never your original."
-    if mode == "copy":
-        if file_missing:
-            return "The app's copy in its LoRA folder is gone, so this LoRA is skipped until the file is back."
-        where = "your original" if has_source else "the file you chose"
-        return f"A copy made by the app. Removing it from the list deletes the copy only, never {where}."
+            return ("The file is no longer where you chose it, so this LoRA is skipped until it is back. "
+                    "Removing it from the list does not delete anything.")
+        return "Used where it is, in one of your LoRA folders. The app never copies or moves it, and removing it from the list never deletes your file."
     return ""

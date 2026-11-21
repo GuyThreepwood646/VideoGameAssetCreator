@@ -48,7 +48,7 @@ from typing import Any, Callable
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import config, downloader, hardware_setup, setup_settings
+from . import config, downloader, hardware_setup, lora_folders, setup_settings
 from . import state_lock as state_lock_mod
 from .state_lock import state_lock
 from .downloader import DownloadError, Spec, Stopped
@@ -867,11 +867,13 @@ def _outside_fence(value: Any, fence: Fence) -> bool:
 
 def step_engines(job: Install, ops: Ops, fence: Fence, p: hardware_setup.Plan) -> None:
     root = install_root()
-    extra = root / "shared-models.yaml"
-    if job.choice == "A" and job.shared_models:
-        g_write(extra, shared_models_yaml(Path(job.shared_models)), fence)
+    extra = root / lora_folders.APP_FILE  # the app's model folders file: shared models (choice A) and the LoRA folders
+    base = shared_models_yaml(Path(job.shared_models)) if job.choice == "A" and job.shared_models else ""
+    folders = lora_folders.saved_folders()
+    if base or folders:
+        g_write(extra, lora_folders.merged_text(base, folders), fence)
     else:
-        if extra.exists():  # choice C: nothing shared any more
+        if extra.exists():  # nothing shared and no LoRA folders: the file is not needed
             _retry(extra, lambda: guard(extra, fence).unlink(), ops)
         extra = None  # type: ignore[assignment]
     for eng in p.engines:
@@ -896,8 +898,6 @@ def step_engines(job: Install, ops: Ops, fence: Fence, p: hardware_setup.Plan) -
     # The app's input and add-on folders: VGAC's own, unless the person chose folders outside every other ComfyUI.
     if not _outside_fence(saved.comfy_input_dir, fence):
         top["comfy_input_dir"] = str(root / "input")
-    if not _outside_fence(saved.loras_dir, fence):
-        top["loras_dir"] = str(root / "ComfyUI" / "models" / "loras")
     with setup_settings._lock:
         mpath = config.machine_path()
         if mpath is None:
@@ -1256,7 +1256,7 @@ def remove(also_models: bool = False, ops: Ops | None = None, supervisor: Any = 
             _retry(root, lambda: (guard(root / MARKER, fence).unlink(), root.rmdir()), ops)
         # Only now that the files are gone: the settings that pointed at them.
         changes: dict[str, Any] = {"instances": {n: {"engine": None} for n in mine}} if mine else {}
-        for key in ("comfy_input_dir", "loras_dir"):
+        for key in ("comfy_input_dir",):
             v = getattr(saved, key)
             if v is not None and _within(_real(Path(v)), r):
                 changes[key] = None
@@ -1348,7 +1348,7 @@ def _retarget_settings(old_root: str, root: Path, fence: Fence) -> int:
         try:
             backend = config.read_machine(mpath).get("backend") or {}
             change: dict[str, Any] = {}
-            for key in ("comfy_input_dir", "loras_dir"):
+            for key in ("comfy_input_dir",):
                 if moved(backend.get(key)) != backend.get(key):
                     change[key] = moved(backend.get(key))
                     n += 1

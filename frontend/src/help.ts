@@ -247,7 +247,7 @@ export const CATEGORY_HELP: Record<string, HelpEntry> = {
   prop_articulated: H('Articulated prop', 'An object with a moving part, such as a chest with a lid.', 'For now it comes out as one solid piece; the lid or door does not open yet.', 'prop_articulated'),
   environment: H('Environment piece', 'A piece of scenery that snaps to a grid, such as a wall or floor tile.', 'No skeleton; sized to the grid with its anchor on a corner, so pieces line up.', 'environment'),
   foliage: H('Foliage', 'A plant, tree or bush.', 'No skeleton; made to be scattered around a scene.', 'foliage'),
-  material: H('Tileable material', 'A repeating surface texture, such as cobblestones.', 'Produces a texture only, no 3D model.', 'material'),
+  material: H('Tileable material', 'A flat, repeating surface such as grass, stone or brick, for floors, walls and ground.', 'Produces a texture only, no 3D model. For a rock, a bush or another object, choose Rigid prop or Foliage.', 'material'),
 }
 
 export const STYLE_HELP: Record<string, HelpEntry> = {
@@ -541,10 +541,10 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   addons: H(
     'LoRAs (style add-ons)',
     'Small trained files that load on top of the image model and push the picture toward a look. Each one is made for one model family (its base model), so the list changes when you change the model.',
-    'You never type a file path or a name: switch one on from the list, or press Add your own LoRA and choose the .safetensors file. In the desktop app the file is used where it is when ComfyUI already reads that folder, linked when it is on the same drive (no extra space), and copied only if you press Copy. In a browser the app keeps a copy in its own folder. Either way it adds the LoRA to the picture recipe for you; there are no slots to fill.',
-    'One LoraLoaderModelOnly per LoRA after the model loader. Tested: data/addons.yaml, files in loras/VGAC/. Yours: library/my_addons.json, files in loras/VGAC/mine/',
+    'You never type a file path or a name: switch one on from the list, or press Add your own LoRA and choose the .safetensors file. Your LoRA files stay in the folders you linked on the setup page (LoRA folders): the app reads them where they are, and copies nothing.',
+    'One LoraLoaderModelOnly per LoRA after the model loader. Tested: data/addons.yaml, files in loras/VGAC/. Yours: the files in your LoRA folders, under their own names.',
   ),
-  addon_mine: H('Your own LoRA', 'A LoRA file you brought in yourself, listed under Yours for the models you said it was made for.', 'The app has not tested it. If the picture looks wrong, try Subtle or switch it off. Remove takes it off the list and deletes only a link or copy the app made for it, never your original file and never a file you put in the LoRA folder yourself.', 'library/my_addons.json, library/my_addons_made.json, loras/VGAC/mine/'),
+  addon_mine: H('Your own LoRA', 'A LoRA file you brought in yourself, listed under Yours for the models you said it was made for.', 'The app has not tested it. If the picture looks wrong, try Subtle or switch it off. Remove takes it off the list; the file stays in its LoRA folder.', 'library/my_addons.json; the file itself stays in your LoRA folder'),
   addon_painter: H('Base model (which model it was made for)', 'Every LoRA is trained for one model family and only works with that one.', 'Its download page names it, usually as the base model (for example Z-Image Turbo). The app reads the file when it can and leaves this empty when it cannot tell.', 'modelspec.architecture, ss_base_model_version in the file header'),
   edit_lora: H('Your LoRAs for picture edits', 'A LoRA you added that the app loads on top of its picture-edit model, for one picture-edit step: Refine, the side views, the pose redraw or the face close-up.', 'Off is the default. Each step has its own choice, and a LoRA can change the result in ways you do not expect: check the picture, and try Subtle first.', 'Your LoRA chained after the Lightning LoRA on the Qwen-Image-Edit graph; the version records which ones drew it'),
   made_for: H('What was it made for?', 'Qwen-Image-Edit is the model this app uses for picture edits. Plain Qwen-Image is a close relative of it, and a LoRA made for it may only partly work there.', 'The app reads the file where it can. When the file does not say, choose: plain Qwen-Image, or not sure, gets a warning. Its download page usually names the model.', 'modelspec.architecture, ss_base_model_version and the file name; a sure Edit signal or plain signal decides'),
@@ -593,22 +593,16 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   unity_handoff: H('Sent to your open Unity project', 'Unity cannot be handed files while your project is open, so the app leaves them in the project for Unity to pick up.', 'You do not have to close your project; it imports itself when you switch to Unity.', 'Assets/VGAC/<Name>/_incoming/vgac_import.json, VgacImportWatcher'),
 }
 
-// Adding your own LoRA: what the choose step says in the desktop app and in a browser, and what a browser upload is (always a copy).
+// Adding your own LoRA: what the choose step says in the desktop app and in a browser.
 export const ADDON_CHOOSE_TEXT = {
-  desktop:
-    'A LoRA (style add-on) is a .safetensors file you downloaded, for example from a model sharing site. You do not type a path: choose the file. If ComfyUI already reads its folder the app uses it where it is; if it is on the same drive as the app\'s LoRA folder the app links it (no extra space); otherwise you are asked before a copy is made.',
-  browser:
-    'A LoRA (style add-on) is a .safetensors file you downloaded, for example from a model sharing site. You do not type a path: choose the file, and the app makes a copy in its own LoRA folder and adds it to the picture for you.',
+  desktop: 'A LoRA (style add-on) is a .safetensors file you downloaded, for example from a model sharing site. You choose it from one of your LoRA folders (set them up on the setup page). It stays where it is; nothing is copied.',
+  browser: 'A LoRA (style add-on) is a .safetensors file you downloaded, for example from a model sharing site. You choose it from one of your LoRA folders (set them up on the setup page). It stays where it is; nothing is copied.',
 }
-export const ADDON_CHOOSE_NOTE = 'Your original file is never moved or changed.'
-export const ADDON_BROWSER_COPY = 'A copy of the file you chose is made in the app\'s LoRA folder; your original is untouched.'
 
 // What the confirm says before one of your LoRAs is removed, by how its file is kept (the backend's `placement.mode`).
 export function addonRemoveWords(mode: string | undefined): string {
-  if (mode === 'in_place') return 'It is taken off your list. Your file is not touched: the app never copied or linked it.'
-  if (mode === 'link') return 'It is taken off your list, and the app\'s link to your file is removed. Your original file is not touched.'
-  if (mode === 'copy') return 'It is taken off your list, and the copy the app made is deleted. Your original file is not touched.'
-  return 'It is taken off your list. The file stays in the LoRA folder, so you can set it up again later.'
+  if (mode === 'in_place') return 'It is taken off your list. Your file is not touched: it stays in its LoRA folder.'
+  return 'It is taken off your list. The file stays where it is, so you can set it up again later.'
 }
 
 // The add-on strength steps in words (Fine-tune add-ons).
@@ -1400,6 +1394,19 @@ export function movesPlain(clips: unknown): string[] {
 export function movesLine(clips: unknown): string {
   const list = movesPlain(clips)
   return list.length ? `Moves: ${joinAnd(list)}.` : ''
+}
+
+// The humanoid's built-in clips (humanoid.yaml clips) and the library-only clips it gets from the shared animation
+// library (humanoid.yaml library_clips that have no built-in twin). Both lists go through movesPlain, so the names
+// match the Moves line on the same screen.
+const BUILT_IN_HUMAN_CLIPS = ['idle', 'walk', 'run', 'turn_left', 'turn_right', 'attack', 'hit', 'death']
+const LIBRARY_ONLY_HUMAN_CLIPS = ['sprint', 'punch', 'jump', 'crouch', 'roll', 'interact']
+
+// The sentence under the Rig step when the shared animation library is not on this PC.
+export function libraryMissingLine(): string {
+  const built = joinAnd(movesPlain(BUILT_IN_HUMAN_CLIPS))
+  const extra = joinAnd(movesPlain(LIBRARY_ONLY_HUMAN_CLIPS))
+  return `The shared animation library is not on this PC. The character has the built-in moves: ${built}. The extra library moves (${extra}) are not made until the library is back. To fix it, open the Health page (the Setup needs attention link at the top) and read the Shared animation library line. Then make the moves again on this step.`
 }
 
 // A clip's name in the viewer's clip picker: "Walk", "Turn left", "Get hit", "Die".

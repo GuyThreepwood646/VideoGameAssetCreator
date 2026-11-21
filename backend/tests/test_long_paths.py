@@ -3,12 +3,13 @@ folder setting warns (never refuses) when the folder path is long. Nothing here 
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from vgac import setup_settings, tools
+from vgac import library, setup_settings, tools
 from vgac.tools import ToolError
 
 FAKE_BLENDER = SimpleNamespace(blender_exe=Path("C:/Blender/blender.exe"))
@@ -74,9 +75,58 @@ def test_unc_path_is_checked(no_blender):
         tools.check_blender_paths([unc])
 
 
-def test_library_warning_only_above_120_characters():
-    assert setup_settings.long_library_warning("C:\\VGAC\\library") is None
-    assert setup_settings.long_library_warning(_path_of_length(120)) is None
-    warning = setup_settings.long_library_warning(_path_of_length(121))
-    assert warning is not None and "121 characters" in warning
-    assert "refuse" not in warning.lower()
+def test_deepest_fixed_file_length_is_the_clean_up_face_picture():
+    # projects/<36>/assets/<36>/prep/<36>/face/painted_head_closeup_2_drawn.png, relative to the library folder
+    assert library.DEEPEST_FIXED_LENGTH == len("projects/") + 36 + len("/assets/") + 36 + len("/prep/") + 36 + len("/face/painted_head_closeup_2_drawn.png")
+    assert library.DEEPEST_FIXED_LENGTH == 169
+
+
+def test_library_folder_at_the_limit_passes_one_more_is_refused():
+    n = library.max_library_folder_length()
+    assert library.library_path_problem("X:\\" + "a" * (n - 3)) is None
+    message = library.library_path_problem("X:\\" + "a" * (n - 2))
+    assert message is not None
+    assert f"keep it under {n + 1} characters" in message
+    assert "for example F:\\Games\\VGAC library." in message
+    assert "too long for Windows" in message
+
+
+def test_plain_example_folder_passes_the_library_check():
+    assert library.library_path_problem("F:\\Games\\VGAC library") is None
+    assert library.library_path_problem(None) is None  # no value: nothing to check
+
+
+def test_setting_refuses_a_long_library_folder_in_plain_words(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # A real folder, but the limit is set so low that it is too long: the setting is refused, nothing is written.
+    monkeypatch.setattr(library, "max_library_folder_length", lambda: len(str(tmp_path)) - 1)
+    with pytest.raises(setup_settings.SettingError) as info:
+        setup_settings.v_library(str(tmp_path), SimpleNamespace())
+    assert "too long for Windows" in str(info.value)
+    assert f"keep it under {len(str(tmp_path))} characters" in str(info.value)
+
+
+def test_setting_accepts_a_library_folder_within_the_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(library, "max_library_folder_length", lambda: len(str(tmp_path)))
+    assert setup_settings.v_library(str(tmp_path), SimpleNamespace()) == str(tmp_path)
+
+
+def test_job_refuses_to_create_a_version_folder_that_would_hold_a_too_long_file(tmp_path: Path):
+    # A library root that puts the version folder's deepest fixed file at 260 characters or more.
+    asset = SimpleNamespace(project_id="p", id="a")
+    version = SimpleNamespace(stage="prep", id="v")
+    suffix = len(os.path.abspath(str(Path("C:/x") / "projects/p/assets/a/prep/v"))) - len(os.path.abspath("C:/x"))
+    # The version folder is 222 characters; the deepest fixed file below it adds a separator and 37 more: 260.
+    target = 222 - suffix  # root length
+    root = Path("C:/VGAC") / ("r" * (target - len("C:\\VGAC") - 1))
+    assert len(os.path.abspath(str(root / "projects/p/assets/a/prep/v"))) == 222
+    with pytest.raises(library.LibraryPathError) as info:
+        library.version_dir(asset, version, settings=SimpleNamespace(library_path=root))
+    assert "too long for Windows" in str(info.value)
+    assert not (root / "projects").exists()  # refused before any folder was made
+
+
+def test_job_creates_a_version_folder_under_a_short_library(tmp_path: Path):
+    asset = SimpleNamespace(project_id="p", id="a")
+    version = SimpleNamespace(stage="prep", id="v")
+    d = library.version_dir(asset, version, settings=SimpleNamespace(library_path=tmp_path))
+    assert d.is_dir()

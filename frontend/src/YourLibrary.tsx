@@ -11,10 +11,13 @@ import { isEditLora, warningOf } from './editLoras'
 import { AddMyAddon, ChangeMyAddon } from './pipeline/AddMyAddon'
 import { AddMyHairstyle } from './pipeline/AddMyHairstyle'
 import { MyMoveForm, MyMoveUpload } from './pipeline/MyMoves'
+import { StartOnForm } from './pipeline/StartOn'
+import { startOnSentence } from './editLoras'
+import { useCategoryLabels } from './refdata'
 
 type Lib = { addons: AddonEntry[]; hair: MyHairStyle[]; moves: MyMoveFile[]; maxMb: number }
 type Adding = 'addon' | 'hair' | 'move' | null
-type Editing = { kind: 'addon' | 'hair' | 'move'; id: string } | null
+type Editing = { kind: 'addon' | 'hair' | 'move' | 'start'; id: string } | null
 
 export default function YourLibrary() {
   const [lib, setLib] = useState<Lib | null>(null)
@@ -22,6 +25,7 @@ export default function YourLibrary() {
   const [editing, setEditing] = useState<Editing>(null)
   const [error, setError] = useState<unknown>(null)
   const { ask, dialog } = useConfirm()
+  const kindLabels = useCategoryLabels()
   const load = useCallback(async () => {
     const [addons, hair, moves] = await Promise.all([
       api.myAddons().then((r) => r.addons, () => [] as AddonEntry[]),
@@ -104,6 +108,16 @@ export default function YourLibrary() {
                       () => api.removeMyAddon(a.id),
                     ),
                   )}
+                  {editing?.kind === 'start' && editing.id === a.id ? (
+                    <StartOnForm entry={a} onSaved={done} onCancel={() => setEditing(null)} />
+                  ) : (
+                    <div className="small start-on-line">
+                      {startOnSentence(a, kindLabels)}{' '}
+                      <button type="button" className="link small" disabled={busy} aria-label={`Choose where ${a.label} starts on`} onClick={() => setEditing({ kind: 'start', id: a.id })}>
+                        Choose where it starts on
+                      </button>
+                    </div>
+                  )}
                 </li>
               ),
             )}
@@ -133,6 +147,16 @@ export default function YourLibrary() {
                       { title: `Remove "${a.label}"?`, body: `${addonRemoveWords(a.placement?.mode)} Characters already made are not changed.`, label: 'Remove add-on' },
                       () => api.removeMyAddon(a.id),
                     ),
+                  )}
+                  {editing?.kind === 'start' && editing.id === a.id ? (
+                    <StartOnForm entry={a} onSaved={done} onCancel={() => setEditing(null)} />
+                  ) : (
+                    <div className="small start-on-line">
+                      {startOnSentence(a, kindLabels)}{' '}
+                      <button type="button" className="link small" disabled={busy} aria-label={`Choose where ${a.label} starts on`} onClick={() => setEditing({ kind: 'start', id: a.id })}>
+                        Choose where it starts on
+                      </button>
+                    </div>
                   )}
                 </li>
               ),

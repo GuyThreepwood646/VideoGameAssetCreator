@@ -4,7 +4,7 @@
 // served by the Vite dev server from ../library (see vite.config.ts).
 import { GPU_KINDS, setLibraryResolver, STAGES, TURNAROUND_VIEWS, type Asset, type Gpu, type GpuKind, type AutopilotState, type Check, type GalleryItem, type Job, type ServerEvent, type StageId, type Version } from '../api'
 import { categories, fabricate, files, lookPresets, newVersion, nowIso, platforms, recipeFor, seedStore, setSelected, setupReport, stages, store, styles, uid } from './data'
-import type { AddonEntry, AddonPrefill, MadeFor, StrengthName, UnregisteredAddon } from '../api'
+import type { AddonEntry, AddonPrefill, LoraFolderState, LoraFolders, MadeFor, StrengthName } from '../api'
 import { mockAddItem, mockApplied, mockDetect, mockFit, mockItemsOnCreate, mockNudge, mockPanel, mockRemove, mockUpdate, PLACES } from './items'
 import { addMyHair, changeMyHair, hairCatalogue, hairPanel, myHairListing, OwnHairError, removeMyHair } from './hair'
 import { mockCredits } from './credits'
@@ -478,7 +478,7 @@ on('GET', '/api/projects', () =>
       for (const list of Object.values(a.stages)) for (const v of list ?? []) times.push(v.created_at)
       const kept = a.stages.concept?.find((v) => v.id === a.selected.concept)
       const pic = kept?.files.cutout ?? kept?.files.image
-      if (pic && covers.length < 4) covers.push(pic)
+      if (pic && covers.length < 4 && a.show_on_project !== false) covers.push(pic)
     }
     return { ...p, asset_count: assets.length, covers, last_activity: times.sort().at(-1) }
   }),
@@ -625,6 +625,7 @@ on('PUT', '/api/assets/:id', (m, body) => {
   const a = findAsset(m.groups!.id)
   for (const k of ['name', 'prompt', 'category', 'platform_target'] as const) if (typeof body[k] === 'string') (a as Record<string, unknown>)[k] = body[k]
   if (Array.isArray(body.parts)) a.parts = body.parts as { name: string; kind: string }[]
+  if (typeof body.show_on_project === 'boolean') a.show_on_project = body.show_on_project
   return a
 })
 on('DELETE', '/api/assets/:id', (m) => {
@@ -1408,7 +1409,18 @@ const MOCK_PAINTERS = [
   { id: 'chroma', label: 'Chroma1-HD' },
 ]
 const MOCK_ADDON_STRENGTHS: Record<StrengthName, number> = { subtle: 0.6, normal: 0.8, strong: 1.0 }
-const MOCK_ADDON_FOLDER = 'D:\\ComfyUI\\models\\loras\\VGAC\\mine'
+const MOCK_ADDON_FOLDER = 'D:\\LoRAs\\Ink'
+// The LoRA folders the mock person linked (GET /api/lora-folders). One of them can be missing, to show the plain problem.
+const mockLoraFolders: { path: string; exists: boolean }[] = [{ path: MOCK_ADDON_FOLDER, exists: true }]
+function mockFolderStates(): LoraFolderState[] {
+  return mockLoraFolders.map((f) => ({
+    path: f.path,
+    exists: f.exists,
+    readable: f.exists,
+    lora_files: f.exists ? mockAddonFiles.length : 0,
+    problem: f.exists ? '' : 'This folder is not on this computer any more. Remove it, or put the folder back where it was.',
+  }))
+}
 // The backend's warning for a LoRA made for plain Qwen-Image (user_addons.QWEN_PLAIN_WARNING).
 const QWEN_PLAIN_WARNING = 'This LoRA was made for Qwen-Image, a close relative of the model the app uses for picture edits. It may only partly work, or change results in ways you do not expect. Try it at Subtle first.'
 const UNSURE_TEXT = 'We could not tell which model this was made for.'
@@ -1427,23 +1439,9 @@ const myAddons: (AddonEntry & { warning?: string })[] = []
 const EDIT_KNOB_IDS = ['edit_addons', 'view_addons', 'pose_addons', 'face_addons'] as const
 const EDIT_LORA_MAX = 2
 
-function mockPrefill(name: string): AddonPrefill {
-  const lower = name.toLowerCase()
-  const label = name.replace(/\.safetensors$/i, '').replace(/[_-]+/g, ' ').trim()
-  const turbo = /z.?image|zit/.test(lower) && lower.includes('turbo')
-  return {
-    label: label.charAt(0).toUpperCase() + label.slice(1),
-    base_models: turbo ? ['zturbo'] : [],
-    trigger: '',
-    family: turbo ? 'Z-Image' : '',
-    painter_note: turbo ? '' : 'We could not tell which model this was made for.',
-  }
-}
-
 on('GET', '/api/my-addons', () => ({
   addons: myAddons,
-  folder: MOCK_ADDON_FOLDER,
-  folder_exists: true,
+  folders: mockFolderStates(),
   strengths: MOCK_ADDON_STRENGTHS,
   painters: MOCK_PAINTERS,
   edit_models: [{ id: EDIT_MODEL_ID, label: 'Picture edits (Qwen-Image-Edit)' }],
@@ -1456,20 +1454,42 @@ on('POST', '/api/mock/lora-folder/remove', (_m, body) => {
   mockAddonFiles.splice(i, 1)
   return { removed: String(body.file_name) }
 })
-on('GET', '/api/my-addons/unregistered', (): UnregisteredAddon[] =>
-  mockAddonFiles.filter((f) => !myAddons.some((a) => a.file_name === f.file_name)).map((f) => ({ ...f })),
+// The LoRA files in the linked folders that are not set up yet (GET /api/my-addons/available). Used where they are.
+on('GET', '/api/my-addons/available', () =>
+  mockAddonFiles
+    .filter((f) => !myAddons.some((a) => a.file_name === f.file_name))
+    .map((f) => ({ folder: MOCK_ADDON_FOLDER, file_name: f.file_name, path: `${MOCK_ADDON_FOLDER}\\${f.file_name}`, bytes: f.bytes, prefill: f.prefill })),
 )
-on('POST', '/api/my-addons/open-folder', () => ({ opened: true, folder: MOCK_ADDON_FOLDER }))
-on('POST', '/api/my-addons/upload', (_m, _b, query) => {
-  const name = String(query.get('name') ?? '')
-  if (/[\\/:]|\.\./.test(name)) throw new HttpError(400, 'The file name must be a plain file name, without folders.')
-  if (!name.toLowerCase().endsWith('.safetensors')) throw new HttpError(400, 'LoRAs must be .safetensors files. Other kinds of model file are not accepted.')
-  const safe = name.replace(/[^A-Za-z0-9._ -]+/g, '_')
-  if (mockAddonFiles.some((f) => f.file_name === safe))
-    throw new HttpError(409, 'A file with this name is already in the LoRA folder. Use "Look again" to set it up, or rename your file and choose it again.')
-  const file = { file_name: safe, bytes: Number(query.get('bytes') ?? 0), prefill: mockPrefill(safe) }
-  mockAddonFiles.push(file)
-  return file
+on('GET', '/api/lora-folders', (): LoraFolders => ({ folders: mockFolderStates(), max_folders: 20, restart: [], restart_cards: [], note: 'ComfyUI reads these folders when it starts.' }))
+on('POST', '/api/lora-folders', (_m, body): LoraFolders => {
+  const path = String(body.path ?? '').trim()
+  if (!path) throw new HttpError(400, 'Give the full path of the LoRA folder.')
+  if (mockLoraFolders.some((f) => f.path === path)) throw new HttpError(409, 'That folder is already in your list.')
+  mockLoraFolders.push({ path, exists: true })
+  return {
+    folders: mockFolderStates(),
+    max_folders: 20,
+    restart: [{ card: 'a', state: 'restart', text: 'Card a (RTX 3080): stop and start its ComfyUI on the Graphics cards panel to see the change.' }],
+    restart_cards: ['a'],
+    note: "Stop and start card a's ComfyUI on the Graphics cards panel to see it.",
+    message: "Added. This folder has 2 LoRA files. Stop and start card a's ComfyUI on the Graphics cards panel to see it.",
+    added: path,
+  }
+})
+on('POST', '/api/lora-folders/remove', (_m, body): LoraFolders => {
+  const path = String(body.path ?? '')
+  const i = mockLoraFolders.findIndex((f) => f.path === path)
+  if (i < 0) throw new HttpError(404, 'That folder is not in your list.')
+  mockLoraFolders.splice(i, 1)
+  return {
+    folders: mockFolderStates(),
+    max_folders: 20,
+    restart: [{ card: 'a', state: 'restart', text: 'Card a (RTX 3080): stop and start its ComfyUI on the Graphics cards panel to see the change.' }],
+    restart_cards: ['a'],
+    note: "Stop and start card a's ComfyUI on the Graphics cards panel to see it.",
+    message: "Removed from the list. The folder and its files were not touched. Stop and start card a's ComfyUI on the Graphics cards panel so it stops reading it.",
+    removed: path,
+  }
 })
 on('POST', '/api/my-addons', (_m, body) => {
   const fileName = String(body.file_name ?? '')
@@ -1498,7 +1518,7 @@ on('POST', '/api/my-addons', (_m, body) => {
     help: {
       meaning: `Your own LoRA, from the file ${fileName}.`,
       why: 'You added it yourself and the app has not tested it. If the picture looks wrong, try Subtle or switch it off.',
-      technical: `LoRA VGAC/mine/${fileName}, model only, for ${models.join(', ')}`,
+      technical: `LoRA ${fileName}, model only, for ${models.join(', ')}`,
     },
     stage: (edit ? 'edit' : 'concept') as unknown as AddonEntry['stage'], // 'edit': picture-edit LoRAs (backend _normalise)
     base_models: models,
@@ -1532,6 +1552,23 @@ on('PUT', '/api/my-addons/:id', (m, body) => {
   const models = Array.isArray(body.base_models) ? body.base_models.map(String) : []
   if (!models.length) throw new HttpError(400, 'Choose at least one model the LoRA was made for.')
   Object.assign(entry, { label, base_models: models, trigger: String(body.trigger ?? ''), source: String(body.source ?? '') })
+  return entry
+})
+
+// Which kinds of assets and steps one of your LoRAs starts on in (backend user_addons.set_start_on, lora_defaults.py).
+on('PUT', '/api/my-addons/:id/start-on', (m, body) => {
+  const entry = myAddons.find((a) => a.id === m.groups!.id)
+  if (!entry) throw new HttpError(404, 'That LoRA is not on your list.')
+  const categories = Array.isArray(body.categories) ? body.categories.map(String) : []
+  const edit = entry.stage === 'edit'
+  const uses = edit && Array.isArray(body.uses) ? body.uses.map(String).filter((u: string) => (EDIT_KNOB_IDS as readonly string[]).includes(u)) : []
+  if (edit && categories.length && !uses.length) throw new HttpError(400, 'Choose at least one step it starts on in.')
+  for (const u of uses)
+    for (const c of categories) {
+      const others = myAddons.filter((o) => o.id !== entry.id && o.start_on?.categories.includes(c) && o.start_on.uses.includes(u))
+      if (others.length >= EDIT_LORA_MAX) throw new HttpError(400, `One step takes at most ${EDIT_LORA_MAX} of your LoRAs; turn one of them off there first.`)
+    }
+  entry.start_on = { categories, uses }
   return entry
 })
 

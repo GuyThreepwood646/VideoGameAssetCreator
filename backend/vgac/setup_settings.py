@@ -32,7 +32,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import config, firstrun, minimums
+from . import config, firstrun, library, minimums
 from .config import ConfigError, Settings
 
 log = logging.getLogger("vgac.setup_settings")
@@ -134,7 +134,12 @@ def v_unity_project(value: Any, saved: Settings) -> str:
 
 
 def v_library(value: Any, saved: Settings) -> str:
-    return _folder(value, "the library", writable=True)
+    text = _folder(value, "the library", writable=True)
+    # Refused, not warned: a folder this long means some file the app writes would be past Windows' 260-character limit.
+    problem = library.library_path_problem(text)
+    if problem:
+        raise SettingError(problem)
+    return text
 
 
 def v_writable_folder(what: str) -> Callable[[Any, Settings], str]:
@@ -256,8 +261,6 @@ def _specs() -> dict[str, Spec]:
              "characters in the old one are not moved.", "folder", "next_start", v_library),
         Spec("export_path", "Hand-off folder", "Where finished files are copied. Default: next to the library.", "folder",
              "now", v_writable_folder("the hand-off folder")),
-        Spec("loras_dir", "ComfyUI add-on folder", "ComfyUI's loras folder; your own add-ons are kept in a VGAC/mine "
-             "folder inside it.", "folder", "now", v_writable_folder("ComfyUI's loras folder")),
         Spec("comfy_input_dir", "ComfyUI input folder", "The folder both ComfyUI engines read pictures from.", "folder",
              "next_start", v_writable_folder("ComfyUI's input folder")),
     ]
@@ -429,23 +432,9 @@ def set_setting(key: str, value: Any, supervisor: Any = None) -> dict[str, Any]:
         message = f"{spec.label} is set and is used from now on."
     else:
         message = f"{spec.label} is saved. It is used the next time the app starts; restart it to apply it."
-    warning = long_library_warning(after) if key == "library_path" and changed else None
-    if warning:
-        message = f"{message} {warning}"
     return {"key": key, "label": spec.label, "changed": changed, "from": before, "to": after, "applies": spec.applies,
-            "message": message, "warning": warning, "restart_needed": pending,
+            "message": message, "restart_needed": pending,
             "missing": missing_now(now_saved, supervisor)}
-
-
-LIBRARY_WARN_LENGTH = 120  # the folder alone; files inside it add about 140 more, which is near Windows' 260 limit
-
-
-def long_library_warning(folder: Any) -> str | None:
-    """A plain sentence when the library folder path is long enough that files inside it may pass Windows' limit."""
-    if not isinstance(folder, str) or len(folder) <= LIBRARY_WARN_LENGTH:
-        return None
-    return (f"Warning: this folder path is {len(folder)} characters long. Files inside it can pass Windows' 260-character "
-            "limit, and Blender then cannot open them. A shorter folder, for example C:\\VGAC\\library, is safer.")
 
 
 def set_engines(comfy_dir: str, python: str, main: str, extra_model_paths: str | None, cards: dict[str, int],

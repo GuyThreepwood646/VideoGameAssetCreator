@@ -240,7 +240,7 @@ def request(settings: Any, asset: Any, version: Any, version_dir: Path) -> dict[
 def after_rig(kind: str, version_id: str | None, asset_id: str | None) -> None:
     """The finished-job hook (jobs.FINISHED_HOOKS): a rig step that finished for an eligible humanoid with the finder
     installed queues the suggestion once. A failed one is not retried by itself (the button does that)."""
-    if not kind.startswith("rig.") or not version_id or not asset_id:
+    if kind == "rig.pose_preview" or not kind.startswith("rig.") or not version_id or not asset_id:  # WP-76: a preview is no rig
         return
     from .config import get_settings
     from .db import Asset, Version, session_factory

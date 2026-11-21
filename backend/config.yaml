@@ -27,8 +27,7 @@ library_path: library
 unity_project: unity-sandbox
 
 # Set in local/machine.json: blender_exe, unity_exe, comfy_input_dir (the input folder every ComfyUI instance
-# shares; LoadImage reads from it) and loras_dir (ComfyUI's loras folder; your own add-ons are kept in its
-# VGAC/mine/ folder and the app never lists anything else in it).
+# shares; LoadImage reads from it) and lora_folders (the LoRA folders the person linked; ComfyUI reads them where they are).
 
 # CC0 humanoid clip libraries, by id used in export params clips_library.
 clips_libraries:

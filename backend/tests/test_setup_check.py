@@ -281,7 +281,8 @@ def test_disk_and_memory_thresholds(settings, tmp_path):
         def __init__(self, gb: float) -> None:
             self.free = gb * preflight.GB
 
-    s = settings.model_copy(update={"export_path": tmp_path / "not-yet" / "exports"})
+    # the export folder beside the library (the test library is a short temporary folder, see conftest.py): same drive
+    s = settings.model_copy(update={"export_path": Path(settings.library_path).parent / "not-yet" / "exports"})
     one = preflight.check_disks(s, lambda p: U(3))
     assert len(one) == 1  # the library and the export folder share a drive: one line
     assert one[0]["state"] == "fail" and "library_path, export_path" in one[0]["technical"]

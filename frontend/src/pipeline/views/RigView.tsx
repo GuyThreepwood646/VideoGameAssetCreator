@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, libraryUrl, type ItemSuggestionState, type SuggestionAnswer, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { Disclosure } from '../../components/ui'
-import { joinAnd, movesLine, movesPlain, movesSourceLine } from '../../help'
+import { joinAnd, libraryMissingLine, movesLine, movesPlain, movesSourceLine } from '../../help'
 import { MovesPanel } from '../MovesPanel'
 import Viewer, { hitShapesOf, type BoneSegment, type BonesSpace, type ClipInfo, type HitboxDoc } from '../../Viewer'
 import { pointTool } from '../../declaredPoints'
@@ -101,6 +101,12 @@ export function RigView({ version }: { version: Version }) {
   const missing = movesPlain(m.missing_clips)
   // A humanoid whose shared clip library is not on this PC (the check library_missing says the same in the check list).
   const libMissing = Array.isArray(m.library_missing) && m.library_missing.length > 0
+  // rig.carry (WP-27): a rig on a separated clean-up keeps the rig the arm was separated on, or says why it could not.
+  const carried = m.rig_method === 'carry'
+  const carryWhy = typeof m.carry_why === 'string' ? m.carry_why : null
+  // WP-75: the rig step separates an arm the 3D build joined to the body, or says why it left it joined.
+  const sepRec = m.separation && typeof m.separation === 'object' ? (m.separation as { message?: unknown }) : null
+  const sepLine = typeof sepRec?.message === 'string' ? sepRec.message : null
   const clipData = clipFile.data
   const [clipReq, setClipReq] = useState<{ name: string; n: number } | null>(null)
   // Hanging parts (WP-20 step 5): while a part is being placed, the viewer's pointer tool takes the left button.
@@ -186,13 +192,20 @@ export function RigView({ version }: { version: Version }) {
         Does the movement look natural? Press play in the viewer, or look at the bent poses below. {animGlb ? 'The viewer shows the animated model.' : ''}
         <Info term="term.skeleton" />
       </div>
-      {(hbLine || moves || missing.length > 0 || namesFixed || libMissing) && (
+      {(hbLine || moves || missing.length > 0 || namesFixed || libMissing || carried || carryWhy || sepLine) && (
         <div className="rig-lines small">
+          {carried && (
+            <div>
+              Kept from the rig the arm was separated on: the same skeleton and weights, with the weights near the cut made again. Try
+              again makes the whole rig from scratch.
+            </div>
+          )}
+          {!carried && carryWhy && <div>Made from scratch, not kept from the rig the arm was separated on: {carryWhy}.</div>}
+          {sepLine && <div>{sepLine}</div>}
           {libMissing && (
             <div>
               <span className="warn-mark">CHECK</span>
-              The shared animation library is not on this PC, so this character has only the built-in moves: no library walk, run or jump.
-              To get it back, run setup\Setup-Extras.ps1 -Packs -Install, or unzip it into data\animations by hand. Then make the moves again.
+              {libraryMissingLine()}
             </div>
           )}
           {namesFixed && (
@@ -232,8 +245,8 @@ export function RigView({ version }: { version: Version }) {
       <SuggestionBlock suggestion={sugg?.state ?? null} running={isRunning(sugg)} done={version.status === 'done'} busy={dp.busy} canAsk={canAsk(sugg)} askText={askLabel(sugg)} onAsk={askSuggestion} onKeep={keepSuggestion} onDismiss={dismissSuggestion} />
       <DeclaredPointsPanel dp={dp} done={version.status === 'done'} markName={markName} onMark={setMarkName} />
       <MovesPanel version={version} previewClips={clipInfo ? clipInfo.map((c) => c.name) : null} onPlay={(name) => setClipReq((r) => ({ name, n: (r?.n ?? 0) + 1 }))} />
-      {rigError && <div className="muted small">Bones overlay unavailable: {rigError}</div>}
-      {hitFile.error && version.files.hitboxes && <div className="muted small">Hit boxes overlay unavailable: {hitFile.error}</div>}
+      {rigError && <div className="muted small">The bones picture could not be shown. Make the moves again on this step.</div>}
+      {hitFile.error && version.files.hitboxes && <div className="muted small">The hit boxes could not be shown. Make the moves again on this step.</div>}
       <div className="rig-side">
         <div>
           <div className="field-label">
