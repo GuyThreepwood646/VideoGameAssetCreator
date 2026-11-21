@@ -113,13 +113,14 @@ def test_no_moving_parts_packs_as_before(tmp_path):
     assert _files(out) == MASTER_FILES
     assert sorted(rep) == MASTER_FIELDS
     assert rep["lods"] == MASTER_LODS
-    assert rep["clips"] == [] and "parts" not in rep and "default_pose" not in rep
+    assert rep["clips"] == [] and "parts" not in rep and "default_pose" not in rep and "fbx_clip_frames" not in rep
 
 
 def test_a_piece_under_a_pivot_stays_its_own_object_with_its_clip(tmp_path):
     out, rep = _pack(tmp_path, parts=True)
     assert _files(out) == MASTER_FILES  # the same files: the piece rides inside them
     assert rep["clips"] == ["lid_open"] and rep["default_pose"] == "rest"
+    assert rep["fbx_clip_frames"] == {"lid_open": [0, 30]}  # the FBX's one take, cut into clips by the Unity importer
     (part,) = rep["parts"]
     assert part["node"] == "lid_1" and part["pivot"] == "lid_1_Pivot"
     assert part["lods"]["LOD1"] < part["lods"]["LOD0"] and part["boundary_edges"] == 0
@@ -166,3 +167,16 @@ def test_the_rig_step_leaves_an_asset_without_moving_parts_alone(monkeypatch):
     monkeypatch.setattr(rig, "stiff_parts_path", lambda sc_: None)
     assert asyncio.run(rig._cut_moving_parts(sc, Path("x.glb"))) is None
     assert calls == []
+
+
+def test_a_moving_parts_own_hull_does_not_count_against_the_platform_cap():
+    from vgac.stages import export
+
+    parts = [{"name": f"c{i}", "kind": "hull", "triangles": 40, "vertices": 20} for i in range(6)]
+    parts += [{"name": f"w{i}", "kind": "part", "triangles": 40, "vertices": 20} for i in range(4)]
+    checks = {c["id"]: c for c in export.collider_checks({"collider_parts": parts}, {"cap": 6}, "vehicle")}
+    c = checks["collider_count"]
+    assert c["ok"] and c["value"] == 6 and c["vars"]["moving"] == 4 and c["vars"]["vertices"] == 200
+    assert "its own shape that moves with it (4 in all)" in c["help"]
+    plain = {c["id"]: c for c in export.collider_checks({"collider_parts": parts[:6]}, {"cap": 6}, "vehicle")}["collider_count"]
+    assert "moving" not in plain["vars"] and "moves with it" not in plain["help"]

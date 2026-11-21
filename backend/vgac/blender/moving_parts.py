@@ -489,6 +489,7 @@ def main():  # pragma: no cover - runs inside Blender
     report = {"ok": False, "fps": FPS, "parts": [], "clips": []}
     _common.open_glb(src)
     scene = bpy.context.scene
+    scene.render.fps, scene.render.fps_base = FPS, 1.0  # a clip of FPS frames is one second in the files (the empty scene runs at 24)
     meshes = [o for o in scene.objects if o.type == "MESH"]
     if not meshes:
         report["reason"] = "no mesh"

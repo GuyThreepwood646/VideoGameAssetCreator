@@ -409,6 +409,12 @@ def _names(c: dict[str, Any], name: str) -> str:
     return ", ".join(str(m).replace("{", "{{").replace("}", "}}") for m in (_var(c, name) or []))  # formatted later
 
 
+def _riding(c: dict[str, Any]) -> str:
+    """collider_count: the hulls that ride on moving parts (WP-29), counted apart from the body's shapes."""
+    n = int(_var(c, "moving") or 0)
+    return f" Each moving part also has its own shape that moves with it ({n} in all)." if n else ""
+
+
 def _moving_ok(c: dict[str, Any]) -> str:
     """The moving_parts check passed (WP-29): every hinged, spinning and sliding part is cut free with its clips."""
     return f"The moving parts ({_names(c, 'moved')}) are cut free, each turning or sliding about its own pivot, with open, close or spin clips."
@@ -889,8 +895,8 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     },
     "collider_count": {
         "severity": "warn",
-        "ok": "{value:n} collision shape(s), inside the {limit:n} your platform allows.",
-        "fail": "The collision is {value:n} shapes, more than the {limit:n} we aim for on your platform; physics costs a little more each frame.",
+        "ok": lambda c: "{value:n} collision shape(s), inside the {limit:n} your platform allows." + _riding(c),
+        "fail": lambda c: "The collision is {value:n} shapes, more than the {limit:n} we aim for on your platform; physics costs a little more each frame." + _riding(c),
         "fix": lambda c: {"stage": "export", "params": {"collider_max_parts": c.get("limit")}},
         "fix_label": "Use fewer shapes",
     },

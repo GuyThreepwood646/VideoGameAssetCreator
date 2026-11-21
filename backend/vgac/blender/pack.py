@@ -789,14 +789,54 @@ if pieces:
     bpy.context.view_layer.update()
     report["default_pose"] = "rest"
 
+TAKE_GAP = 10  # frames between two clips on the moving parts' one FBX take
+
+
+def lay_out_takes(movers):
+    """The moving parts' clips one after another on the timeline, every track of one name at the same place (all four
+    wheels in one clip). Blender's FBX export bakes one take per NLA strip with every other strip muted and every
+    animated node in it, so two wheels of one clip came out as two takes of the same name (Unity kept one) and every
+    take held the other parts still. -> ({clip: [first, last] frame}, the strips' first frames to put back)."""
+    names = sorted({t.name for o in movers for t in o.animation_data.nla_tracks})
+    before = [(st, st.frame_start, st.frame_end) for o in movers for t in o.animation_data.nla_tracks for st in t.strips]
+    frames, at = {}, 0
+    for nm in names:
+        strips = [st for o in movers for t in o.animation_data.nla_tracks if t.name == nm for st in t.strips]
+        length = max(st.frame_end - st.frame_start for st in strips)
+        for st in strips:
+            st.frame_start_ui = at
+        frames[nm] = [int(round(at)), int(round(at + length))]
+        at += length + TAKE_GAP
+    return frames, before
+
+
 bpy.ops.object.select_all(action="SELECT")
 if "fbx" in formats:
     fbx = os.path.join(out_dir, name + ".fbx")
+    takes_before = None
+    if pieces:
+        # One take holding every clip, laid out by lay_out_takes; the Unity importer cuts it into the clips by the frames
+        # in report["fbx_clip_frames"] (the export step copies them into anim_clips.json).
+        scene_ = bpy.context.scene
+        report["fbx_clip_frames"], takes_before = lay_out_takes([o for o in part_nodes if o.animation_data])
+        report["fbx_fps"] = scene_.render.fps / scene_.render.fps_base
+        frame_range = (scene_.frame_start, scene_.frame_end)
+        scene_.frame_start = 0
+        scene_.frame_end = max(v[1] for v in report["fbx_clip_frames"].values())
     bpy.ops.export_scene.fbx(filepath=fbx, use_selection=True, apply_unit_scale=True, apply_scale_options="FBX_SCALE_ALL",
                              axis_forward="-Z", axis_up="Y", object_types={"ARMATURE", "MESH", "EMPTY"},
                              use_mesh_modifiers=True, mesh_smooth_type="FACE", use_tspace=True,
-                             add_leaf_bones=False, bake_anim=True, bake_anim_use_nla_strips=True, bake_anim_use_all_actions=False,
+                             add_leaf_bones=False, bake_anim=True, bake_anim_use_nla_strips=not pieces, bake_anim_use_all_actions=False,
                              bake_anim_simplify_factor=0.0, path_mode="COPY", embed_textures=True)
+    if takes_before is not None:  # the GLB files keep one animation per clip, each from time 0
+        for st, start, end in takes_before:
+            st.frame_start_ui = start
+        bpy.context.scene.frame_start, bpy.context.scene.frame_end = frame_range
+        for o in [o for o in part_nodes if o.animation_data]:
+            o.location = (0.0, 0.0, 0.0)
+            o.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+            o.rotation_euler = (0.0, 0.0, 0.0)
+        bpy.context.scene.frame_set(0)
     report["fbx"] = fbx
     # Unreal (UCX_ convention): a separate FBX with LOD0 named after the asset and each convex part as
     # UCX_<asset>_NN, which Unreal's FBX import turns into the static mesh's simple collision. Unrigged assets only;
