@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from vgac import imaging, jobs
+from vgac import comfy, imaging, jobs
 from vgac.comfy import ComfyError
 from vgac.stages import turnaround
 
@@ -23,10 +23,21 @@ DRAW_SECONDS = 0.15
 
 class LentClient:
     def __init__(self) -> None:
-        self.interrupts = 0
+        self.withdrawn: list[str] = []  # the job's own prompts taken off the lent card
 
-    async def interrupt(self) -> None:
-        self.interrupts += 1
+    async def withdraw(self, prompt_id: str) -> str:
+        self.withdrawn.append(prompt_id)
+        return "interrupted"
+
+
+@pytest.fixture
+def job_prompts():
+    """The prompts the job has sent to its cards (comfy.JOB_PROMPTS, which the job queue sets for a real job). A stop
+    withdraws the ones on the lent card."""
+    prompts: list = []
+    token = comfy.JOB_PROMPTS.set(prompts)
+    yield prompts
+    comfy.JOB_PROMPTS.reset(token)
 
 
 def make_lease(given_back: list) -> jobs.Lease:
@@ -107,8 +118,8 @@ def test_two_free_cards_draw_the_two_sides_at_once(tmp_path, engines):
     assert v["back"]["start"] >= max(s["end"] for s in sides)
     # each side in its own order
     assert v["left"]["start"] >= v["quarter"]["end"] and v["right"]["start"] >= v["quarter2"]["end"]
-    # the lent card is handed back once, before the back is drawn, without an interrupt
-    assert given_back == [lease] and lease.ended and lease.client.interrupts == 0
+    # the lent card is handed back once, before the back is drawn, with nothing withdrawn (no stop, no failure)
+    assert given_back == [lease] and lease.ended and lease.client.withdrawn == []
     cards = sc.metrics["cards"]
     assert cards == {"mode": "two cards", "card": "a", "second_card": "b"}
     views = sc.metrics["views"]
@@ -192,7 +203,7 @@ def test_the_lent_engine_going_away_finishes_the_right_side_on_the_jobs_card(tmp
     assert v["right"]["seed"] == 103                   # the same seed, now on the job's card
     assert v["right"]["start"] >= v["left"]["end"]     # after the left side, on the same card
     assert v["back"]["start"] >= v["right"]["end"]
-    assert given_back == [lease] and lease.client.interrupts == 0
+    assert given_back == [lease] and lease.client.withdrawn == []
     note = sc.metrics["cards"]["fallback"]
     assert "stopped answering" in note and "right side was finished on the" in note
     assert sc.metrics["views"]["right"]["card"] == "a"
@@ -215,21 +226,23 @@ def test_turning_the_lent_card_off_moves_the_rest_of_the_right_side_home(tmp_pat
     assert sc.metrics["cards"]["fallback"].startswith("RTX 3080 was turned off")
 
 
-def test_another_failure_on_the_lent_card_stops_the_step(tmp_path, engines):
+def test_another_failure_on_the_lent_card_stops_the_step(tmp_path, engines, job_prompts):
     lease = make_lease([])
+    job_prompts.append((lease.client, "p-lent"))  # the job's prompt on the lent card
     engines["fail"][("quarter2", "b")] = ComfyError("prompt failed: out of memory")
     concept, ta, new = _lineage(tmp_path)
     sc = TwoCardSC(tmp_path, new, FakeDB(concept, ta, new), (lease, ""))
     with pytest.raises(ComfyError, match="out of memory"):
         asyncio.run(turnaround._run_views(sc, list(VIEWS), {"seed": 100}, concept))
-    assert lease.ended and lease.client.interrupts == 1
+    assert lease.ended and lease.client.withdrawn == ["p-lent"]
     assert "back" not in by_view(engines["calls"])     # nothing after the failure
     assert sc.metrics["cards"]["mode"] == "two cards"
 
 
-def test_stopping_the_job_hands_the_lent_card_back(tmp_path, engines):
+def test_stopping_the_job_hands_the_lent_card_back(tmp_path, engines, job_prompts):
     given_back: list = []
     lease = make_lease(given_back)
+    job_prompts.append((lease.client, "p-lent"))  # the job's prompt on the lent card, still running at the stop
     concept, ta, new = _lineage(tmp_path)
     sc = TwoCardSC(tmp_path, new, FakeDB(concept, ta, new), (lease, ""))
 
@@ -241,6 +254,6 @@ def test_stopping_the_job_hands_the_lent_card_back(tmp_path, engines):
             await task
 
     asyncio.run(go())
-    assert given_back == [lease] and lease.client.interrupts == 1
+    assert given_back == [lease] and lease.client.withdrawn == ["p-lent"]
     drawn = {c["view"] for c in engines["calls"]}
     assert drawn == {"front"}

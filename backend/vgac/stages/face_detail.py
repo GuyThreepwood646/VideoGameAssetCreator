@@ -1426,15 +1426,9 @@ def pin_pass_seed(sc: StageContext, params: dict[str, Any], face_detail_seed: in
 
 
 async def _withdraw(client: ComfyClient, prompt_id: str) -> None:
-    try:
-        q = await client.queue_state()
-        running = [item[1] for item in q.get("queue_running", []) if len(item) > 1]
-        if prompt_id in running:
-            await client.interrupt()
-        else:
-            await client._client().post("/queue", json={"delete": [prompt_id]}, timeout=5.0)
-    except Exception:  # noqa: BLE001  (the card may be gone; nothing more to do)
-        pass
+    """Take this job's own prompt off the card: interrupt it when it runs, delete it when it waits (ComfyClient.withdraw).
+    Never another prompt. Never raises: the card may be gone."""
+    await client.withdraw(prompt_id)
 
 
 async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], params: dict[str, Any],

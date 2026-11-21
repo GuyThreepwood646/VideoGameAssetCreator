@@ -15,6 +15,7 @@ import mimetypes
 import re
 import shutil
 import time
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Callable
 
@@ -121,6 +122,26 @@ def time_limit_for(graph: dict[str, Any], default: float | None) -> float | None
     return default
 
 
+# The prompts a running job has sent to the cards, as (client, prompt_id) pairs. The job queue sets this list when a job
+# starts (jobs.JobQueue._execute) and ComfyClient.queue_prompt adds each prompt to it, so a stop withdraws the job's own
+# prompts and no one else's. None outside a job.
+JOB_PROMPTS: ContextVar[list[tuple["ComfyClient", str]] | None] = ContextVar("vgac_job_prompts", default=None)
+# Interrupted prompt ids are remembered (bounded) so a second withdraw of the same prompt never sends a second
+# interrupt: by then the prompt may have ended and another client's prompt may be the one running.
+_INTERRUPTED_KEEP = 1000
+
+
+def _queued_ids(items: Any) -> list[str]:
+    """The prompt ids in one list of a /queue answer (each item is [number, prompt_id, ...])."""
+    return [item[1] for item in items or [] if isinstance(item, (list, tuple)) and len(item) > 1]
+
+
+async def withdraw_job_prompts(prompts: list[tuple["ComfyClient", str]]) -> None:
+    """ComfyClient.withdraw for each of a job's prompts, in the order they were sent."""
+    for client, prompt_id in list(prompts):
+        await client.withdraw(prompt_id)
+
+
 class ComfyClient:
     """One long-lived httpx.AsyncClient per instance (created on first use, closed by aclose(), which JobQueue.stop
     calls), so the once-a-second /history polls reuse a connection. Each request passes its own timeout."""
@@ -140,6 +161,7 @@ class ComfyClient:
         # meanwhile (a prompt exists only on the engine that took it). Clients for addresses other than base_url.
         self._prompt_url: dict[str, str] = {}
         self._side: dict[str, tuple[httpx.AsyncClient, asyncio.AbstractEventLoop]] = {}
+        self._interrupted: set[str] = set()  # prompt ids this client has interrupted (withdraw)
         # Prompts being waited on now (wait()): while above 0 the engine is working for us and its address is not
         # changed (instances.Supervisor.in_use).
         self.waiting = 0
@@ -325,6 +347,9 @@ class ComfyClient:
         if not prompt_id:
             raise ComfyError(f"/prompt did not return a prompt_id: {data}")
         self._prompt_url[prompt_id] = url
+        sent = JOB_PROMPTS.get()
+        if sent is not None:
+            sent.append((self, prompt_id))
         return prompt_id
 
     async def history(self, prompt_id: str) -> dict[str, Any]:
@@ -484,10 +509,38 @@ class ComfyClient:
         return (sub + "/" + info["name"]) if sub else info["name"]
 
     async def interrupt(self) -> None:
+        """POST /interrupt: stops WHATEVER prompt runs on this card, of any client. Job code must not call it; stopping
+        a job goes through withdraw()."""
         try:
             await self._client().post("/interrupt", timeout=5.0)
         except Exception as e:  # noqa: BLE001
             log.warning("instance %s: interrupt failed: %s", self.name, e)
+
+    async def withdraw(self, prompt_id: str) -> str:
+        """Take one prompt off this card, and no other prompt. POST /interrupt stops whatever runs on the card, so it is
+        sent only when `prompt_id` is the prompt running. A prompt still waiting in ComfyUI's pending queue is deleted
+        from that queue. When another prompt runs, or the prompt has ended, nothing is sent. A queue that cannot be read
+        means nothing is sent either (never a blind interrupt). Never raises. Returns "interrupted", "deleted", "gone"
+        or "failed"."""
+        http = self._client_at(self.prompt_url(prompt_id))
+        try:
+            r = await http.get("/queue", timeout=5.0)
+            r.raise_for_status()
+            q = r.json()
+            if prompt_id in _queued_ids(q.get("queue_running")):
+                if prompt_id not in self._interrupted:
+                    if len(self._interrupted) >= _INTERRUPTED_KEEP:
+                        self._interrupted.clear()
+                    self._interrupted.add(prompt_id)
+                    await http.post("/interrupt", timeout=5.0)
+                return "interrupted"
+            if prompt_id in _queued_ids(q.get("queue_pending")):
+                await http.post("/queue", json={"delete": [prompt_id]}, timeout=5.0)
+                return "deleted"
+            return "gone"
+        except Exception as e:  # noqa: BLE001  (the card may be gone; nothing more to do)
+            log.warning("instance %s: could not withdraw prompt %s: %s", self.name, prompt_id, e)
+            return "failed"
 
     async def free(self) -> bool:
         """POST /free {"unload_models": true, "free_memory": true}: ComfyUI drops its loaded models and releases the

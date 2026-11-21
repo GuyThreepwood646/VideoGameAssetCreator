@@ -524,7 +524,7 @@ async def ship_late(sc: StageContext, glb: Path, maps: dict[str, Path], look: di
             imaging.write_map(imaging.shrink_by_island(base, uvf, cap), files["base_color"])
             imaging.dilate_png(files["base_color"], imaging.rasterise_uv(uvf, cap)["labels"] > 0, imaging.dilation_px(cap))
         imaging.glb_replace_images(glb, base_color=files.get("base_color"), metallic=files.get("metallic"), roughness=files.get("roughness"),
-                                   mr_size=mr_size)
+                                   normal=files.get("normal"), mr_size=mr_size)
         return m, files, mr_size
 
     m, files, _ = await asyncio.to_thread(work)
@@ -922,7 +922,7 @@ def texture_pass(final_glb: Path, bake_glb: Path, maps: dict[str, Path], out_dir
     if files or (look and not look.get("normal_map", True)):
         imaging.glb_replace_images(final_glb, base_color=files.get("base_color"), metallic=files.get("metallic"),
                                    roughness=files.get("roughness"), drop_normal=bool(look) and not look.get("normal_map", True),
-                                   mr_size=mr_size)
+                                   normal=files.get("normal"), mr_size=mr_size)
     metrics.update(look_metrics)
     after = imaging.light_score(new_base, mask, ao, ras["up"]) if new_base is not base else light
     metrics.update(light_score=after["score"], delight_applied=strength > 0, delight_deferred=bool(light_after and delight_mode == "remove"), delight_strength=round(strength, 3),
@@ -968,7 +968,13 @@ def apply_look(look: dict[str, Any], uvf: dict[str, Any], maps: dict[str, Path],
         if src is None or not Path(src).is_file():
             continue
         if imaging.image_size(src)[0] > target:
-            files[key] = imaging.shrink_image(src, target, out_dir / f"{key}.png")
+            if key == "normal" and uvf is not None:
+                # per island, as the base colour is shrunk in ship_late: no blending across island borders
+                files[key] = imaging.shrink_normal_islands(src, uvf, target, out_dir / f"{key}.png")
+            elif key == "normal":
+                files[key] = imaging.shrink_normal(src, target, out_dir / f"{key}.png")
+            else:
+                files[key] = imaging.shrink_image(src, target, out_dir / f"{key}.png")
     return m, (target if target < size else None)
 
 

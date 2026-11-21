@@ -633,7 +633,7 @@ def _flat_normal_png() -> bytes:
 
 def glb_replace_images(glb: Path | str, base_color: Path | str | None = None, metallic: Path | str | None = None,
                        roughness: Path | str | None = None, *, drop_normal: bool = False,
-                       mr_size: int | None = None) -> bool:
+                       normal: Path | str | None = None, mr_size: int | None = None) -> bool:
     """Swap, in place, the base colour image and the green (roughness) and blue (metallic) channels of the
     metallic-roughness image of a GLB's first material. The binary chunk is rebuilt view by view; every other view
     keeps its bytes. Returns False, leaving the file alone, when there is nothing to change.
@@ -691,6 +691,11 @@ def glb_replace_images(glb: Path | str, base_color: Path | str | None = None, me
             if i not in used and "bufferView" in im and im["bufferView"] not in replace:
                 replace[im["bufferView"]] = _flat_normal_png()
                 im["mimeType"] = "image/png"
+    ni = image_index(mats[0].get("normalTexture"))
+    if normal and ni is not None and not drop_normal:
+        # a shrunk normal map (shrink_normal) replaces the material's own normal image, the same way as the base colour
+        replace[images[ni]["bufferView"]] = Path(normal).read_bytes()
+        images[ni]["mimeType"] = "image/png"
     mi = image_index(pbr.get("metallicRoughnessTexture"))
     if mi is not None and (metallic or roughness or mr_size):
         with Image.open(io.BytesIO(view_bytes(images[mi]["bufferView"]))) as im:
@@ -809,6 +814,47 @@ def shrink_by_island(base: np.ndarray, uvmesh: dict[str, np.ndarray], size: int)
     summed = (blocks * same[..., None]).sum(axis=(1, 3))
     plain = blocks.mean(axis=(1, 3))
     return np.where((n > 0)[..., None], summed / np.maximum(n, 1)[..., None], plain).astype(np.float32)
+
+
+def shrink_normal(path: Path | str, size: int, dest: Path | str | None = None) -> Path:
+    """Resize a tangent-space normal map to size x size when it is larger: the box filter runs on the decoded vectors
+    (-1..1 per channel), then every vector is renormalised to unit length, since an average of normals is shorter than
+    one and a short normal shades flat. Writes dest (default: in place) as an RGB PNG; a map already at or under the size
+    is copied as is."""
+    p = Path(path)
+    out = Path(dest) if dest else p
+    with Image.open(p) as im:
+        rgb = im.convert("RGB")
+        rgb.load()
+    if max(rgb.size) <= size:
+        rgb.save(out)
+        return out
+    vec = np.asarray(rgb, dtype=np.float32) / 255.0 * 2.0 - 1.0
+    small = np.stack([np.asarray(Image.fromarray(vec[..., c]).resize((size, size), Image.BOX), dtype=np.float32)
+                      for c in range(3)], axis=-1)
+    Image.fromarray(_encode_unit(small), "RGB").save(out)
+    return out
+
+
+def _encode_unit(vec: np.ndarray) -> np.ndarray:
+    """Vectors (-1..1 per channel) renormalised to unit length and encoded as 8-bit RGB. A zero vector becomes (0, 0, 1)."""
+    norm = np.linalg.norm(vec, axis=-1, keepdims=True)
+    unit = np.where(norm > 1e-6, vec / np.maximum(norm, 1e-6), np.array([0.0, 0.0, 1.0], dtype=np.float32))
+    return np.clip(np.round((unit * 0.5 + 0.5) * 255), 0, 255).astype(np.uint8)
+
+
+def shrink_normal_islands(path: Path | str, uvmesh: dict[str, np.ndarray], size: int, dest: Path | str) -> Path:
+    """A normal map shrunk the way the base colour is shrunk in the clean-up (shrink_by_island): each texel of the new
+    map averages only the texels of its own UV island, so neighbouring islands with different normals do not blend at
+    their borders. The averaged vectors are renormalised to unit length, then the islands are grown into the empty
+    space (dilate_png, as for the base colour). Writes dest as an RGB PNG."""
+    with Image.open(path) as im:
+        rgb = np.asarray(im.convert("RGB"), dtype=np.float32) / 255.0
+    small = shrink_by_island(rgb, uvmesh, size)
+    small_vec = small * 2.0 - 1.0  # the averaged encoded values are the averaged vectors (the encoding is affine)
+    Image.fromarray(_encode_unit(small_vec), "RGB").save(dest)
+    dilate_png(dest, rasterise_uv(uvmesh, size)["labels"] > 0, dilation_px(size))
+    return Path(dest)
 
 
 def shrink_image(path: Path | str, size: int, dest: Path | str | None = None) -> Path:
