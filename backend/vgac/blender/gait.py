@@ -72,6 +72,16 @@ def smoothstep(x: float) -> float:
     return x * x * (3.0 - 2.0 * x)
 
 
+DEATH_FALLBACK_MARGIN_M = 0.01  # WP-78: the new death sinks at most this much deeper than Today's death, else Today's is used
+
+
+def death_fallback_used(new_low: float, old_low: float, margin: float = DEATH_FALLBACK_MARGIN_M) -> bool:
+    """WP-78 death fallback rule: True when the new death's lowest skinned point over the fall (metres from the rest ground,
+    negative is under it) sinks more than `margin` deeper than Today's death's. Then Today's death is used for the rig,
+    the same way the idle falls back to the old idle."""
+    return new_low < old_low - margin
+
+
 def envelope(t: float, keys: list[tuple[float, float]]) -> float:
     """Value at time t of a piecewise curve through (time, value) keys, smoothstep between keys, held outside."""
     if not keys:
@@ -948,6 +958,35 @@ def arm_pose_choice(value) -> str:
     if value not in ARM_POSE_CHOICES:
         raise ValueError(f"arm_pose must be one of {list(ARM_POSE_CHOICES)}")
     return value
+
+
+# ---- resting pose: the hand shape and one finger-curl amount (WP-76; procanim --hand-pose, --finger-curl) -------------
+HAND_POSE_CHOICES = ("open", "relaxed", "fist")
+HAND_POSE_DEFAULT = "relaxed"
+FINGER_CURL_DEFAULT = 1.0
+FINGER_CURL_MAX = 1.5  # the amount multiplies the hand shape; 0 is no curl, 1 is the shape as designed
+
+
+def hand_pose_choice(value) -> str:
+    """The hand_pose setting as one of HAND_POSE_CHOICES: None or empty is the default; anything else raises."""
+    if value is None or value == "":
+        return HAND_POSE_DEFAULT
+    if value not in HAND_POSE_CHOICES:
+        raise ValueError(f"hand_pose must be one of {list(HAND_POSE_CHOICES)}")
+    return value
+
+
+def finger_curl_amount(value) -> float:
+    """The finger_curl setting as a number from 0 to FINGER_CURL_MAX: None or empty is the default; anything else raises."""
+    if value is None or value == "":
+        return FINGER_CURL_DEFAULT
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("finger_curl must be a number from 0 to 1.5") from None
+    if not (0.0 <= x <= FINGER_CURL_MAX):
+        raise ValueError(f"finger_curl must be from 0 to {FINGER_CURL_MAX}")
+    return x
 
 
 def angle_from_down(v, up=(0.0, 0.0, 1.0)) -> float:
