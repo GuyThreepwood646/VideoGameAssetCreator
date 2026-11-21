@@ -241,9 +241,14 @@ class AdjustIn(BaseModel):
 
 
 class PaintIn(BaseModel):
-    # The base-colour picture as the panel drew it (PNG, glTF row order), and the edit mask (white where painted).
-    picture_png: str = Field(min_length=1, max_length=paintsave.MAX_PICTURE_B64)
-    mask_png: str = Field(min_length=1, max_length=paintsave.MAX_PICTURE_B64)
+    # The colour picture as the panel drew it (PNG, glTF row order) and its edit mask (white where painted). Optional:
+    # a save may paint only the shine or the metal picture (WP-32). shine_* and metal_* are the same for those two.
+    picture_png: str | None = Field(default=None, min_length=1, max_length=paintsave.MAX_PICTURE_B64)
+    mask_png: str | None = Field(default=None, min_length=1, max_length=paintsave.MAX_PICTURE_B64)
+    shine_png: str | None = Field(default=None, min_length=1, max_length=paintsave.MAX_PICTURE_B64)
+    shine_mask_png: str | None = Field(default=None, min_length=1, max_length=paintsave.MAX_PICTURE_B64)
+    metal_png: str | None = Field(default=None, min_length=1, max_length=paintsave.MAX_PICTURE_B64)
+    metal_mask_png: str | None = Field(default=None, min_length=1, max_length=paintsave.MAX_PICTURE_B64)
     strokes: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -1002,12 +1007,13 @@ def paint_version(vid: str, body: PaintIn, db: Session = Depends(get_session)) -
     if a.category == "material":
         raise HTTPException(400, "a material has no 3D model to paint on")
     try:
-        picture, mask, strokes = paintsave.decode_inputs(body.picture_png, body.mask_png, body.strokes)
+        inputs = paintsave.decode_inputs(body.picture_png, body.mask_png, body.strokes, shine_b64=body.shine_png,
+                                         shine_mask_b64=body.shine_mask_png, metal_b64=body.metal_png, metal_mask_b64=body.metal_mask_png)
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
     inherited = {k: val for k, val in reference.inherited_params(parent.stage, parent.params).items() if k != "fix_for"}
     v = pipeline.new_version(db, a, "prep", parent, inherited)
-    paintsave.write_inputs(library.version_dir(a, v, get_settings()), picture, mask, strokes)
+    paintsave.write_inputs(library.version_dir(a, v, get_settings()), inputs)
     job = pipeline.submit(db, a, v, "paint", {})
     return {"job": job_to_dict(job), "version": version_to_dict(v)}
 
