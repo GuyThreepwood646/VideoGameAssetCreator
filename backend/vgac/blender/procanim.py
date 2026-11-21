@@ -1652,7 +1652,7 @@ def death_settle(P, ground_z, lift=None):
         if kind_ == "arm":
             out_dir = P.root_q @ (lateral if limb["left"] else -lateral)
             r = lift.get(ch["end_bone"] or ch["m"], 0.022 * height)
-            target = gait.ground_target(tuple(ha), tuple(he), ground_z + r, reach, outward=tuple(out_dir), min_out=0.35 * L)
+            target = gait.ground_target(tuple(ha), tuple(he), ground_z + r, reach, outward=tuple(out_dir), min_out=(0.8 if _TF[0] else 0.35) * L)
             # WP-77: the wrist target may not be farther from the shoulder than an arm at a 170 degree elbow, so the
             # settled arm never straightens past 170 degrees (a target out of reach straightens it).
             tv = Vector(target) - ha
@@ -1670,7 +1670,7 @@ def death_settle(P, ground_z, lift=None):
             pole = hm + up * L if biped else chain_pole(P, Mw, ch, -forward)
         ik_chain(P, ch, Vector(target), pole, end_orient=None, max_bend=150.0, Mw=Mw)
         hand = ch["end_bone"]
-        if kind_ == "arm" and hand and byname[hand].children:
+        if kind_ == "arm" and hand and byname[hand].children:  # torso-first: the hand lies limp, not pressed flat
             # WP-78: lay the palm flat. The middle finger's base is made level (fingers along the ground), then the
             # across-knuckle line is levelled by rolling about it, so the palm faces up and no finger tip hangs
             # below the hand.
@@ -1867,6 +1867,45 @@ def _splay_lay(P, g):
                 break
         P.rot[name] = base @ Quaternion(ax, math.radians(pick))
         out[name] = Quaternion(ax, math.radians(pick))
+    return out
+
+
+def _splay_relax(P, g):
+    """Torso-first death, final pose: each splayed leg's ankle is relaxed from the standing right angle toward a foot in
+    line with the shin (up to 14 degrees, the most that keeps the leg skin within 0.1 points of Today), as far as the foot stays off the ground. -> {bone: local correction}."""
+    parts = leg_parts()
+    out = {}
+    for li in leg_info:
+        ch = leg_chain(li)
+        if li.get("ik") or not ch:
+            continue
+        key = ch["end_bone"] or ch["m"]
+        base = P.rot.get(key, Quaternion()).copy()
+        ax = local_axis(key, lateral)
+
+        def put(d):
+            P.rot[key] = base @ Quaternion(ax, math.radians(d))
+
+        def inline(d):
+            put(d)
+            Mw = fk(P)
+            shin = Mw[key].translation - Mw[li["bones"][1]].translation
+            tip = max((Mw[c].translation for c in _below(key) if c != key), key=lambda v: (v - Mw[key].translation).length, default=None)
+            if tip is None or shin.length < 1e-6:
+                return 0.0
+            f = tip - Mw[key].translation
+            return shin.normalized().dot(f.normalized())
+
+        sg = 1 if inline(10.0) > inline(-10.0) else -1
+        pick = 0.0
+        for k in range(14, 0, -2):
+            put(float(k * sg))
+            if limb_lowest_parts(P, {key: parts[key]}).get(key, g) >= g - 0.003:
+                pick = float(k * sg)
+                break
+        put(pick)
+        if pick:
+            out[key] = Quaternion(ax, math.radians(pick))
     return out
 
 
@@ -2167,6 +2206,11 @@ def _death_build():
             final(R, drop)
             apply_fix(R, fix, 1.0)
             for n_, q_ in _splay_lay(R, g).items():
+                fix[n_] = fix.get(n_, Quaternion()) @ q_
+            R = Pose()
+            final(R, drop)
+            apply_fix(R, fix, 1.0)
+            for n_, q_ in _splay_relax(R, g).items():
                 fix[n_] = fix.get(n_, Quaternion()) @ q_
         elif head_only[1] > 0.25:
             best_t = None
