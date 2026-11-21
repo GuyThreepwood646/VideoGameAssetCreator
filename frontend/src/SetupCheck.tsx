@@ -167,7 +167,24 @@ function inUse(item: SetupItem): string {
 
 // What "everything is in place" may claim: Ready means a test character ran to the end. While it runs, or if it did not finish, the
 // card says so, and says what to do.
+// How many assets have finished (the Finished page's list), for the line that says what "not proven" means.
+function useFinishedCount(): number | null {
+  const [n, setN] = useState<number | null>(null)
+  useEffect(() => {
+    let alive = true
+    api.gallery().then(
+      (items) => alive && setN(items.length),
+      () => undefined,
+    )
+    return () => {
+      alive = false
+    }
+  }, [])
+  return n
+}
+
 function TestCharacterLine({ tc, onMake }: { tc: TestCharacter | undefined; onMake: () => void }) {
+  const finished = useFinishedCount()
   if (!tc || tc.state === 'passed') return <div className="setup-ok">Everything the app needs is in place, and a test character ran all the way to the end.</div>
   if (tc.state === 'running') {
     return (
@@ -190,7 +207,8 @@ function TestCharacterLine({ tc, onMake }: { tc: TestCharacter | undefined; onMa
   }
   return (
     <div className="warn">
-      Everything the app needs is in place, but nothing has been made from start to finish yet, so it is not proven to work.{' '}
+      Everything the app needs is in place.{' '}
+      {finished ? `${finished} asset${finished === 1 ? ' has' : 's have'} finished, but the` : 'The'} setup test character, the app&apos;s own start-to-finish check, has not been run on this install, so setup is not proven to work.{' '}
       <button type="button" className="link small" onClick={onMake}>
         Make one test character
       </button>
@@ -269,7 +287,7 @@ export default function SetupCheck() {
         <div className="setup-extras">
           <div className="field-label">Models</div>
           {!modelsOpen && (
-            <button type="button" className="small-btn" onClick={() => setModelsOpen(true)}>
+            <button type="button" className="disclosure-btn" onClick={() => setModelsOpen(true)}>
               Get or check the models
             </button>
           )}
@@ -280,7 +298,7 @@ export default function SetupCheck() {
         <div className="setup-extras">
           <div className="field-label">Your own ComfyUI</div>
           {!comfyOpen && (
-            <button type="button" className="small-btn" onClick={() => setComfyOpen(true)}>
+            <button type="button" className="disclosure-btn" onClick={() => setComfyOpen(true)}>
               Find or use my ComfyUI
             </button>
           )}
@@ -297,7 +315,7 @@ export default function SetupCheck() {
         <div className="setup-extras">
           <div className="field-label">Graphics cards and memory</div>
           {!hardwareOpen && (
-            <button type="button" className="small-btn" onClick={() => setHardwareOpen(true)}>
+            <button type="button" className="disclosure-btn" onClick={() => setHardwareOpen(true)}>
               Look at my graphics cards
             </button>
           )}
@@ -308,7 +326,7 @@ export default function SetupCheck() {
         <div className="setup-extras">
           <div className="field-label">Blender</div>
           {!blenderOpen && (
-            <button type="button" className="small-btn" onClick={() => setBlenderOpen(true)}>
+            <button type="button" className="disclosure-btn" onClick={() => setBlenderOpen(true)}>
               Look at my Blender
             </button>
           )}
@@ -319,7 +337,7 @@ export default function SetupCheck() {
         <div className="setup-extras">
           <div className="field-label">Unity (optional)</div>
           {!unityOpen && (
-            <button type="button" className="small-btn" onClick={() => setUnityOpen(true)}>
+            <button type="button" className="disclosure-btn" onClick={() => setUnityOpen(true)}>
               Find or set up Unity
             </button>
           )}

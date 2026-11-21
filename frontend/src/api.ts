@@ -596,6 +596,8 @@ export type Gpu = {
   memory?: HealthMemory
   current_job_id: string | null
   current_job?: GpuCurrentJob | null
+  // Something other than the app is using the card now (the driver's view of the whole card).
+  busy_outside?: boolean
   queued: number
   can_run: string[]
   note: string
