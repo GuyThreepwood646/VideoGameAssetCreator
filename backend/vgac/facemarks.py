@@ -75,7 +75,11 @@ def finder() -> dict[str, Any]:
             return {"finder": "processor"}
         try:
             import mediapipe  # noqa: F401
-            out["missing"] = f"the face landmarker model is not at {lipmarks.model_path()}"
+            path = lipmarks.model_path()
+            if path.is_file():
+                out["missing"] = f"the face landmarker did not load ({lipmarks.last_error() or 'no reason given'})"
+            else:
+                out["missing"] = f"the face landmarker model is not at {path}"
         except Exception:  # noqa: BLE001
             out["missing"] = "the mediapipe package is not installed"
     if _card.get() is not None:

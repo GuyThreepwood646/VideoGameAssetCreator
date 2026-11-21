@@ -121,7 +121,8 @@ def _face_points(rgb: np.ndarray, P: np.ndarray) -> np.ndarray | None:
         return None
     canvas[cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0] = rgb[cy0:cy1, cx0:cx1]
     img = np.asarray(Image.fromarray(canvas).resize((512, 512), Image.Resampling.BICUBIC))
-    res = lm.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(img)))
+    with lipmarks._lock:
+        res = lm.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(img)))
     if not res.face_landmarks:
         return None
     k = 2 * half / 512

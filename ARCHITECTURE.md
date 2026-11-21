@@ -133,7 +133,7 @@ Feature photos (New asset form, `components/FeaturePhotos.tsx`) go to `compose.p
 | Not tracked | Source |
 |---|---|
 | `library/`, `exports/` | created at run time |
-| `runtime/` | logs, ComfyUI folders, any start scripts, `models/face_landmarker.task` (required), `pose_landmarker_heavy.task`, `hand_landmarker.task` (optional) |
+| `runtime/` | logs, ComfyUI folders, any start scripts, `models/face_landmarker.task` (required), `pose_landmarker_heavy.task`, `hand_landmarker.task` (optional); a landmarker that fails to load is logged and tried again after 60 s (`lipmarks.RETRY_SECONDS`), and loads and detects are serialised across job threads |
 | `local/` | this PC's settings (`machine.json`, `.bak`) |
 | `backend/.venv/`, `node_modules/`, `frontend/dist/`, `desktop/dist/` | `setup/Check-Setup.ps1 -Install` and the build commands |
 | AI models, ComfyUI node packs, Blender, Unity | each user; `setup/Setup-Extras.ps1` with `setup/downloads.json` (licence confirmations are typed by the user) |
