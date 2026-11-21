@@ -1166,7 +1166,7 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
                 textures[key]["layout"] = PACK_LAYOUTS.get(key) or PACK_LAYOUTS[key[5:]]
             if key == "hair_flow":
                 textures[key]["layout"] = HAIR_FLOW_LAYOUT
-    return {
+    manifest = {
         "name": sc.asset.name,
         "export_name": name,
         "asset_id": sc.asset.id,
@@ -1210,6 +1210,30 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
         "lineage": lineage,
         "checks": sc.version.metrics.get("checks"),
     }
+    moving = _moving_manifest(sc, pack_report)
+    if moving:  # only an asset with moving parts gets the key: every other manifest stays as it was
+        manifest["moving_parts"] = moving
+    return manifest
+
+
+def _moving_manifest(sc: StageContext, pack_report: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+    """Hinged, spinning and sliding parts (WP-29): per piece its nodes, its turn or slide (pivot and axis in the glTF
+    frame, the amount in degrees or metres) and its clips, from the rig step's clip sidecar, with its triangles per
+    level from the pack report. None when the files hold no moving piece."""
+    packed = {p.get("node"): p for p in (pack_report or {}).get("parts") or []}
+    if not packed:
+        return None
+    doc = _read_json(sc.file("anim_clips")) or {}
+    out = []
+    for r in doc.get("parts") or []:
+        node = r.get("node")
+        if node not in packed:
+            continue
+        out.append({"name": r.get("name"), "kind": r.get("kind"), "node": node, "pivot_node": f"{node}_Pivot",
+                    "pivot": r.get("pivot"), "axis": r.get("axis"), "amount": r.get("amount"), "unit": r.get("unit"),
+                    "sign": r.get("sign"), "open_at_rest": r.get("open_at_rest"), "clips": r.get("clips"),
+                    "triangles_per_lod": packed[node].get("lods")})
+    return out or None
 
 
 # --- Unity checks (G01, G26, G32, G33) -------------------------------------------------------------------------------
