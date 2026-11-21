@@ -1832,6 +1832,118 @@ def _smooth_lift(defs, step=0.006):
     return L
 
 
+# ---- Today's death: the fallback (WP-78) -----------------------------------------------------------------------------
+# The death clip above is the new one. Today's death (master d2dc40d) is kept here as the old death: clip_death uses it
+# when the new death sinks more than 1 cm deeper than it on the lowest skinned point over the fall (the death_fallback
+# rule), the same way the idle falls back to the old idle. Its limbs are settled by death_settle_old.
+def death_settle_old(P, ground_z, lift=None):
+    """Lay every limb of a final death pose on the ground: for each arm and leg chain, aim its end (wrist,
+    ankle, paw) at ground height below where it is (gait.ground_target), arms pushed out beside the body, then
+    solve the two-bone IK with the bend clamped to 150 degrees. lift: {end bone: height of the end joint above
+    the ground}, measured from the mesh by clip_death. -> {bone: local correction quaternion}."""
+    lift = lift or {}
+    before = {n: q.copy() for n, q in P.rot.items()}
+    chains = [("arm", a, a["ik"]) for a in arm_info if a.get("ik")] + [("leg", li, li["ik"]) for li in leg_info if li.get("ik")]
+    body_fwd = P.root_q @ forward
+    # Quadrupeds on their side: the upper legs land a little ahead of (front) or behind (hind) the lower ones.
+    leg_root_z = {}
+    if chains:
+        Mw = fk(P)
+        for kind_, limb, ch in chains:
+            leg_root_z[id(limb)] = Mw[ch["a"]].translation.z
+    mean_z = sum(leg_root_z.values()) / max(1, len(leg_root_z))
+    for kind_, limb, ch in chains:
+        Mw = fk(P)
+        ha, hm, he = chain_points(Mw, ch)
+        L = ch["l1"] + ch["l2"]
+        reach = 0.97 * L
+        if kind_ == "arm":
+            out_dir = P.root_q @ (lateral if limb["left"] else -lateral)
+            r = lift.get(ch["end_bone"] or ch["m"], 0.022 * height)
+            target = gait.ground_target(tuple(ha), tuple(he), ground_z + r, reach, outward=tuple(out_dir), min_out=0.35 * L)
+            # WP-77: the wrist target may not be farther from the shoulder than an arm at a 170 degree elbow, so the
+            # settled arm never straightens past 170 degrees (a target out of reach straightens it).
+            tv = Vector(target) - ha
+            d170 = _reach_at_elbow(ch, 170.0)
+            if tv.length > d170:
+                target = tuple(ha + tv * (d170 / tv.length))
+            # The elbow bends along the ground toward the feet, never down into it.
+            pole = hm + (-(P.root_q @ up) * 0.8 + out_dir * 0.2) * L
+        else:
+            r = lift.get(ch["end_bone"] or ch["m"], 0.7 * max(0.0, ch["end_rest"].z - lo.z) if biped else max(0.0, ch["end_rest"].z - lo.z))
+            end = he.copy()
+            if not biped and leg_root_z[id(limb)] > mean_z:
+                end += body_fwd * (0.18 if limb["front"] else -0.18) * L
+            target = gait.ground_target(tuple(ha), tuple(end), ground_z + r, reach)
+            pole = hm + up * L if biped else chain_pole(P, Mw, ch, -forward)
+        ik_chain(P, ch, Vector(target), pole, end_orient=None, max_bend=150.0, Mw=Mw)
+        hand = ch["end_bone"]
+        if kind_ == "arm" and hand and byname[hand].children:
+            # Lay the hand flat on the ground: its direction (wrist to knuckles) turned level.
+            Mw = fk(P)
+            kn = max(byname[hand].children, key=lambda c: (head[c.name] - head[hand]).length).name
+            d = Mw[kn].translation - Mw[hand].translation
+            flat = Vector((d.x, d.y, 0.0))
+            if flat.length > 1e-6:
+                r = d.rotation_difference(flat.normalized() * d.length)
+                set_world_orient(P, hand, r @ orient(Mw, hand), Mw)
+    return {n: before.get(n, Quaternion()).inverted() @ q for n, q in P.rot.items()
+            if n not in before or before[n].rotation_difference(q).angle > 1e-6}
+
+
+_death_old = {}
+
+
+def _death_old_build():
+    def final(Q):
+        _death_pose(Q, 1.0, 0.0)
+        finish_serpent(Q)
+
+    drop = ground_fix(final)
+    fix = {}
+    if motion != "serpent" and n_legs < 6 and (arm_info or any(li.get("ik") for li in leg_info)):
+        g = _rest_low[0] - drop
+        lift = {}
+        for _ in range(3):
+            Q = Pose()
+            final(Q)
+            fix = death_settle_old(Q, g, lift)
+            R = Pose()
+            final(R)
+            apply_fix(R, fix, 1.0)
+            lows = limb_lowest(R)
+            Mw = fk(R)
+            done = True
+            for end_bone, z in lows.items():
+                joint_h = Mw[end_bone].translation.z - g
+                lift[end_bone] = max(0.0, joint_h - (z - g))
+                if abs(z - g) > 0.004 * height:
+                    done = False
+            if done:
+                break
+        drop = ground_fix(lambda R, f=fix: (final(R), apply_fix(R, f, 1.0)))
+    _death_old.update(drop=drop, fix=fix)
+
+
+def _death_old_render(P, t):
+    """Today's death at clip time t, as master drew it: the fall, the settled limbs, then the resting hand."""
+    _death_pose(P, t, _death_old["drop"])
+    apply_fix(P, _death_old["fix"], gait.envelope(t, [(0.45, 0), (0.9, 1)]))
+    hands_pose(P, 0.0)
+
+
+def _lowest_over_fall(render, samples=48):
+    """Lowest skinned point over the fall (metres from the rest ground; negative is under it), sampled over the clip."""
+    g = _rest_low[0]
+    return min(lowest_z(_pose_at(render, i / (samples - 1))) - g for i in range(samples))
+
+
+def _pose_at(render, t):
+    Pt = Pose()
+    render(Pt, t)
+    return Pt
+
+
 def clip_death(P, t):
     if not _death:
         def final(Q, drop=0.0):
@@ -1937,13 +2049,32 @@ def clip_death(P, t):
         # the body by the smooth amount that clears it (logged, so the largest lift is visible).
         samples = 48
         defs = []
+        raw = []
         for i in range(samples):
             Pt = Pose()
             _death_render(Pt, i / (samples - 1))
-            defs.append(max(0.0, _rest_low[0] - lowest_z(Pt)))
-        table = [min(0.02, v) for v in _smooth_lift(defs)]
-        _death["lift"] = table
-        print("DEATH_LIFT max_deficit", round(max(defs), 4), "max_lift", round(max(table), 4), file=sys.stderr)
+            low = lowest_z(Pt) - _rest_low[0]
+            raw.append(low)
+            defs.append(max(0.0, -low))
+        # WP-78 death_fallback: the new death is kept unless it sinks more than 1 cm deeper than Today's death over the
+        # fall (lowest skinned point). Today's death is then used for this rig, like the idle fallback.
+        new_low = min(raw)
+        _death_old_build()
+        old_low = _lowest_over_fall(_death_old_render)
+        fallback = gait.death_fallback_used(new_low, old_low)
+        report["death_fallback"] = {"used": fallback, "new_lowest_m": round(new_low, 4), "old_lowest_m": round(old_low, 4),
+                                    "rule": "new kept unless it sinks more than 0.01 m deeper than the old death over the fall"}
+        print("DEATH_FALLBACK", report["death_fallback"], file=sys.stderr)
+        if fallback:
+            _death.clear()
+            _death["old"] = True
+        else:
+            table = [min(0.02, v) for v in _smooth_lift(defs)]  # 2 cm at most for any character (the boy needs it: 2.08 cm uncapped)
+            _death["lift"] = table
+            print("DEATH_LIFT max_deficit", round(max(defs), 4), "max_lift", round(max(table), 4), file=sys.stderr)
+    if _death.get("old"):
+        _death_old_render(P, t)
+        return
     _death_render(P, t)
     _lift = _death.get("lift")
     if _lift:

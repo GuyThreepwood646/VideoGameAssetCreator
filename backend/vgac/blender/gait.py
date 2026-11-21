@@ -72,6 +72,16 @@ def smoothstep(x: float) -> float:
     return x * x * (3.0 - 2.0 * x)
 
 
+DEATH_FALLBACK_MARGIN_M = 0.01  # WP-78: the new death sinks at most this much deeper than Today's death, else Today's is used
+
+
+def death_fallback_used(new_low: float, old_low: float, margin: float = DEATH_FALLBACK_MARGIN_M) -> bool:
+    """WP-78 death fallback rule: True when the new death's lowest skinned point over the fall (metres from the rest ground,
+    negative is under it) sinks more than `margin` deeper than Today's death's. Then Today's death is used for the rig,
+    the same way the idle falls back to the old idle."""
+    return new_low < old_low - margin
+
+
 def envelope(t: float, keys: list[tuple[float, float]]) -> float:
     """Value at time t of a piecewise curve through (time, value) keys, smoothstep between keys, held outside."""
     if not keys:
