@@ -81,3 +81,40 @@ def seam_error(base_path: Path | str) -> float:
     v = np.abs(im[0, :, :] - im[-1, :, :]).mean()
     h = np.abs(im[:, 0, :] - im[:, -1, :]).mean()
     return float((v + h) / 2)
+
+
+# WP-58: the AI upscaler (4x-PBRify UpscalerV4, CC0) runs for wood only, per bakeoff/wp58/trialC/VERDICT.md (2026-11-21).
+# Every other surface keeps today's path exactly. The trial's tested output was 2048 px (wrap pad, 4x, crop, Lanczos to 2048).
+UPSCALE_SURFACES = frozenset({"wood"})
+UPSCALE_MODEL = "4x-PBRify_UpscalerV4.pth"
+UPSCALE_PAD = 32  # px of wrap-around padding on each side of the 1024 tile before the 4x upscale
+UPSCALE_SCALE = 4
+UPSCALE_OUT = 2048
+
+
+def upscale_plan(params: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The upscaler plan for a material's params, or None when the surface is not in UPSCALE_SURFACES."""
+    if (params or {}).get("surface") in UPSCALE_SURFACES:
+        return {"model": UPSCALE_MODEL, "pad": UPSCALE_PAD, "scale": UPSCALE_SCALE, "size": UPSCALE_OUT}
+    return None
+
+
+def wrap_pad(arr: np.ndarray, pad: int = UPSCALE_PAD) -> np.ndarray:
+    """Wrap-around pad, so the upscaler sees the tile's neighbours and the crop after it keeps the seam closed."""
+    return np.pad(arr, ((pad, pad), (pad, pad), (0, 0)), mode="wrap")
+
+
+def crop_margin(arr: np.ndarray, pad: int = UPSCALE_PAD, scale: int = UPSCALE_SCALE) -> np.ndarray:
+    """Remove the upscaled padding again (pad * scale on each side)."""
+    m = pad * scale
+    return arr[m:-m, m:-m]
+
+
+def upscale_graph(input_name: str, prefix: str, model: str = UPSCALE_MODEL) -> dict[str, Any]:
+    """Core nodes only: load the picture, load the upscale model, upscale, save (output node 8)."""
+    return {
+        "1": {"class_type": "LoadImage", "inputs": {"image": input_name}},
+        "2": {"class_type": "UpscaleModelLoader", "inputs": {"model_name": model}},
+        "3": {"class_type": "ImageUpscaleWithModel", "inputs": {"upscale_model": ["2", 0], "image": ["1", 0]}},
+        "8": {"class_type": "SaveImage", "inputs": {"images": ["3", 0], "filename_prefix": prefix}},
+    }

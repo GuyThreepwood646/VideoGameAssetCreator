@@ -15,7 +15,8 @@ from typing import Any
 
 from .. import library, quality
 from ..db import _iso, utcnow
-from ..graphs.material import derive_maps, make_seamless, seam_error, t2i_graph
+from ..graphs.material import (crop_margin, derive_maps, make_seamless, seam_error, t2i_graph, upscale_graph, upscale_plan,
+                               wrap_pad)
 from ..imaging import image_size
 from .base import StageContext, random_seed, slug
 
@@ -58,6 +59,9 @@ async def mesh_run(sc: StageContext, params: dict[str, Any]) -> None:
     # (register, set_metrics) is only used back on the event loop.
     sc.progress(0.1, "seamless blend")
     base = await asyncio.to_thread(make_seamless, src, sc.dir / "base_color.png", power=power)
+    plan = upscale_plan(params)  # WP-58: wood only, per bakeoff/wp58/trialC/VERDICT.md (2026-11-21); other surfaces unchanged
+    if plan is not None:
+        base = await _upscale_wood(sc, base, plan)
     sc.progress(0.5, "derived maps")
     maps = await asyncio.to_thread(derive_maps, base, sc.dir)
     sc.register("base_color", base)
@@ -72,6 +76,28 @@ async def mesh_run(sc: StageContext, params: dict[str, Any]) -> None:
     err = await asyncio.to_thread(seam_error, base)
     sc.set_metrics(seam_error=round(err, 5), size=list(image_size(base)), textured=True)
     await judge(sc)
+
+
+async def _upscale_wood(sc: StageContext, base: Path, plan: dict[str, Any]) -> Path:
+    """WP-58 (wood only): the seamless 1024 tile is wrap-padded, upscaled 4x by the ComfyUI upscale model, cropped back to
+    the tile and resized to the plan's size with Lanczos. Returns the new base colour picture (same path as before)."""
+    import numpy as np
+    from PIL import Image
+
+    arr = await asyncio.to_thread(lambda: np.asarray(Image.open(base).convert("RGB")))
+    pad_p = sc.dir / "upscale_in.png"
+    await asyncio.to_thread(Image.fromarray(wrap_pad(arr, plan["pad"])).save, pad_p)
+    name = await sc.stage_input(pad_p, f"vgac_{sc.version.id[:8]}_upscale_in.png")
+    entry = await sc.comfy(upscale_graph(name, sc.prefix("upscale"), plan["model"]), message="wood upscale", base=0.12, span=0.2)
+    raw = await sc.download_image(entry, "8", sc.dir / "upscale_4x.png")
+
+    def finish() -> Path:
+        up = np.asarray(Image.open(raw).convert("RGB"))
+        out = Image.fromarray(crop_margin(up, plan["pad"], plan["scale"])).resize((plan["size"], plan["size"]), Image.LANCZOS)
+        out.save(base)
+        return base
+
+    return await asyncio.to_thread(finish)
 
 
 async def judge(sc: StageContext) -> None:
