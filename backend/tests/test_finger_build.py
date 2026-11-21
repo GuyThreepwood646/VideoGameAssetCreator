@@ -327,3 +327,26 @@ def test_fingertip_marks_place_the_built_chains_on_the_marked_tips(tmp_path):
         tail = r["tails"][f"mixamorig:LeftHand{name}3"]
         assert max(abs(a - b) for a, b in zip(tail, tip)) < 0.003, (name, tail, tip)
     assert r["max_infl"] <= 4 and abs(r["sum_min"] - 1) < 1e-3 and abs(r["sum_max"] - 1) < 1e-3
+
+
+# --- a finger chain that runs back toward the wrist ----------------------------------------------------------------
+
+
+def test_turned_back_reads_the_first_bone_against_the_wrist():
+    # the goblin's pinky as the rig had it (frame coordinates: a along the hand from the wrist): the first bone runs from
+    # a 0.17 back to a 0.13, the three joints step back toward the wrist
+    turned = np.array([[0.17, 0.02, 0.0], [0.13, 0.02, 0.0], [0.09, 0.01, 0.0], [0.05, 0.01, 0.0]])
+    straight = np.array([[0.17, -0.1, 0.0], [0.22, -0.1, 0.0], [0.26, -0.1, 0.0], [0.30, -0.1, 0.0]])
+    assert fb.turned_back(turned) is True
+    assert fb.turned_back(straight) is False
+
+
+def test_turned_back_leaves_a_sideways_or_partly_turned_first_bone_alone():
+    # a first bone square to the hand (no a change) is not turned back; a partly turned one (cosine -0.33, as on rig 3) is
+    # reported as partly turned and not repaired; only a clearly reversed one (cosine at most -0.5) is turned back
+    square = np.array([[0.2, 0.0, 0.0], [0.2, 0.05, 0.0], [0.25, 0.1, 0.0], [0.3, 0.15, 0.0]])
+    assert fb.turned_back(square) is False and fb.partly_turned(square) is False
+    partly = np.array([[0.2, 0.0, 0.0], [0.2 - 0.01, 0.0 + 0.03, 0.0], [0.25, 0.1, 0.0], [0.3, 0.15, 0.0]])
+    assert fb.turned_back(partly) is False and fb.partly_turned(partly) is True
+    ok = np.array([[0.2, 0.0, 0.0], [0.21, 0.05, 0.0], [0.25, 0.1, 0.0], [0.3, 0.15, 0.0]])
+    assert fb.turned_back(ok) is False and fb.partly_turned(ok) is False
