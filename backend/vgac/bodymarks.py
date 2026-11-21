@@ -658,6 +658,10 @@ def ray(cam: Any, x: float, y: float) -> tuple[np.ndarray, np.ndarray]:
     """The line of sight through pixel (x, y) of an orthographic face.Camera: (a point on it, its direction)."""
     right, up, fwd = cam.basis
     s = cam.scale / cam.size
+    if not getattr(cam, "is_ortho", True):  # pinhole: the line of sight runs from the eye through the picture-plane point
+        plane = np.asarray(cam.target) + (x - cam.size / 2) * s * right - (y - cam.size / 2) * s * up
+        d = plane - cam.eye()
+        return cam.eye(), d / np.linalg.norm(d)
     return np.asarray(cam.target) + (x - cam.size / 2) * s * right - (y - cam.size / 2) * s * up, np.asarray(fwd)
 
 

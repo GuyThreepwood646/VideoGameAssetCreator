@@ -354,7 +354,26 @@ def decimate_lod(lod, ratio):
     character) has no such edge: nothing is split and nothing is welded, so its LODs come out as before."""
     bm = bmesh.new()
     bm.from_mesh(lod.data)
-    bad = [e for e in bm.edges if len(e.link_faces) > 2]
+    bad = {e for e in bm.edges if len(e.link_faces) > 2}
+    # Pinched vertices (two fans of faces meeting at one point, leaves and cards of a tree) stall the collapse too: a
+    # tree stopped at 0.34 with only the shared edges split. Their edges are split as well.
+    for v in bm.verts:
+        fs = list(v.link_faces)
+        if len(fs) < 2:
+            continue
+        seen = {fs[0]}
+        stack = [fs[0]]
+        while stack:
+            f = stack.pop()
+            for e in f.edges:
+                if v in e.verts:
+                    for g in e.link_faces:
+                        if g not in seen:
+                            seen.add(g)
+                            stack.append(g)
+        if len(seen) != len(fs):
+            bad.update(v.link_edges)
+    bad = list(bad)
     if bad:
         bmesh.ops.split_edges(bm, edges=bad)
         bm.to_mesh(lod.data)
