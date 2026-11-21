@@ -189,6 +189,7 @@ def _common_opt(flag, default):
     return argv[argv.index(flag) + 1] if flag in argv else default
 
 
+REPAIR_TURNED = False  # see build_side: the repair is off until the grip caps are fixed (part A round 4)
 TURNED_COS = -0.5  # a first bone whose direction is this far against the hand's (cosine) is turned back; partly turned is left
 
 
@@ -256,6 +257,12 @@ def build_side(arm, mesh, side, report):
     partly = [f for f in FINGERS if len(have[f]) == 3 and fr is not None and partly_turned(coords(fr, np.array(_joints(arm, have[f], AW))), ref)]
     if partly:
         rep["partly_turned"] = partly  # reported only: left as the rig has them
+    if back and not REPAIR_TURNED:
+        # REPAIR_TURNED is off: the in-place repair of a turned chain was measured to make the grip worse (procanim's
+        # neighbour floor caps the ring finger at zero beside a repaired little finger: ring grip 250 to 38 on the goblin,
+        # little finger skin stretch 2.98 nominal). With no guard that can run here, the chain is reported and left as the rig has it.
+        rep["turned_back"] = back
+        back = []
     if complete and not back:
         rep.update(path="complete", built=0)
         return
