@@ -59,9 +59,14 @@ async def mesh_run(sc: StageContext, params: dict[str, Any]) -> None:
     # (register, set_metrics) is only used back on the event loop.
     sc.progress(0.1, "seamless blend")
     base = await asyncio.to_thread(make_seamless, src, sc.dir / "base_color.png", power=power)
-    plan = upscale_plan(params)  # WP-58: wood only, per bakeoff/wp58/trialC/VERDICT.md (2026-11-21); other surfaces unchanged
+    # WP-58: wood only, per bakeoff/wp58/trialC/VERDICT.md (2026-11-21); every other surface keeps today's tile.
+    plan = upscale_plan(sc.asset.prompt, sc.asset.style_preset, sc.budget["texture"])
     if plan is not None:
-        base = await _upscale_wood(sc, base, plan)
+        if await upscale_model_ready(sc.client(), plan["model"]):
+            base = await _upscale_wood(sc, base, plan)
+            sc.set_metrics(upscaler="wood", upscale_size=plan["size"])
+        else:
+            sc.set_metrics(upscaler="skipped", upscaler_note=f"{plan['model']} is not on this ComfyUI; kept today's tile")
     sc.progress(0.5, "derived maps")
     maps = await asyncio.to_thread(derive_maps, base, sc.dir)
     sc.register("base_color", base)
@@ -76,6 +81,18 @@ async def mesh_run(sc: StageContext, params: dict[str, Any]) -> None:
     err = await asyncio.to_thread(seam_error, base)
     sc.set_metrics(seam_error=round(err, 5), size=list(image_size(base)), textured=True)
     await judge(sc)
+
+
+async def upscale_model_ready(client: Any, model: str) -> bool:
+    """True when this ComfyUI lists the upscale model in UpscaleModelLoader (object_info, the truth for what a graph can
+    load). Any failure to ask counts as not ready, so the job keeps today's tile."""
+    from ..preflight import combo_choices
+
+    try:
+        info = await client.object_info("UpscaleModelLoader")
+    except Exception:
+        return False
+    return model in (combo_choices(info, "model_name") or [])
 
 
 async def _upscale_wood(sc: StageContext, base: Path, plan: dict[str, Any]) -> Path:

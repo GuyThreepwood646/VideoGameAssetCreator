@@ -5,6 +5,7 @@ The seam is closed with a numpy offset blend, never with AI inpainting (which in
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -85,18 +86,29 @@ def seam_error(base_path: Path | str) -> float:
 
 # WP-58: the AI upscaler (4x-PBRify UpscalerV4, CC0) runs for wood only, per bakeoff/wp58/trialC/VERDICT.md (2026-11-21).
 # Every other surface keeps today's path exactly. The trial's tested output was 2048 px (wrap pad, 4x, crop, Lanczos to 2048).
-UPSCALE_SURFACES = frozenset({"wood"})
+WOOD_WORDS = frozenset({"wood", "wooden", "timber", "plank", "planks", "oak", "pine", "walnut", "bark", "log", "floorboard",
+                        "parquet", "plywood"})  # whole words only: "woodland" is not wood
+REALISTIC_PRESETS = frozenset({"realistic_pbr"})  # the stylised presets (painted, cel, retro64, lowpoly_flat, clay) never upscale
 UPSCALE_MODEL = "4x-PBRify_UpscalerV4.pth"
 UPSCALE_PAD = 32  # px of wrap-around padding on each side of the 1024 tile before the 4x upscale
 UPSCALE_SCALE = 4
 UPSCALE_OUT = 2048
 
 
-def upscale_plan(params: dict[str, Any] | None) -> dict[str, Any] | None:
-    """The upscaler plan for a material's params, or None when the surface is not in UPSCALE_SURFACES."""
-    if (params or {}).get("surface") in UPSCALE_SURFACES:
-        return {"model": UPSCALE_MODEL, "pad": UPSCALE_PAD, "scale": UPSCALE_SCALE, "size": UPSCALE_OUT}
-    return None
+def is_wood(prompt: str | None, style_preset: str | None) -> bool:
+    """True when the material's description names wood (whole words in WOOD_WORDS) and the preset is realistic."""
+    if style_preset not in REALISTIC_PRESETS:
+        return False
+    words = set(re.findall(r"[a-z]+", (prompt or "").lower()))
+    return bool(words & WOOD_WORDS)
+
+
+def upscale_plan(prompt: str | None, style_preset: str | None, texture_budget: int = UPSCALE_OUT) -> dict[str, Any] | None:
+    """The upscaler plan for a material, or None (today's path). The output is UPSCALE_OUT px, or the texture budget
+    when that is smaller (the trial measured detail at 2048 and seams at 1024)."""
+    if not is_wood(prompt, style_preset):
+        return None
+    return {"model": UPSCALE_MODEL, "pad": UPSCALE_PAD, "scale": UPSCALE_SCALE, "size": min(UPSCALE_OUT, int(texture_budget))}
 
 
 def wrap_pad(arr: np.ndarray, pad: int = UPSCALE_PAD) -> np.ndarray:
