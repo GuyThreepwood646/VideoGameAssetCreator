@@ -341,9 +341,12 @@ def test_turned_back_reads_the_first_bone_against_the_wrist():
     assert fb.turned_back(straight) is False
 
 
-def test_turned_back_leaves_a_sideways_first_bone_alone():
-    # a first bone square to the hand (no a change) is not turned back; the chain's later bones going outward count
+def test_turned_back_leaves_a_sideways_or_partly_turned_first_bone_alone():
+    # a first bone square to the hand (no a change) is not turned back; a partly turned one (cosine -0.33, as on rig 3) is
+    # reported as partly turned and not repaired; only a clearly reversed one (cosine at most -0.5) is turned back
     square = np.array([[0.2, 0.0, 0.0], [0.2, 0.05, 0.0], [0.25, 0.1, 0.0], [0.3, 0.15, 0.0]])
-    assert fb.turned_back(square) is True  # zero advance counts as not away from the wrist
+    assert fb.turned_back(square) is False and fb.partly_turned(square) is False
+    partly = np.array([[0.2, 0.0, 0.0], [0.2 - 0.01, 0.0 + 0.03, 0.0], [0.25, 0.1, 0.0], [0.3, 0.15, 0.0]])
+    assert fb.turned_back(partly) is False and fb.partly_turned(partly) is True
     ok = np.array([[0.2, 0.0, 0.0], [0.21, 0.05, 0.0], [0.25, 0.1, 0.0], [0.3, 0.15, 0.0]])
-    assert fb.turned_back(ok) is False
+    assert fb.turned_back(ok) is False and fb.partly_turned(ok) is False

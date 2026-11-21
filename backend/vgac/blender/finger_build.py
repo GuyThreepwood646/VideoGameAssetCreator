@@ -189,11 +189,33 @@ def _common_opt(flag, default):
     return argv[argv.index(flag) + 1] if flag in argv else default
 
 
-def turned_back(joints):
-    """True when a finger chain's first bone runs back toward the wrist. joints: the knuckle, the two inner joints and the
-    tip, in frame coordinates (a along the hand from the wrist, u, n). A finger that runs outward has a[1] > a[0]."""
+TURNED_COS = -0.5  # a first bone whose direction is this far against the hand's (cosine) is turned back; partly turned is left
+
+
+def _cos(joints, ref=None):
     j = np.asarray(joints, float)
-    return bool(j[1, 0] - j[0, 0] <= 0.0)
+    d = j[1] - j[0]
+    n = float(np.linalg.norm(d))
+    if n <= 1e-9:
+        return None
+    r = np.array([1.0, 0.0, 0.0]) if ref is None else np.asarray(ref, float)
+    r = r / max(float(np.linalg.norm(r)), 1e-12)
+    return float(d @ r) / n
+
+
+def turned_back(joints, ref=None):
+    """True when a finger chain's first bone runs clearly back toward the wrist: its direction's cosine with the hand's
+    reach (the frame's a axis) is at most TURNED_COS. joints: the knuckle, the two inner joints and the tip, in frame
+    coordinates (a along the hand from the wrist, u, n). A partly turned chain (cosine between TURNED_COS and 0) is left as
+    the rig has it: the repair made rig 3's partly turned pinky worse in attack (stretch 2.92 to 3.23)."""
+    c = _cos(joints, ref)
+    return c is not None and c <= TURNED_COS
+
+
+def partly_turned(joints, ref=None):
+    """A first bone that runs back but not clearly (cosine between TURNED_COS and 0): reported, not repaired."""
+    c = _cos(joints, ref)
+    return c is not None and TURNED_COS < c < 0.0
 
 
 def _joints(arm, names, AW):
@@ -226,7 +248,14 @@ def build_side(arm, mesh, side, report):
     fr = hand_frame(wrist, pts, thumb)
     # a finger chain that runs back toward the wrist (its first bone) is the one fault a complete hand can hide: the
     # four fingers are checked, not the thumb (it leaves the palm at an angle). Such a chain is repaired in place.
-    back = [f for f in FINGERS if len(have[f]) == 3 and fr is not None and turned_back(coords(fr, np.array(_joints(arm, have[f], AW))))]
+    # the cosine is taken against the middle finger's own direction (wrist to its tip), as the check reads it
+    ref = None
+    if fr is not None and len(have["Middle"]) == 3:
+        ref = coords(fr, np.array(_joints(arm, have["Middle"], AW))[3:4])[0]
+    back = [f for f in FINGERS if len(have[f]) == 3 and fr is not None and turned_back(coords(fr, np.array(_joints(arm, have[f], AW))), ref)]
+    partly = [f for f in FINGERS if len(have[f]) == 3 and fr is not None and partly_turned(coords(fr, np.array(_joints(arm, have[f], AW))), ref)]
+    if partly:
+        rep["partly_turned"] = partly  # reported only: left as the rig has them
     if complete and not back:
         rep.update(path="complete", built=0)
         return
