@@ -395,13 +395,13 @@ def test_the_original_picture_is_pose_searched_with_a_fidelity_hint(monkeypatch:
     """The app always passes the fidelity hint (apply_files). The original picture's turn still comes from the pose search,
     not from today's turn-only fit by colour (the hat's original was fitted at -120 that way, WP-61)."""
     searched: list[str] = []
-    real = srcproject._pose_fit
+    real = srcproject._pose_pick
 
     def spy(mesh, tex, prepared, src, src_n, name, *a, **k):  # noqa: ANN001
         searched.append(name)
         return real(mesh, tex, prepared, src, src_n, name, *a, **k)
 
-    monkeypatch.setattr(srcproject, "_pose_fit", spy)
+    monkeypatch.setattr(srcproject, "_pose_pick", spy)
     srcproject.paint(model(), soft_base(), picture(), source=picture(), size=256, mode="off", yaw_hint=lambda: 0.0)
     assert "source" in searched and "picture" in searched
 
@@ -415,3 +415,91 @@ def test_a_drawn_view_near_tie_goes_to_the_turn_it_was_drawn_at() -> None:
     pick, rec, why = srcproject._settle_by_prior(None, None, None, None, None, 1.0, poses, 90.0, 0.5, None, None,
                                                  window=srcproject.DRAWN_PRIOR_DEG, keep=1)
     assert why is None and pick.turn == 85.0 and rec["decision"] == "tie-break"
+
+
+def test_a_pose_under_the_outline_bar_still_has_its_turn_settled_by_the_expected_turn() -> None:
+    """Round 5: the expected-turn rule runs when the best pose misses the outline bar too (the hat's left view painted at
+    120, 30 degrees from where it was drawn, with no record). The near pose wins; fit_view then checks the outline."""
+    from vgac import posesearch as ps
+
+    poses = [ps.Pose(120.0, 12.5, None, 0.80, 3.0, {}), ps.Pose(95.0, 12.5, None, 0.80, 2.995, {})]
+    pick, rec, why = srcproject._settle_by_prior(None, None, None, None, None, 1.0, poses, 90.0, 0.85, None, None,
+                                                 window=srcproject.DRAWN_PRIOR_DEG, keep=1)
+    assert why is None and pick.turn == 95.0 and rec["decision"] == "tie-break"
+
+
+def test_a_search_already_inside_the_window_is_not_searched_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round 5: a drawn view's poses come from a search held to its window, so the expected-turn rule takes the best of
+    those instead of searching the same window again (one search fewer per drawn view)."""
+    from vgac import posesearch as ps
+
+    def no_search(*a, **k):  # noqa: ANN002, ANN003
+        raise AssertionError("searched again")
+
+    monkeypatch.setattr(ps, "search", no_search)
+    poses = [ps.Pose(112.0, 0.0, None, 0.9, 3.0, {}), ps.Pose(100.0, 0.0, None, 0.9, 2.985, {})]
+    pick, rec, why = srcproject._settle_by_prior(None, None, None, None, None, 1.0, poses, 90.0, 0.5, None, None,
+                                                 window=srcproject.DRAWN_PRIOR_DEG, keep=1, searched=(90.0, 20.0))
+    assert why is None and pick.turn == 100.0 and rec["decision"] == "override"
+
+
+def test_the_refinement_stays_inside_the_turn_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round 5: a pose searched within 20 degrees of 90 is refined inside that window, even when the score keeps rising
+    beyond it (the hat's drawn views drifted about 30 degrees, past their window, in round 4)."""
+    from vgac import posesearch as ps
+
+    def score(mesh, t, centre, scale, pose, tex=None):  # noqa: ANN001
+        return ps.Pose(pose[0], pose[1], pose[2], 0.9, float(pose[0]) / 100.0 - abs(pose[1]) / 100.0, {})
+
+    monkeypatch.setattr(ps, "score_pose", score)
+    start = ps.Pose(105.0, 0.0, None, 0.9, 1.05, {})
+    free = ps.refine(None, None, None, 1.0, start, t=object())
+    held = ps.refine(None, None, None, 1.0, start, t=object(), turn_limit=(90.0, 20.0))
+    assert free.turn > 110.0
+    assert held.turn <= 110.0 + 1e-9 and held.turn >= 108.0
+
+
+def test_a_drawn_view_refused_for_its_outline_is_not_fitted_again_at_any_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round 5: a drawn view whose pose near its drawn turn misses the outline stays refused; the old turn-only fit over
+    every turn is not tried (on the hat it put the back view at 152.5, onto the side)."""
+    fitted: list[str] = []
+    real_fit = srcproject.fit_view
+
+    def spy_fit(mesh, tex, pic, alpha, name, yaws, *a, **k):  # noqa: ANN001
+        fitted.append((name, len(yaws)))
+        return real_fit(mesh, tex, pic, alpha, name, yaws, *a, **k)
+
+    real_pose = srcproject._pose_fit
+
+    def pose(mesh, tex, prepared, src, src_n, name, *a, **k):  # noqa: ANN001
+        if name == "left":
+            v = srcproject.View(name, 0.5)
+            v.info["refused"] = "silhouette match 0.700 is under 0.85"
+            return v, {}
+        return real_pose(mesh, tex, prepared, src, src_n, name, *a, **k)
+
+    monkeypatch.setattr(srcproject, "fit_view", spy_fit)
+    monkeypatch.setattr(srcproject, "_pose_fit", pose)
+    r = srcproject.paint(model(), soft_base(), picture(), {"left": picture()}, size=256, mode="full")
+    assert not any(n == "left" for n, _ in fitted)
+    assert "silhouette" in str(r["metrics"]["srcproject_views"]["left"]["refused"])
+
+
+def test_the_picture_is_expected_at_the_turn_of_the_view_the_model_was_built_from(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round 5: a model built from the three-quarter view (Bob) has its step 1 picture near that view's turn, not at 0
+    (an expected 0 refused Bob's picture, 40 degrees off); the original picture shows the front: the picture's turn less
+    the turn the picture was drawn at."""
+    priors: dict[str, float | None] = {}
+    real = srcproject._pose_pick
+
+    def spy(mesh, tex, prepared, src, src_n, name, centre, scale, min_iou, atlas_job, log, hint=None, turns=None,  # noqa: ANN001
+            tilts=None, lenses=None, prior=None, *a, **k):
+        priors[name] = prior
+        return real(mesh, tex, prepared, src, src_n, name, centre, scale, min_iou, atlas_job, log, hint, turns, tilts,
+                    lenses, prior, *a, **k)
+
+    monkeypatch.setattr(srcproject, "_pose_pick", spy)
+    srcproject.paint(model(), soft_base(), picture(), source=picture(), size=256, mode="off", built_from="quarter")
+    assert priors["picture"] == srcproject.INTENDED_TURN["quarter"]
+    srcproject.paint(model(), soft_base(), picture(), source=picture(), size=256, mode="off", built_from="front")
+    assert priors["picture"] == 0.0

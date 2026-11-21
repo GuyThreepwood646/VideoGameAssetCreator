@@ -288,9 +288,10 @@ def _angdiff(a: float, b: float) -> float:
 
 def refine(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, start: Pose, n: int = REFINE_N,
            step: float = 2.0, span: float = 10.0, rgb: np.ndarray | None = None, tex: np.ndarray | None = None,
-           t: Target | None = None) -> Pose:
+           t: Target | None = None, turn_limit: tuple[float, float] | None = None) -> Pose:
     """Local search around a pose: turn and tilt by a pattern search from span/2 down to `step` degrees, staying within
-    `span` of the start, at size n, with every term the inputs allow."""
+    `span` of the start, at size n, with every term the inputs allow. turn_limit (centre, half width): the turn also stays
+    within half width of centre (the window the caller searched in)."""
     t = t or target(alpha, n, rgb if tex is not None else None)
     best = score_pose(mesh, t, centre, scale, (start.turn, start.tilt, start.lens), tex)
     stride = span / 2.0
@@ -303,6 +304,8 @@ def refine(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, star
                 tu, ti = best.turn + dt, best.tilt + dl
                 if abs(_angdiff(tu, start.turn)) > span + 1e-9 or abs(ti - start.tilt) > span + 1e-9:
                     continue
+                if turn_limit is not None and abs(_angdiff(tu, turn_limit[0])) > turn_limit[1] + 1e-9:
+                    continue
                 p = score_pose(mesh, t, centre, scale, (tu, ti, start.lens), tex)
                 if p.score > best.score + 1e-9:
                     best, moved = p, True
@@ -314,11 +317,12 @@ def refine(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, star
 def search(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, keep: int = 3,
            turns: list[float] | None = None, tilts: list[float] | None = None, rgb: np.ndarray | None = None,
            tex: np.ndarray | None = None, timings: dict | None = None,
-           lenses: list[float | None] | None = None) -> list[Pose]:
+           lenses: list[float | None] | None = None, turn_limit: tuple[float, float] | None = None) -> list[Pose]:
     """Coarse outline grid, the edge and colour terms on its best KEEP_FULL, then a local refinement of the `keep` best.
     Best first. turns and tilts restrict the coarse grid (paint's view searches use the turn the view is meant to be seen
     from, plus or minus 20 degrees). rgb is the picture and tex the model's built colour; without them only the outline
-    is scored. timings, when given, gets the seconds of each part: outline, terms, refine."""
+    is scored. timings, when given, gets the seconds of each part: outline, terms, refine. turn_limit (centre, half
+    width): the refinement keeps the turn within it, so a search restricted to a window answers inside it."""
     import time
 
     t0 = time.time()
@@ -331,7 +335,8 @@ def search(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, keep
                       key=lambda p: -p.score)
     t2 = time.time()
     tr = target(alpha, REFINE_N, rgb if full else None)
-    refined = [refine(mesh, alpha, centre, scale, p, rgb=rgb, tex=tex if full else None, t=tr) for p in grid[:keep]]
+    refined = [refine(mesh, alpha, centre, scale, p, rgb=rgb, tex=tex if full else None, t=tr, turn_limit=turn_limit)
+               for p in grid[:keep]]
     refined.sort(key=lambda p: -p.score)
     if timings is not None:
         timings.update(outline=round(t1 - t0, 2), terms=round(t2 - t1, 2), refine=round(time.time() - t2, 2))
