@@ -526,18 +526,34 @@ public static partial class T
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     struct SA { public int n; public IntPtr d; public bool inherit; }
 
-    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
     static extern IntPtr CreateEventW(ref SA sa, bool manual, bool initial, string name);
 
     [System.Runtime.InteropServices.DllImport("kernel32.dll")]
     static extern bool CloseHandle(IntPtr h);
 
-    // Helper mode of this program: says whether the given handle value is open in this process (that is, was inherited).
-    static int ReportHandle(string value)
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    static extern IntPtr OpenEventW(uint access, bool inherit, string name);
+
+    [System.Runtime.InteropServices.DllImport("kernelbase.dll")]
+    static extern bool CompareObjectHandles(IntPtr first, IntPtr second);
+
+    const uint SYNCHRONIZE = 0x00100000;
+
+    // Helper mode of this program: says whether the given handle value is open in this process AND refers to the
+    // parent's named event (that is, was inherited). Checking only that the value is open is not enough: handle
+    // values are small and reused, and this process opens handles of its own, one of which can land on the same value.
+    static int ReportHandle(string value, string name)
     {
+        IntPtr h = (IntPtr)long.Parse(value);
         uint flags;
-        bool open = GetHandleInformation((IntPtr)long.Parse(value), out flags);
-        Console.WriteLine("inherited=" + (open ? "yes" : "no"));
+        bool same = false;
+        if (GetHandleInformation(h, out flags))
+        {
+            IntPtr mine = OpenEventW(SYNCHRONIZE, false, name);
+            if (mine != IntPtr.Zero) { same = CompareObjectHandles(h, mine); CloseHandle(mine); }
+        }
+        Console.WriteLine("inherited=" + (same ? "yes" : "no"));
         Console.Out.Flush();
         return 0;
     }
@@ -549,11 +565,13 @@ public static partial class T
         string me = System.Reflection.Assembly.GetExecutingAssembly().Location;
         // a handle of this program that could leak: inheritable, like a pipe or file another part of the program has open
         var sa = new SA(); sa.n = System.Runtime.InteropServices.Marshal.SizeOf(typeof(SA)); sa.inherit = true;
-        IntPtr leak = CreateEventW(ref sa, true, false, null);
+        // named, so the child can tell this event from any handle of its own that happens to have the same value
+        string eventName = "vgac-inherit-check-" + Guid.NewGuid().ToString("N");
+        IntPtr leak = CreateEventW(ref sa, true, false, eventName);
         try
         {
             Check(leak != IntPtr.Zero, "an inheritable handle was made for the check");
-            string args = "--report-handle " + (long)leak;
+            string args = "--report-handle " + (long)leak + " " + eventName;
             // the control: an ordinary launch that passes every inheritable handle on does leak it (so the check can see a leak)
             var psi = new ProcessStartInfo(me, args); psi.UseShellExecute = false; psi.CreateNoWindow = true; psi.RedirectStandardOutput = true;
             string plain;
