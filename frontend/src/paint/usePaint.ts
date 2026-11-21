@@ -2,8 +2,7 @@
 // viewer tool. The session is made when painting starts (or the first undo), so opening step 4 costs nothing extra.
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { ViewerModel, ViewerTool } from '../viewerTool'
-import { checkPaint, DEFAULT_PAINT, PaintSession, type PaintSettings, type PaintWarning } from './paintSession'
-import type { PaintLayer } from './paintLayer'
+import { checkPaint, DEFAULT_PAINT, PaintSession, paintableMaps, type PaintSettings, type PaintWarning, type SaveMaps } from './paintSession'
 
 export type PaintState = {
   settings: PaintSettings
@@ -28,9 +27,11 @@ export type PaintState = {
   // Called after a save: the picture as it is now counts as saved.
   markSaved: () => void
   notice: string | null
-  // The layer a save sends, or null when the model has parts with pictures of their own (not saveable yet).
-  saveLayer: () => PaintLayer | null
+  // The pictures a save sends (colour, and shine and metal when the model has them), or null when not saveable yet.
+  saveMaps: () => SaveMaps | null
   saveable: boolean
+  // Which pictures this model has to paint: shine and metal need the model's metallic-roughness picture (WP-32).
+  maps: { shine: boolean; metal: boolean }
 }
 
 type Active = { model: ViewerModel; session: PaintSession; tool: ViewerTool; baseline: string }
@@ -46,13 +47,14 @@ export function usePaint(model: ViewerModel | null, look: string | null): PaintS
   const [active, setActive] = useState<Active | null>(null)
   const warnings = useMemo(() => (model ? checkPaint(model, look) : []), [model, look])
   const blocked = warnings.some((w) => w.blocks)
+  const maps = useMemo(() => (model ? paintableMaps(model) : { shine: false, metal: false }), [model])
 
   const start = () => {
     if (!model || active?.model === model) return
     const session = new PaintSession(model)
     const tool = session.tool(() => settingsRef.current, {
       picked: (rgb) => {
-        setSettingsState((s) => ({ ...s, rgb, mode: 'paint' }))
+        setSettingsState((s) => ({ ...s, rgb, mode: 'paint', target: 'colour' }))
         setNotice('Colour picked. Back to the brush.')
       },
       changed: () => bump(),
@@ -92,7 +94,8 @@ export function usePaint(model: ViewerModel | null, look: string | null): PaintS
     dirty: !!active && active.session.editMark !== active.baseline,
     markSaved: () => setActive((a) => (a ? { ...a, baseline: a.session.editMark } : a)),
     notice,
-    saveLayer: () => active?.session.saveableLayer() ?? null,
-    saveable: !!active && active.session.layers.length === 1,
+    saveMaps: () => active?.session.saveableMaps() ?? null,
+    saveable: !!active && active.session.saveableMaps() !== null,
+    maps,
   }
 }

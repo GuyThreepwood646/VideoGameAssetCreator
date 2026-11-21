@@ -1,8 +1,19 @@
-// Turns the painted picture into what the save sends (WP-23): the picture as PNG (glTF row order, as the layer holds it),
-// the edit mask as PNG (white where the picture differs from the one the model came with), and the stroke log.
+// Turns the painted pictures into what the save sends (WP-23, WP-32): each picture as PNG (glTF row order, as the layer
+// holds it), its edit mask as PNG (white where the picture differs from the one the model came with), and the stroke
+// logs. The shine and metal pictures are sent only when they changed.
 import type { PaintLayer, StrokeRecord } from './paintLayer'
+import type { SaveMaps } from './paintSession'
 
-export type PaintSaveBody = { picture_png: string; mask_png: string; strokes: StrokeRecord[] }
+// Each picture comes with its mask; a picture that did not change is left out.
+export type PaintSaveBody = {
+  picture_png?: string
+  mask_png?: string
+  strokes: StrokeRecord[]
+  shine_png?: string
+  shine_mask_png?: string
+  metal_png?: string
+  metal_mask_png?: string
+}
 
 // A PNG of RGBA bytes, as base64 text (no data: prefix).
 function pngOf(bytes: Uint8ClampedArray<ArrayBuffer>, width: number, height: number): string {
@@ -15,8 +26,8 @@ function pngOf(bytes: Uint8ClampedArray<ArrayBuffer>, width: number, height: num
   return canvas.toDataURL('image/png').split(',', 2)[1]
 }
 
-// The save body for a layer, or null when nothing differs from the model's own picture.
-export function paintSaveBody(layer: PaintLayer): PaintSaveBody | null {
+// The picture and mask of one layer, or null when nothing differs from the model's own picture.
+function layerFiles(layer: PaintLayer): { picture: string; mask: string } | null {
   const changed = layer.changedMask()
   const n = layer.width * layer.height
   const mask = new Uint8ClampedArray(n * 4)
@@ -32,9 +43,29 @@ export function paintSaveBody(layer: PaintLayer): PaintSaveBody | null {
   if (!any) return null
   // A copy, so the bytes are on a plain ArrayBuffer (ImageData takes no shared buffer).
   const pixels = new Uint8ClampedArray(layer.pixels)
-  return {
-    picture_png: pngOf(pixels, layer.width, layer.height),
-    mask_png: pngOf(mask, layer.width, layer.height),
-    strokes: layer.strokeLog,
+  return { picture: pngOf(pixels, layer.width, layer.height), mask: pngOf(mask, layer.width, layer.height) }
+}
+
+// The save body for the saveable maps, or null when no picture differs from the model's own.
+export function paintSaveBody(maps: SaveMaps): PaintSaveBody | null {
+  const colour = layerFiles(maps.colour)
+  const shine = maps.shine ? layerFiles(maps.shine) : null
+  const metal = maps.metal ? layerFiles(maps.metal) : null
+  if (!colour && !shine && !metal) return null
+  const body: PaintSaveBody = {
+    strokes: [...maps.colour.strokeLog, ...(maps.shine?.strokeLog ?? []), ...(maps.metal?.strokeLog ?? [])],
   }
+  if (colour) {
+    body.picture_png = colour.picture
+    body.mask_png = colour.mask
+  }
+  if (shine) {
+    body.shine_png = shine.picture
+    body.shine_mask_png = shine.mask
+  }
+  if (metal) {
+    body.metal_png = metal.picture
+    body.metal_mask_png = metal.mask
+  }
+  return body
 }

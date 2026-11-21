@@ -248,6 +248,21 @@ def _embeds_picture(path: Path | str) -> bool:
     return bool(gltf.get("materials")) and bool(gltf.get("images"))
 
 
+def _painted_shine_metal(sc: StageContext, painted: Any) -> dict[str, Path]:
+    """WP-32: the painted clean-up's shine (roughness) and metal pictures, only for the ones the paint changed (its
+    metrics say so). Empty when neither was painted, so a colour-only paint takes the donor's maps as before."""
+    metrics = painted.metrics or {}
+    maps: dict[str, Path] = {}
+    for key, texels in (("roughness", "paint_shine_texels"), ("metallic", "paint_metal_texels")):
+        if not metrics.get(texels):
+            continue
+        p = sc.lineage_file(key, ("prep",))
+        if p is None:
+            raise FileNotFoundError(f"the painted clean-up has no {key} picture")
+        maps[key] = Path(p)
+    return maps
+
+
 async def retexture(sc: StageContext, template: str, gpv: int, params: dict[str, Any]) -> bool:
     """WP-23 rig.retexture: a rig made from a painted clean-up (step 4) reuses a finished rig of the same geometry, its
     skeleton, weights, hit boxes and moves, and takes the new picture. No SkinToken run, so it is taken only when the
@@ -284,17 +299,20 @@ async def retexture(sc: StageContext, template: str, gpv: int, params: dict[str,
         sc.progress(0.05, "the paint changed the picture only: reusing the rig of this model")
         if _reuse_parent(sc, donor, skip=(), skip_metrics=()) is None:
             continue
+        maps = _painted_shine_metal(sc, painted)
         for key in ("glb", "anim_glb", "anim_body"):
             path = sc.file(key)
             # A rig GLB that carries a material and picture of its own gets the new picture; the rig's own picture
-            # (the base_color file, linked below) is what the viewer and the export use for the rest.
+            # (the base_color file, linked below) is what the viewer and the export use for the rest. A painted shine
+            # or metal picture goes into the GLB's metallic-roughness channels the same way (WP-32).
             if path is not None and Path(path).is_file() and _embeds_picture(path):
-                if not imaging.glb_replace_images(path, base_color=picture):
+                if not imaging.glb_replace_images(path, base_color=picture, roughness=maps.get("roughness"), metallic=maps.get("metallic")):
                     raise ValueError(f"the new picture could not be written into the rig ({key})")
         link_textures(sc)
         if recoloured is not None:
             sc.register("base_color", recoloured)
         sc.set_metrics(retextured_of=donor.id, retexture_from=painted.id, rig_method="retexture", retexture_why=None,
+                       retextured_maps=sorted(maps) or None,
                        caps_recoloured=None if recoloured is None else {
                            "caps": int(caps_rep.get("recoloured") or 0),
                            "ring_colour_diff": [c.get("ring_colour_diff") for c in caps_rep.get("caps", [])]})
