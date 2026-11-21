@@ -1797,14 +1797,42 @@ def leg_parts():
     return out
 
 
+def _leg_clearance(P, passes=8):
+    """WP-78: a limb point (a leg's thigh, robe, shin or foot, or an arm's sleeve, forearm or hand) that goes under the
+    ground in the fall is taken up by bending that limb (two-bone IK on that limb only); the body is not moved for it."""
+    g = _rest_low[0]
+    parts = {**leg_parts(), **arm_parts()}
+    chains = [(li.get("ik")) for li in leg_info if li.get("ik")] + [(a.get("ik")) for a in arm_info if a.get("ik")]
+    if not parts or not chains:
+        return
+    for _ in range(passes):
+        lows = limb_lowest_parts(P, parts)
+        Mw = fk(P)
+        moved = False
+        for ch in chains:
+            key = ch["end_bone"] or ch["m"]
+            z = lows.get(key)
+            if z is None or z >= g + 0.002:
+                continue
+            ha, hm, he = chain_points(Mw, ch)
+            target = Vector(he) + up * (g + 0.002 - z)
+            pole = Vector(hm) + up * (ch["l1"] + ch["l2"])
+            ik_chain(P, ch, target, pole, end_orient=None, max_bend=150.0, Mw=Mw)
+            moved = True
+        if not moved:
+            return
+        Mw = fk(P)
+
+
 def _death_render(P, t):
-    """The death pose at clip time t: fall, resting hand, settled limbs, torso tilt and head bend."""
+    """The death pose at clip time t: fall, resting hand, settled limbs, torso tilt, head bend and leg clearance."""
     _death_pose(P, t, _death["drop"])
     hands_pose(P, 0.0)
     w = gait.envelope(t, [(0.45, 0), (0.9, 1)])
     apply_fix(P, _death["fix"], w)
     spine_pitch(P, _death["tilt"] * w)
     head_pitch(P, _death["head"] * w)
+    _leg_clearance(P)
 
 
 def _lift_at(table, t):
@@ -1930,7 +1958,7 @@ def clip_death(P, t):
                             continue
                         if best_t is None or hz_ < best_t[1]:
                             best_t = (d_, hz_, float(tl), float(hd_))
-                if best_t is not None and best_t[1] < head_only[1]:
+                if best_t is not None and best_t[1] < head_only[1] - 0.05:
                     drop, tilt_deg, head_deg = best_t[0], best_t[2], best_t[3]
         _death.update(drop=drop, fix=fix, head=head_deg, tilt=tilt_deg)
         # WP-78: contact in the fall. Sample the whole clip, find how far any body point goes under the ground, and lift
@@ -1941,7 +1969,7 @@ def clip_death(P, t):
             Pt = Pose()
             _death_render(Pt, i / (samples - 1))
             defs.append(max(0.0, _rest_low[0] - lowest_z(Pt)))
-        table = _smooth_lift(defs)
+        table = [min(0.02, v) for v in _smooth_lift(defs)]
         _death["lift"] = table
         print("DEATH_LIFT max_deficit", round(max(defs), 4), "max_lift", round(max(table), 4), file=sys.stderr)
     _death_render(P, t)
