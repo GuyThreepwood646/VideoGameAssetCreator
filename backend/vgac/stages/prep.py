@@ -968,8 +968,13 @@ def apply_look(look: dict[str, Any], uvf: dict[str, Any], maps: dict[str, Path],
         if src is None or not Path(src).is_file():
             continue
         if imaging.image_size(src)[0] > target:
-            shrink = imaging.shrink_normal if key == "normal" else imaging.shrink_image
-            files[key] = shrink(src, target, out_dir / f"{key}.png")
+            if key == "normal" and uvf is not None:
+                # per island, as the base colour is shrunk in ship_late: no blending across island borders
+                files[key] = imaging.shrink_normal_islands(src, uvf, target, out_dir / f"{key}.png")
+            elif key == "normal":
+                files[key] = imaging.shrink_normal(src, target, out_dir / f"{key}.png")
+            else:
+                files[key] = imaging.shrink_image(src, target, out_dir / f"{key}.png")
     return m, (target if target < size else None)
 
 

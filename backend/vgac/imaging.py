@@ -832,11 +832,29 @@ def shrink_normal(path: Path | str, size: int, dest: Path | str | None = None) -
     vec = np.asarray(rgb, dtype=np.float32) / 255.0 * 2.0 - 1.0
     small = np.stack([np.asarray(Image.fromarray(vec[..., c]).resize((size, size), Image.BOX), dtype=np.float32)
                       for c in range(3)], axis=-1)
-    norm = np.linalg.norm(small, axis=-1, keepdims=True)
-    unit = np.where(norm > 1e-6, small / np.maximum(norm, 1e-6), np.array([0.0, 0.0, 1.0], dtype=np.float32))
-    enc = np.clip(np.round((unit * 0.5 + 0.5) * 255), 0, 255).astype(np.uint8)
-    Image.fromarray(enc, "RGB").save(out)
+    Image.fromarray(_encode_unit(small), "RGB").save(out)
     return out
+
+
+def _encode_unit(vec: np.ndarray) -> np.ndarray:
+    """Vectors (-1..1 per channel) renormalised to unit length and encoded as 8-bit RGB. A zero vector becomes (0, 0, 1)."""
+    norm = np.linalg.norm(vec, axis=-1, keepdims=True)
+    unit = np.where(norm > 1e-6, vec / np.maximum(norm, 1e-6), np.array([0.0, 0.0, 1.0], dtype=np.float32))
+    return np.clip(np.round((unit * 0.5 + 0.5) * 255), 0, 255).astype(np.uint8)
+
+
+def shrink_normal_islands(path: Path | str, uvmesh: dict[str, np.ndarray], size: int, dest: Path | str) -> Path:
+    """A normal map shrunk the way the base colour is shrunk in the clean-up (shrink_by_island): each texel of the new
+    map averages only the texels of its own UV island, so neighbouring islands with different normals do not blend at
+    their borders. The averaged vectors are renormalised to unit length, then the islands are grown into the empty
+    space (dilate_png, as for the base colour). Writes dest as an RGB PNG."""
+    with Image.open(path) as im:
+        rgb = np.asarray(im.convert("RGB"), dtype=np.float32) / 255.0
+    small = shrink_by_island(rgb, uvmesh, size)
+    small_vec = small * 2.0 - 1.0  # the averaged encoded values are the averaged vectors (the encoding is affine)
+    Image.fromarray(_encode_unit(small_vec), "RGB").save(dest)
+    dilate_png(dest, rasterise_uv(uvmesh, size)["labels"] > 0, dilation_px(size))
+    return Path(dest)
 
 
 def shrink_image(path: Path | str, size: int, dest: Path | str | None = None) -> Path:
