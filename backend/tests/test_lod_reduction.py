@@ -41,6 +41,38 @@ bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", use_selection=True)
 '''
 
 
+# An icosphere with 800 random pairs of far-apart vertices welded together: every weld is a pinched vertex (two fans of
+# faces meeting at one point, like the leaf cards of a tree), and only a few edges are shared by three faces. Splitting
+# only those edges left a collapse decimation at 0.28 of the triangles for a ratio of 0.1 (the leafy tree stopped at 0.34);
+# splitting the pinched vertices as well reaches 0.1.
+MAKE_PINCH = r'''
+import bpy, bmesh, random, sys
+out = sys.argv[sys.argv.index("--") + 1]
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bm = bmesh.new()
+bmesh.ops.create_icosphere(bm, subdivisions=5, radius=1.0)
+random.seed(3)
+verts = list(bm.verts)
+targets, used = {}, set()
+for _ in range(800):
+    a, b = random.sample(verts, 2)
+    if a in used or b in used:
+        continue
+    used.update((a, b))
+    targets[a] = b
+bmesh.ops.weld_verts(bm, targetmap=targets)
+mesh = bpy.data.meshes.new("Pinch")
+bm.to_mesh(mesh)
+bm.free()
+obj = bpy.data.objects.new("Pinch", mesh)
+bpy.context.scene.collection.objects.link(obj)
+bpy.ops.object.select_all(action="DESELECT")
+obj.select_set(True)
+bpy.context.view_layer.objects.active = obj
+bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", use_selection=True)
+'''
+
+
 def _blender_or_skip():
     exe = blender()
     if exe is None:
@@ -76,3 +108,24 @@ def test_lods_of_a_multi_piece_non_manifold_mesh_are_reduced(tmp_path):
     assert 0.18 * lod0 <= _tris(report, "LOD2") <= 0.32 * lod0, report["lods"]
     # the lower level is smaller than the one above it, not the same mesh again
     assert _tris(report, "LOD2") < _tris(report, "LOD1")
+
+
+def test_lods_of_pieces_that_touch_at_single_vertices_are_reduced(tmp_path):
+    exe = _blender_or_skip()
+    script = tmp_path / "make_pinch.py"
+    script.write_text(MAKE_PINCH, encoding="utf-8")
+    src = tmp_path / "pinch.glb"
+    subprocess.run([str(exe), "-b", "--factory-startup", "--python", str(script), "--", str(src)],
+                   capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+    assert src.is_file()
+    out = tmp_path / "out"
+    run = subprocess.run([str(exe), "-b", "--factory-startup", "--python", str(PACK), "--", str(src), str(out), "pinch",
+                          "--lods", "0.1", "--formats", "glb", "--collider", "none"],
+                         capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
+    report_path = out / "report.json"
+    assert report_path.is_file(), run.stdout[-800:] + run.stderr[-800:]
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    lod0 = _tris(report, "LOD0")
+    assert lod0 > 4000
+    # within 10 percent of the ratio (0.09 to 0.11 of LOD0); without the pinch split this level stays near 0.28
+    assert 0.09 * lod0 <= _tris(report, "LOD1") <= 0.11 * lod0, report["lods"]
