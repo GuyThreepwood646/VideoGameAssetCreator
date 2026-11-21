@@ -1797,62 +1797,14 @@ def leg_parts():
     return out
 
 
-def _leg_clearance(P, passes=8):
-    """WP-78: a limb point (a leg's thigh, robe, shin or foot, or an arm's sleeve, forearm or hand) that goes under the
-    ground in the fall is taken up by bending that limb (two-bone IK on that limb only); the body is not moved for it."""
-    g = _rest_low[0]
-    parts = {**leg_parts(), **arm_parts()}
-    chains = [leg_chain(li) for li in leg_info if leg_chain(li)] + [(a.get("ik")) for a in arm_info if a.get("ik")]
-    if not parts or not chains:
-        return
-    # A foot whose toes dip is first pitched (the ankle, within 25 degrees either way) to the angle that lifts its
-    # lowest point the most; a knee bend follows only if the toes still dip.
-    for li in leg_info:
-        ch = leg_chain(li)
-        if not ch:
-            continue
-        key = ch["end_bone"] or ch["m"]
-        if key not in parts:
-            continue
-        z0 = limb_lowest_parts(P, {key: parts[key]}).get(key, g)
-        if z0 >= g + 0.002:
-            continue
-        base = P.rot.get(key, Quaternion()).copy()
-        best = (z0, 0)
-        for deg in range(-25, 26, 5):
-            P.rot[key] = base @ Quaternion(local_axis(key, lateral), math.radians(deg))
-            zz = limb_lowest_parts(P, {key: parts[key]}).get(key, g)
-            if zz > best[0] + 1e-6:
-                best = (zz, deg)
-        P.rot[key] = base @ Quaternion(local_axis(key, lateral), math.radians(best[1])) if best[1] else base
-    for _ in range(passes):
-        lows = limb_lowest_parts(P, parts)
-        Mw = fk(P)
-        moved = False
-        for ch in chains:
-            key = ch["end_bone"] or ch["m"]
-            z = lows.get(key)
-            if z is None or z >= g + 0.002:
-                continue
-            ha, hm, he = chain_points(Mw, ch)
-            target = Vector(he) + up * (g + 0.002 - z)
-            pole = Vector(hm) + up * (ch["l1"] + ch["l2"])
-            ik_chain(P, ch, target, pole, end_orient=None, max_bend=150.0, Mw=Mw)
-            moved = True
-        if not moved:
-            return
-        Mw = fk(P)
-
-
 def _death_render(P, t):
-    """The death pose at clip time t: fall, resting hand, settled limbs, torso tilt, head bend and leg clearance."""
+    """The death pose at clip time t: fall, resting hand, settled limbs, torso tilt and head bend."""
     _death_pose(P, t, _death["drop"])
     hands_pose(P, 0.0)
     w = gait.envelope(t, [(0.45, 0), (0.9, 1)])
     apply_fix(P, _death["fix"], w)
     spine_pitch(P, _death["tilt"] * w)
     head_pitch(P, _death["head"] * w)
-    _leg_clearance(P)
 
 
 def _lift_at(table, t):
