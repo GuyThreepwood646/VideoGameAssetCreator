@@ -2,25 +2,28 @@
 // that turns pointer spots into brush dabs. Painting is for this page only: nothing is saved yet (WP-23 does that).
 import * as THREE from 'three'
 import type { SurfaceHit, ViewerModel, ViewerTool } from '../viewerTool'
-import { paintDab, type Brush, type Dab, type DabTarget } from './paintDab'
+import { fillRegion, paintDab, smudgeDab, type Brush, type Dab, type DabTarget } from './paintDab'
 import { PaintLayer, type StrokeRecord } from './paintLayer'
 
-export type PaintMode = 'paint' | 'erase' | 'pick'
+// Brush, Eraser and Eyedropper (pick) as before; Smudge drags the colour under the brush; Fill floods the connected
+// surface that matches the clicked colour (WP-32).
+export type PaintMode = 'paint' | 'erase' | 'pick' | 'smudge' | 'fill'
 export type PaintSettings = {
   mode: PaintMode
   rgb: [number, number, number]
   radius: number // metres on the model
   hardness: number // 0 soft to 1 hard
-  strength: number // 0 to 1
+  strength: number // 0 to 1 (for smudge: how far the colour drags)
+  match: number // 0 to 1: how close a colour must be to the clicked one for Fill
   faceOnly: boolean
   mirror: boolean
 }
-export const DEFAULT_PAINT: PaintSettings = { mode: 'paint', rgb: [178, 58, 58], radius: 0.02, hardness: 0.6, strength: 1, faceOnly: false, mirror: false }
+export const DEFAULT_PAINT: PaintSettings = { mode: 'paint', rgb: [178, 58, 58], radius: 0.02, hardness: 0.6, strength: 1, match: 0.25, faceOnly: false, mirror: false }
 // Brush sizes offered, in metres (the slider shows centimetres).
 // What a stroke was set to, for the stroke log saved with the picture (WP-23). Sizes in centimetres.
 export function strokeRecordOf(s: PaintSettings): StrokeRecord {
   return {
-    mode: s.mode === 'erase' ? 'erase' : 'paint',
+    mode: s.mode === 'erase' ? 'erase' : s.mode === 'smudge' ? 'smudge' : s.mode === 'fill' ? 'fill' : 'paint',
     rgb: [...s.rgb] as [number, number, number],
     size_cm: Math.round(s.radius * 1000) / 10,
     edge: Math.round(s.hardness * 100) / 100,
@@ -274,12 +277,23 @@ export class PaintSession {
     return [Math.round(r / n), Math.round(g / n), Math.round(b / n)]
   }
 
+  // The colour of the one picture texel under a surface hit (sRGB bytes), or null when the hit has no picture position.
+  private colourAt(layer: PaintLayer, hit: SurfaceHit): [number, number, number] | null {
+    if (!hit.uv) return null
+    const x = ((Math.floor(hit.uv.x * layer.width) % layer.width) + layer.width) % layer.width
+    const y = ((Math.floor(hit.uv.y * layer.height) % layer.height) + layer.height) % layer.height
+    const o = (y * layer.width + x) * 4
+    return [layer.pixels[o], layer.pixels[o + 1], layer.pixels[o + 2]]
+  }
+
   // The viewer tool for this session. Keep one tool object per session; read the settings through getSettings.
   tool(getSettings: () => PaintSettings, hooks: ToolHooks): ViewerTool {
     let active: PaintLayer | null = null
     let last: THREE.Vector3 | null = null
     // Clicked-face-only: the triangle the stroke began on (and its mirror image, for a mirrored stroke).
     let strokeFace: { mesh: THREE.Mesh; face: number } | null = null
+    // Smudge: the colour the stroke is carrying (null until its first dab).
+    const carry: { rgb: [number, number, number] | null } = { rgb: null }
     const brushOf = (s: PaintSettings): Brush => ({ rgb: s.rgb, radius: s.radius, hardness: s.hardness, strength: s.strength, erase: s.mode === 'erase' })
     // One dab at a spot. With faceOnly, only the stroke's triangle is painted (faceSpot), and its mirror image for the mirror side.
     const paintAt = (layer: PaintLayer, spot: Spot, s: PaintSettings, faceSpot: { mesh: THREE.Mesh; face: number } | null) => {
@@ -291,12 +305,13 @@ export class PaintSession {
         face: faceSpot?.face ?? spot.face,
         faceOnly: faceSpot !== null,
       }
-      paintDab(layer, targets, dab, brushOf(s))
+      const dabOnce = (d: Dab) => (s.mode === 'smudge' ? smudgeDab(layer, targets, d, brushOf(s), carry) : paintDab(layer, targets, d, brushOf(s)))
+      dabOnce(dab)
       if (s.mirror) {
         const mirror = this.mirrored(spot, layer)
         if (mirror && mirror.point.distanceTo(spot.point) > s.radius * 0.5) {
           const mirrorFace = faceSpot ? { mesh: mirror.mesh, face: mirror.face } : null
-          paintDab(layer, targets, { ...dab, point: mirror.point, normal: mirror.normal, hitMesh: mirror.mesh, face: mirror.face, faceOnly: mirrorFace !== null }, brushOf(s))
+          dabOnce({ ...dab, point: mirror.point, normal: mirror.normal, hitMesh: mirror.mesh, face: mirror.face, faceOnly: mirrorFace !== null })
         }
       }
     }
@@ -310,6 +325,7 @@ export class PaintSession {
       layer.beginStroke(strokeRecordOf(s))
       active = layer
       strokeFace = { mesh: hit.mesh, face: hit.face }
+      carry.rgb = null
       return layer
     }
     const flush = () => {
@@ -336,6 +352,16 @@ export class PaintSession {
           const layer = this.layerByMesh.get(hit.mesh)
           const rgb = this.sampleColour(hit)
           if (layer && rgb) hooks.picked(rgb)
+          return
+        }
+        if (s.mode === 'fill') {
+          // One click is one fill and one undo step. The seed is the colour under the click.
+          const layer = beginStroke(hit, s)
+          if (!layer) return
+          const seed = this.colourAt(layer, hit)
+          if (seed) fillRegion(layer, { mesh: hit.mesh, face: hit.face, rgb: seed }, { rgb: s.rgb, tolerance: s.match, strength: s.strength })
+          flush()
+          finish()
           return
         }
         const layer = beginStroke(hit, s)

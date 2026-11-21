@@ -13,10 +13,12 @@ function rgbOf(hex: string): [number, number, number] {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
 }
 
-const MODES: { id: PaintMode; label: string }[] = [
-  { id: 'paint', label: 'Brush' },
-  { id: 'erase', label: 'Eraser' },
-  { id: 'pick', label: 'Eyedropper' },
+const MODES: { id: PaintMode; label: string; hint: string }[] = [
+  { id: 'paint', label: 'Brush', hint: 'Paints the colour you pick.' },
+  { id: 'smudge', label: 'Smudge', hint: 'Drags the colour under the brush along your stroke, so it blends into what is there.' },
+  { id: 'fill', label: 'Fill area', hint: 'One click fills the surface you click where the colour is close to the colour under the click (Match). One undo step.' },
+  { id: 'erase', label: 'Eraser', hint: 'Puts back the model\'s own picture under the brush.' },
+  { id: 'pick', label: 'Eyedropper', hint: 'Click the model to take its colour for the brush.' },
 ]
 
 function edgeWord(hardness: number): string {
@@ -68,25 +70,36 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
                 </button>
               ))}
             </span>
-            {s.mode !== 'erase' && (
+            {s.mode !== 'erase' && s.mode !== 'smudge' && (
               <label className="small">
                 Colour{' '}
                 <input type="color" value={hexOf(s.rgb)} onChange={(e) => paint.setSettings({ rgb: rgbOf(e.target.value) })} aria-label="Brush colour" />
               </label>
             )}
           </div>
+          <div className="small muted">{MODES.find((m) => m.id === s.mode)?.hint}</div>
           <div className="touch-up-row">
+            {s.mode !== 'fill' && (
+              <>
+                <label className="small">
+                  Size {cm} cm on the model{' '}
+                  <input type="range" min={Math.round(BRUSH_MIN * 100)} max={Math.round(BRUSH_MAX * 100)} value={cm} onChange={(e) => paint.setSettings({ radius: Number(e.target.value) / 100 })} aria-label="Brush size in centimetres" />
+                </label>
+                <label className="small">
+                  Edge {edgeWord(s.hardness)}{' '}
+                  <input type="range" min={0} max={100} value={Math.round(s.hardness * 100)} onChange={(e) => paint.setSettings({ hardness: Number(e.target.value) / 100 })} aria-label="Edge: soft to hard" />
+                </label>
+              </>
+            )}
+            {s.mode === 'fill' && (
+              <label className="small">
+                Match {Math.round(s.match * 100)}%{' '}
+                <input type="range" min={0} max={100} value={Math.round(s.match * 100)} onChange={(e) => paint.setSettings({ match: Number(e.target.value) / 100 })} aria-label="Match: how close a colour must be to fill" />
+              </label>
+            )}
             <label className="small">
-              Size {cm} cm on the model{' '}
-              <input type="range" min={Math.round(BRUSH_MIN * 100)} max={Math.round(BRUSH_MAX * 100)} value={cm} onChange={(e) => paint.setSettings({ radius: Number(e.target.value) / 100 })} aria-label="Brush size in centimetres" />
-            </label>
-            <label className="small">
-              Edge {edgeWord(s.hardness)}{' '}
-              <input type="range" min={0} max={100} value={Math.round(s.hardness * 100)} onChange={(e) => paint.setSettings({ hardness: Number(e.target.value) / 100 })} aria-label="Edge: soft to hard" />
-            </label>
-            <label className="small">
-              Strength {Math.round(s.strength * 100)}%{' '}
-              <input type="range" min={10} max={100} value={Math.round(s.strength * 100)} onChange={(e) => paint.setSettings({ strength: Number(e.target.value) / 100 })} aria-label="Strength" />
+              {s.mode === 'smudge' ? 'How far the colour drags' : 'Strength'} {Math.round(s.strength * 100)}%{' '}
+              <input type="range" min={10} max={100} value={Math.round(s.strength * 100)} onChange={(e) => paint.setSettings({ strength: Number(e.target.value) / 100 })} aria-label={s.mode === 'smudge' ? 'How far the colour drags' : 'Strength'} />
             </label>
           </div>
           <div className="touch-up-row small">

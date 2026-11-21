@@ -11,7 +11,7 @@ export const UNDO_BYTES = 256 * 1024 * 1024
 export type Rect = { x: number; y: number; w: number; h: number }
 // What the stroke was set to, for the stroke log saved with the picture (WP-23). Sizes are in centimetres on the model.
 export type StrokeRecord = {
-  mode: 'paint' | 'erase'
+  mode: 'paint' | 'erase' | 'smudge' | 'fill'
   rgb: [number, number, number]
   size_cm: number
   edge: number
@@ -25,6 +25,8 @@ type Entry = { rect: Rect; before: Uint8Array; after: Uint8Array; stroke: Stroke
 function stepLabel(stroke: StrokeRecord | null): string {
   if (!stroke) return "back to the model's own picture"
   if (stroke.mode === "erase") return "an eraser stroke"
+  if (stroke.mode === "smudge") return "a smudge stroke"
+  if (stroke.mode === "fill") return "a fill"
   return stroke.mirror ? "a mirrored brush stroke" : "a brush stroke"
 }
 
