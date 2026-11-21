@@ -862,7 +862,7 @@ async def _borrow_for_sides(sc: StageContext, method: str, left: list[str], righ
 async def _both_sides(sc: StageContext, lease: Any, left: list[str], right: list[str], do_view) -> str | None:
     """Draw the left side on the job's card and the right side on the lent card at the same time, and hand the lent
     card back. Returns a plain note when the right side had to be finished on the job's card, else None. A failure on
-    either side stops the other and is raised; stopping the job stops both (the caller interrupts the lent card)."""
+    either side stops the other and is raised; stopping the job stops both (the caller withdraws the job's prompts on the lent card)."""
     from ..jobs import is_engine_lost
 
     notes: list[str] = []
