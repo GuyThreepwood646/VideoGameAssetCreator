@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
+import tempfile
+import uuid
 from pathlib import Path
 
 import pytest
@@ -15,14 +18,44 @@ if str(BACKEND) not in sys.path:
 BAKEOFF = BACKEND.parent / "bakeoff"
 
 
+# The app refuses a library folder path over 89 characters (library.library_path_problem), so a test library cannot sit
+# in pytest's own temporary folders (C:\Users\...\pytest-of-...\...), which are longer. Each test's library is a
+# short folder under the system temporary folder, or under the project's bakeoff/t when that is too long, and it is
+# removed after the test. The folder-length tests (test_long_paths.py) still prove the refusal on deep paths.
+TEMP_LIBRARY_ROOTS = [Path(tempfile.gettempdir()).resolve(), (BAKEOFF / "t").resolve()]
+
+
+def _short_library_root() -> Path:
+    from vgac import library
+
+    for base in TEMP_LIBRARY_ROOTS:
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+        root = base / ("vgac-" + uuid.uuid4().hex[:8])
+        if library.library_path_problem(str(root / "library")) is None:
+            return root
+    raise RuntimeError("no short temporary folder for a test library is available")
+
+
 @pytest.fixture
-def settings_path(tmp_path: Path) -> Path:
+def short_library_root():
+    """A short temporary folder to hold a test library; removed after the test."""
+    root = _short_library_root()
+    root.mkdir(parents=True, exist_ok=True)
+    yield root
+    shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.fixture
+def settings_path(tmp_path: Path, short_library_root: Path) -> Path:
     cfg = {
         "instances": {
             "a": {"url": "http://127.0.0.1:9", "gpu": "test", "role": "3d"},
             "b": {"url": "http://127.0.0.1:10", "gpu": "test", "role": "images", "output_dir": str(tmp_path / "comfy_out")},
         },
-        "library_path": str(tmp_path / "library"),
+        "library_path": str(short_library_root / "library"),
         "blender_exe": None,
         "unity_exe": None,
         "comfy_input_dir": str(tmp_path / "comfy_in"),
@@ -110,14 +143,17 @@ def _own_addons_stay_out_of_tests_without_a_temporary_library(request, tmp_path,
 
     real = user_addons.registry_path
     base = Path(tmp_path_factory.getbasetemp()).resolve()
+    temporary = [base, *TEMP_LIBRARY_ROOTS]
 
     def guarded() -> Path:
         p = real()
-        try:
-            Path(p).resolve().relative_to(base)
-            return p
-        except ValueError:
-            return tmp_path / "no_library" / user_addons.REGISTRY_FILE
+        for root in temporary:
+            try:
+                Path(p).resolve().relative_to(root)
+                return p
+            except ValueError:
+                continue
+        return tmp_path / "no_library" / user_addons.REGISTRY_FILE
 
     monkeypatch.setattr(user_addons, "registry_path", guarded)
 
