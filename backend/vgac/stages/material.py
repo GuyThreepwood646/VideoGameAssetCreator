@@ -15,7 +15,7 @@ from typing import Any
 
 from .. import library, quality
 from ..db import _iso, utcnow
-from ..graphs.material import (UPSCALE_OUT, crop_margin, derive_maps, is_wood, make_seamless, seam_error, t2i_graph,
+from ..graphs.material import (UPSCALE_OUT, crop_margin, derive_maps, draw_size, is_wood, make_seamless, seam_error, t2i_graph,
                                upscale_graph, upscale_plan, wrap_pad)
 from ..imaging import image_size
 from .base import StageContext, random_seed, slug
@@ -35,9 +35,10 @@ def _prompt(sc: StageContext, params: dict[str, Any]) -> str:
 
 async def concept_run(sc: StageContext, params: dict[str, Any]) -> None:
     seed = int(params.get("seed") or random_seed())
-    size = int(params.get("width") or sc.budget["texture"] or 1024)
+    # WP-58: a wood material at 2048 is drawn at the trial's 1024 and upscaled in the mesh stage (graphs/material.py draw_size).
+    size = int(params.get("width") or draw_size(sc.asset.prompt, sc.asset.style_preset, sc.budget["texture"] or 1024))
     prompt = _prompt(sc, params)
-    sc.set_params(model="zturbo", seed=seed, width=size, height=size, prompt=prompt)
+    sc.set_params(model="zturbo", seed=seed, width=size, height=size, drawn_size=size, prompt=prompt)
     sc.use_model("zturbo")
     entry = await sc.comfy(t2i_graph(prompt, seed, size, sc.prefix("raw")), message="material surface", base=0.05, span=0.9)
     img = await sc.download_image(entry, "8", sc.dir / "image.png")

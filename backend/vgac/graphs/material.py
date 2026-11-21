@@ -112,6 +112,19 @@ def upscale_plan(prompt: str | None, style_preset: str | None, texture_budget: i
     return {"model": UPSCALE_MODEL, "pad": UPSCALE_PAD, "scale": UPSCALE_SCALE, "size": UPSCALE_OUT}
 
 
+# The size the trial drew the surface at before the 4x upscale (bakeoff/wp58/trialC: 1024 Z-Image, 4x, 2048). Drawing at
+# 2048 and upscaling would make an 8192 picture only to shrink it, which was never tested.
+TRIAL_DRAW = 1024
+
+
+def draw_size(prompt: str | None, style_preset: str | None, texture_budget: int) -> int:
+    """The size the concept stage draws at: the trial's 1024 for a wood material that the upscaler will take to 2048,
+    otherwise the texture budget (every other material unchanged)."""
+    if upscale_plan(prompt, style_preset, texture_budget) is not None:
+        return TRIAL_DRAW
+    return int(texture_budget)
+
+
 def wrap_pad(arr: np.ndarray, pad: int = UPSCALE_PAD) -> np.ndarray:
     """Wrap-around pad, so the upscaler sees the tile's neighbours and the crop after it keeps the seam closed."""
     return np.pad(arr, ((pad, pad), (pad, pad), (0, 0)), mode="wrap")

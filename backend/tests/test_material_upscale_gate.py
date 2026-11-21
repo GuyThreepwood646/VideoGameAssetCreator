@@ -132,3 +132,21 @@ def test_wrap_pad_keeps_the_seam_closed():
     padded = wrap_pad(tile, pad=4)
     assert np.array_equal(padded[:4, 4:-4], tile[-4:, :])
     assert np.array_equal(padded[-4:, 4:-4], tile[:4, :])
+
+
+def test_wood_at_2048_is_drawn_at_the_trial_1024():
+    from vgac.graphs.material import TRIAL_DRAW, draw_size
+    assert draw_size("old oak planks", "realistic_pbr", 2048) == TRIAL_DRAW == 1024
+
+
+def test_stone_at_2048_is_still_drawn_at_2048():
+    from vgac.graphs.material import draw_size
+    assert draw_size("weathered grey granite cobblestones", "realistic_pbr", 2048) == 2048
+    assert draw_size("red brick wall", "realistic_pbr", 2048) == 2048
+
+
+def test_wood_at_other_budgets_keeps_the_budget_size():
+    from vgac.graphs.material import draw_size
+    assert draw_size("old oak planks", "realistic_pbr", 1024) == 1024
+    assert draw_size("old oak planks", "realistic_pbr", 4096) == 4096
+    assert draw_size("old oak planks", "painted", 2048) == 2048
