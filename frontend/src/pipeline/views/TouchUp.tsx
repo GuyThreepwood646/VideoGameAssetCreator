@@ -48,6 +48,7 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
               <button
                 type="button"
                 className="btn primary"
+                disabled={!paint.modelSaveable}
                 onClick={() => {
                   paint.start()
                   onStart()
@@ -60,6 +61,7 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
                 Stop painting
               </button>
             )}
+            {!painting && !paint.modelSaveable && <span className="small muted">Painting is not available on models with separately textured parts yet, because the paint could not be saved.</span>}
             {painting && <span className="small muted">Click or drag on the model. Right-drag turns it. Press Escape to stop.</span>}
           </div>
           {(paint.maps.shine || paint.maps.metal) && (
@@ -163,7 +165,7 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
             <button type="button" className="btn primary" disabled={!paint.saveable || !paint.canUndo || saving} onClick={onSave}>
               {saving ? 'Saving the paint' : 'Save as a new version'}
             </button>
-            {!paint.saveable && <span className="small muted">Save is not available yet for this model: some of its parts have pictures of their own.</span>}
+            {!paint.modelSaveable && <span className="small muted">Save is not available yet for this model: some of its parts have pictures of their own.</span>}
             {paint.saveable && !paint.canUndo && !saving && <span className="small muted">Nothing is painted yet. Paint on the model, then save.</span>}
             {saveNote && <span className="small muted">{saveNote}</span>}
           </div>

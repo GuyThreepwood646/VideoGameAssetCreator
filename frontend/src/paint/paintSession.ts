@@ -155,6 +155,24 @@ export function paintableMaps(model: ViewerModel): { shine: boolean; metal: bool
   return { shine, metal }
 }
 
+// Whether a save can carry the paint for this model, known before painting starts and without changing the model: the
+// same count PaintSession makes (see saveableMaps): one colour picture, and at most one shine and one metal picture.
+export function modelSaveable(model: ViewerModel): boolean {
+  const colour = new Set<unknown>()
+  const shine = new Set<unknown>()
+  const metal = new Set<unknown>()
+  for (const mesh of model.meshes) {
+    const uv = mesh.geometry?.attributes.uv
+    const mat = firstMaterial(model.texturedMaterial(mesh))
+    if (!uv || !mat) continue
+    if (mat.map && (mat.map.channel ?? 0) !== 0) continue
+    colour.add(mat.map ?? mesh)
+    if (mat.roughnessMap && (mat.roughnessMap.channel ?? 0) === 0) shine.add(mat.roughnessMap.uuid)
+    if (mat.metalnessMap && (mat.metalnessMap.channel ?? 0) === 0) metal.add(mat.metalnessMap.uuid)
+  }
+  return colour.size === 1 && shine.size <= 1 && metal.size <= 1
+}
+
 // Checks that need no change to the model: the warnings the panel shows before painting starts.
 export function checkPaint(model: ViewerModel, look: string | null): PaintWarning[] {
   const out: PaintWarning[] = []
