@@ -221,10 +221,10 @@ def test_paint_job_makes_a_new_version_and_keeps_the_parent(version_files, tmp_p
     edit[rows[:10], cols[:10]] = True
     painted = base.copy()
     painted[edit] = [220, 30, 30, 255]
-    pic, mask, strokes = paintsave.decode_inputs(_png_b64(Image.fromarray(painted)),
-                                                 _png_b64(Image.fromarray((edit * 255).astype(np.uint8), "L")),
-                                                 [{"mode": "paint", "rgb": [220, 30, 30]}])
-    paintsave.write_inputs(sc.dir, pic, mask, strokes)
+    inputs = paintsave.decode_inputs(_png_b64(Image.fromarray(painted)),
+                                     _png_b64(Image.fromarray((edit * 255).astype(np.uint8), "L")),
+                                     [{"mode": "paint", "rgb": [220, 30, 30]}])
+    paintsave.write_inputs(sc.dir, inputs)
     asyncio.run(paintsave.paint(sc, {}))
 
     assert child.metrics["painted"] is True and child.metrics["painted_of"] == "parent"
@@ -249,9 +249,9 @@ def test_paint_job_refuses_an_empty_mask(version_files, tmp_path):
     child = _version("child")
     child.folder = tmp_path / "child"
     sc = _Sc(tmp_path / "child", parent, child)
-    pic, mask, strokes = paintsave.decode_inputs(_png_b64(Image.fromarray(base)),
-                                                 _png_b64(Image.fromarray(np.zeros((SIZE, SIZE), np.uint8), "L")), [])
-    paintsave.write_inputs(sc.dir, pic, mask, strokes)
+    inputs = paintsave.decode_inputs(_png_b64(Image.fromarray(base)),
+                                     _png_b64(Image.fromarray(np.zeros((SIZE, SIZE), np.uint8), "L")), [])
+    paintsave.write_inputs(sc.dir, inputs)
     with pytest.raises(ValueError, match="nothing was painted"):
         asyncio.run(paintsave.paint(sc, {}))
 
@@ -264,6 +264,101 @@ def test_decode_refuses_what_is_not_a_picture():
         paintsave.decode_inputs("%%%", good, [])
     with pytest.raises(ValueError, match="stroke log"):
         paintsave.decode_inputs(good, good, "nope")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="edit mask"):
+        paintsave.decode_inputs(None, None, [], shine_b64=good)
+    with pytest.raises(ValueError, match="nothing was sent"):
+        paintsave.decode_inputs(None, None, [])
+
+
+def _glb_mr(path: Path, base: np.ndarray, mr: np.ndarray) -> Path:
+    """A model whose metallic-roughness picture is mr (RGB: occlusion, roughness green, metal blue)."""
+    trimesh = pytest.importorskip("trimesh")
+    v = np.array([[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1],
+                  [2, 0, 0], [3, 0, 0], [3, 1, 0], [2, 1, 0]], float)
+    f = np.array([[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7]])
+    uv = np.array([[0.05, 0.95], [0.45, 0.95], [0.45, 0.55], [0.05, 0.55],
+                   [0.55, 0.45], [0.95, 0.45], [0.95, 0.05], [0.55, 0.05]])
+    mat = trimesh.visual.material.PBRMaterial(baseColorTexture=Image.fromarray(base),
+                                              metallicRoughnessTexture=Image.fromarray(mr))
+    trimesh.Trimesh(v, f, visual=trimesh.visual.TextureVisuals(uv=uv, material=mat), process=False).export(path)
+    return path
+
+
+def _mr_of(glb: Path) -> np.ndarray:
+    trimesh = pytest.importorskip("trimesh")
+    m = trimesh.load(str(glb), force="mesh")
+    return np.array(m.visual.material.metallicRoughnessTexture.convert("RGB"))
+
+
+def test_paint_job_writes_shine_and_metal_into_their_maps_and_the_model(version_files, tmp_path):
+    base = _picture()
+    mr = np.zeros((SIZE, SIZE, 3), np.uint8)
+    mr[..., 0] = 255
+    mr[..., 1] = 200  # roughness
+    mr[..., 2] = 0  # metal
+    folder = tmp_path / "parent"
+    folder.mkdir()
+    glb = _glb_mr(folder / "prep.glb", base[..., :3], mr)
+    Image.fromarray(base).save(folder / "base_color.png")
+    Image.fromarray(mr[..., 1], "L").save(folder / "roughness.png")
+    Image.fromarray(mr[..., 2], "L").save(folder / "metallic.png")
+    parent = _version("parent", metrics={"atlas_used": 0.3})
+    parent.folder = folder
+    parent.files = {"glb": str(glb), "base_color": str(folder / "base_color.png"),
+                    "roughness": str(folder / "roughness.png"), "metallic": str(folder / "metallic.png")}
+    island = _island(tmp_path)
+    child = _version("child")
+    child.folder = tmp_path / "child"
+    sc = _Sc(tmp_path / "child", parent, child)
+    edit = np.zeros((SIZE, SIZE), bool)
+    rows, cols = np.where(island)
+    edit[rows[:10], cols[:10]] = True
+    shine_px = np.zeros((SIZE, SIZE, 4), np.uint8)
+    shine_px[..., :3] = mr[..., 1][..., None]
+    shine_px[..., 3] = 255
+    shine_px[edit, :3] = 30
+    metal_px = np.zeros((SIZE, SIZE, 4), np.uint8)
+    metal_px[..., :3] = mr[..., 2][..., None]
+    metal_px[..., 3] = 255
+    metal_px[edit, :3] = 220
+    mask_b64 = _png_b64(Image.fromarray((edit * 255).astype(np.uint8), "L"))
+    inputs = paintsave.decode_inputs(None, None, [{"mode": "paint", "target": "shine"}],
+                                     shine_b64=_png_b64(Image.fromarray(shine_px)), shine_mask_b64=mask_b64,
+                                     metal_b64=_png_b64(Image.fromarray(metal_px)), metal_mask_b64=mask_b64)
+    paintsave.write_inputs(sc.dir, inputs)
+    asyncio.run(paintsave.paint(sc, {}))
+
+    rough = np.array(Image.open(child.files["roughness"]).convert("L"))
+    assert (rough[edit] == 30).all()
+    assert np.array_equal(rough[island & ~edit], mr[..., 1][island & ~edit])
+    metal = np.array(Image.open(child.files["metallic"]).convert("L"))
+    assert (metal[edit] == 220).all()
+    assert np.array_equal(metal[island & ~edit], mr[..., 2][island & ~edit])
+    # The model's own picture is the same: the green and blue channels changed, the red (occlusion) did not.
+    model_mr = _mr_of(Path(child.files["glb"]))
+    assert (model_mr[edit][:, 1] == 30).all() and (model_mr[edit][:, 2] == 220).all()
+    assert (model_mr[edit][:, 0] == 255).all()
+    assert np.array_equal(_base_colour(Path(child.files["glb"]))[..., :3], base[..., :3]), "no colour was sent"
+    assert child.metrics["paint_shine_texels"] == int(edit.sum()) and child.metrics["paint_metal_texels"] == int(edit.sum())
+    assert child.metrics["paint_texels"] == 0
+    assert parent.files["roughness"] == str(folder / "roughness.png"), "the parent keeps its own files"
+    assert Image.open(folder / "roughness.png").size == (SIZE, SIZE)
+
+
+def test_paint_job_with_only_a_shine_needs_a_shine_picture_on_the_parent(version_files, tmp_path):
+    base = _picture()
+    parent = _parent_on_disk(tmp_path, base)
+    child = _version("child")
+    child.folder = tmp_path / "child"
+    sc = _Sc(tmp_path / "child", parent, child)
+    edit = np.ones((SIZE, SIZE), bool)
+    px = np.zeros((SIZE, SIZE, 4), np.uint8)
+    px[..., 3] = 255
+    inputs = paintsave.decode_inputs(None, None, [], shine_b64=_png_b64(Image.fromarray(px)),
+                                     shine_mask_b64=_png_b64(Image.fromarray((edit * 255).astype(np.uint8), "L")))
+    paintsave.write_inputs(sc.dir, inputs)
+    with pytest.raises(ValueError, match="no shine picture"):
+        asyncio.run(paintsave.paint(sc, {}))
 
 
 # --- the rig: the same geometry gets the new picture without a new rig run -------------------------------------

@@ -62,6 +62,39 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
             )}
             {painting && <span className="small muted">Click or drag on the model. Right-drag turns it. Press Escape to stop.</span>}
           </div>
+          {(paint.maps.shine || paint.maps.metal) && (
+            <div className="touch-up-row">
+              <span className="segmented" role="radiogroup" aria-label="What to paint">
+                <button type="button" role="radio" aria-checked={s.target === 'colour'} className={s.target === 'colour' ? 'active' : ''} onClick={() => paint.setSettings({ target: 'colour' })}>
+                  Colour
+                </button>
+                {paint.maps.shine && (
+                  <button type="button" role="radio" aria-checked={s.target === 'shine'} className={s.target === 'shine' ? 'active' : ''} onClick={() => paint.setSettings({ target: 'shine' })}>
+                    Shine
+                  </button>
+                )}
+                {paint.maps.metal && (
+                  <button type="button" role="radio" aria-checked={s.target === 'metal'} className={s.target === 'metal' ? 'active' : ''} onClick={() => paint.setSettings({ target: 'metal' })}>
+                    Metal
+                  </button>
+                )}
+              </span>
+              {s.target === 'shine' && (
+                <label className="small">
+                  Shine {Math.round(s.shine * 100)}%{' '}
+                  <input type="range" min={0} max={100} value={Math.round(s.shine * 100)} onChange={(e) => paint.setSettings({ shine: Number(e.target.value) / 100 })} aria-label="Shine: matt to shiny" />
+                </label>
+              )}
+              {s.target === 'shine' && <span className="small muted">0 is matt, 100 is shiny.</span>}
+              {s.target === 'metal' && (
+                <label className="small">
+                  Metal {Math.round(s.metal * 100)}%{' '}
+                  <input type="range" min={0} max={100} value={Math.round(s.metal * 100)} onChange={(e) => paint.setSettings({ metal: Number(e.target.value) / 100 })} aria-label="Metal: not metal to metal" />
+                </label>
+              )}
+              {s.target === 'metal' && <span className="small muted">0 is not metal, 100 is metal.</span>}
+            </div>
+          )}
           <div className="touch-up-row">
             <span className="segmented" role="radiogroup" aria-label="What the brush does">
               {MODES.map((m) => (
@@ -70,7 +103,7 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
                 </button>
               ))}
             </span>
-            {s.mode !== 'erase' && s.mode !== 'smudge' && (
+            {s.target === 'colour' && s.mode !== 'erase' && s.mode !== 'smudge' && (
               <label className="small">
                 Colour{' '}
                 <input type="color" value={hexOf(s.rgb)} onChange={(e) => paint.setSettings({ rgb: rgbOf(e.target.value) })} aria-label="Brush colour" />

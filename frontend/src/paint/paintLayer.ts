@@ -10,8 +10,10 @@ export const UNDO_BYTES = 256 * 1024 * 1024
 
 export type Rect = { x: number; y: number; w: number; h: number }
 // What the stroke was set to, for the stroke log saved with the picture (WP-23). Sizes are in centimetres on the model.
+export type PaintTargetName = 'colour' | 'shine' | 'metal'
 export type StrokeRecord = {
   mode: 'paint' | 'erase' | 'smudge' | 'fill'
+  target?: PaintTargetName // what the stroke painted; colour when absent (WP-32 shine and metal)
   rgb: [number, number, number]
   size_cm: number
   edge: number
@@ -24,10 +26,11 @@ type Entry = { rect: Rect; before: Uint8Array; after: Uint8Array; stroke: Stroke
 // The step name shown on Undo and Redo: what the step was.
 function stepLabel(stroke: StrokeRecord | null): string {
   if (!stroke) return "back to the model's own picture"
-  if (stroke.mode === "erase") return "an eraser stroke"
-  if (stroke.mode === "smudge") return "a smudge stroke"
-  if (stroke.mode === "fill") return "a fill"
-  return stroke.mirror ? "a mirrored brush stroke" : "a brush stroke"
+  const what = stroke.target === "shine" ? "shine " : stroke.target === "metal" ? "metal " : ""
+  if (stroke.mode === "erase") return what ? `a ${what}eraser stroke` : "an eraser stroke"
+  if (stroke.mode === "smudge") return `a ${what}smudge stroke`
+  if (stroke.mode === "fill") return `a ${what}fill`
+  return stroke.mirror ? `a mirrored ${what}brush stroke` : `a ${what}brush stroke`
 }
 
 export class PaintLayer {
@@ -48,14 +51,15 @@ export class PaintLayer {
   // Counts the new steps made (not undo or redo): with the stack sizes, it tells whether the picture is the saved one.
   private edits = 0
 
-  constructor(width: number, height: number, pixels: Uint8Array) {
+  // data: true for a map of values (shine, metal), which is read as it is; colours are sRGB.
+  constructor(width: number, height: number, pixels: Uint8Array, data = false) {
     if (pixels.length !== width * height * 4) throw new Error('picture size does not match its pixels')
     this.width = width
     this.height = height
     this.pixels = pixels
     this.original = pixels.slice()
     this.texture = new THREE.DataTexture(this.pixels, width, height, THREE.RGBAFormat)
-    this.texture.colorSpace = THREE.SRGBColorSpace
+    this.texture.colorSpace = data ? THREE.NoColorSpace : THREE.SRGBColorSpace
     this.texture.flipY = false
     this.texture.generateMipmaps = true
     this.texture.minFilter = THREE.LinearMipmapLinearFilter

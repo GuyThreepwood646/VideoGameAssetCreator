@@ -38,6 +38,11 @@ MAX_STROKES = 5000
 PAINT_INPUT = "paint_input.png"  # the picture the panel sent, held in the version folder until the job has read it
 PAINT_MASK_INPUT = "paint_mask_input.png"
 PAINT_STROKES_INPUT = "paint_strokes_input.json"
+# Shine (roughness) and metal pictures (WP-32), held the same way until the job has read them.
+PAINT_SHINE_INPUT = "paint_shine_input.png"
+PAINT_SHINE_MASK_INPUT = "paint_shine_mask_input.png"
+PAINT_METAL_INPUT = "paint_metal_input.png"
+PAINT_METAL_MASK_INPUT = "paint_metal_mask_input.png"
 # Metrics of one run that a painted version does not carry over from its parent.
 _RUN_METRICS = ("checks", "checks_passed", "checks_failed", "gate_ok", "elapsed_seconds", "refit_of")
 
@@ -96,20 +101,37 @@ def _decode_png(text: str, what: str, limit: int) -> bytes:
     return raw
 
 
-def decode_inputs(picture_b64: str, mask_b64: str, strokes: list[dict[str, Any]]) -> tuple[bytes, bytes, bytes]:
-    """Validate what the panel sent and return (picture PNG bytes, mask PNG bytes, strokes JSON bytes)."""
+def decode_inputs(picture_b64: str | None, mask_b64: str | None, strokes: list[dict[str, Any]], *,
+                  shine_b64: str | None = None, shine_mask_b64: str | None = None,
+                  metal_b64: str | None = None, metal_mask_b64: str | None = None) -> dict[str, bytes]:
+    """Validate what the panel sent. Returns the bytes that are present: "picture" and "mask" (the colour picture and
+    its edit mask), "shine" and "shine_mask", "metal" and "metal_mask", and "strokes" (the stroke log as JSON). Each
+    picture comes with its mask, and at least one picture must be sent."""
     if not isinstance(strokes, list) or len(strokes) > MAX_STROKES:
         raise ValueError("the stroke log is missing or too long")
-    picture = _decode_png(picture_b64, "the picture", MAX_PICTURE_B64)
-    mask = _decode_png(mask_b64, "the edit mask", MAX_PICTURE_B64)
-    return picture, mask, json.dumps(strokes, indent=1).encode("utf-8")
+    out: dict[str, bytes] = {"strokes": json.dumps(strokes, indent=1).encode("utf-8")}
+    pairs = {"colour": (picture_b64, mask_b64, "picture", "mask"),
+             "shine": (shine_b64, shine_mask_b64, "shine", "shine_mask"),
+             "metal": (metal_b64, metal_mask_b64, "metal", "metal_mask")}
+    for label, (pic_text, mask_text, pic_key, mask_key) in pairs.items():
+        if pic_text is None and mask_text is None:
+            continue
+        if pic_text is None or mask_text is None:
+            raise ValueError("a painted picture needs its edit mask too")
+        out[pic_key] = _decode_png(pic_text, f"the {label} picture", MAX_PICTURE_B64)
+        out[mask_key] = _decode_png(mask_text, f"the {label} edit mask", MAX_PICTURE_B64)
+    if not any(k in out for k in ("picture", "shine", "metal")):
+        raise ValueError("nothing was sent to paint")
+    return out
 
 
-def write_inputs(folder: Path, picture: bytes, mask: bytes, strokes: bytes) -> None:
+def write_inputs(folder: Path, inputs: dict[str, bytes]) -> None:
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / PAINT_INPUT).write_bytes(picture)
-    (folder / PAINT_MASK_INPUT).write_bytes(mask)
-    (folder / PAINT_STROKES_INPUT).write_bytes(strokes)
+    names = {"picture": PAINT_INPUT, "mask": PAINT_MASK_INPUT, "strokes": PAINT_STROKES_INPUT,
+             "shine": PAINT_SHINE_INPUT, "shine_mask": PAINT_SHINE_MASK_INPUT,
+             "metal": PAINT_METAL_INPUT, "metal_mask": PAINT_METAL_MASK_INPUT}
+    for key, data in inputs.items():
+        (folder / names[key]).write_bytes(data)
 
 
 def merge_picture(parent_px: np.ndarray, painted_px: np.ndarray, edit: np.ndarray, island: np.ndarray,
@@ -168,7 +190,9 @@ def _pad_px(size: int) -> int:
 
 
 async def paint(sc: Any, params: dict[str, Any]) -> None:
-    """The job behind a painted save (stage prep, op paint). Runs on the host."""
+    """The job behind a painted save (stage prep, op paint). Runs on the host. The colour picture, the shine picture and
+    the metal picture are each merged into the parent's in the same way (merge_picture); a picture that was not sent
+    keeps the parent's file. The model gets the new colour and the new shine and metal channels."""
     import asyncio
 
     parent = sc.parent
@@ -180,10 +204,16 @@ async def paint(sc: Any, params: dict[str, Any]) -> None:
     parent_base = library.version_file(parent, "base_color", sc.settings)
     if parent_glb is None or parent_base is None:
         raise ValueError("the clean-up has no model or picture to paint on")
-    picture_in = sc.dir / PAINT_INPUT
-    mask_in = sc.dir / PAINT_MASK_INPUT
-    strokes_in = sc.dir / PAINT_STROKES_INPUT
-    if not (picture_in.is_file() and mask_in.is_file() and strokes_in.is_file()):
+    names = {"picture": PAINT_INPUT, "mask": PAINT_MASK_INPUT, "strokes": PAINT_STROKES_INPUT,
+             "shine": PAINT_SHINE_INPUT, "shine_mask": PAINT_SHINE_MASK_INPUT,
+             "metal": PAINT_METAL_INPUT, "metal_mask": PAINT_METAL_MASK_INPUT}
+    inputs = {key: sc.dir / name for key, name in names.items()}
+    has_colour = inputs["picture"].is_file()
+    maps = [k for k in ("shine", "metal") if inputs[k].is_file()]
+    if not inputs["strokes"].is_file() or not (has_colour or maps):
+        raise ValueError("the painted picture was not received")
+    needed = (["picture", "mask"] if has_colour else []) + [x for k in maps for x in (k, f"{k}_mask")]
+    if any(not inputs[k].is_file() for k in needed):
         raise ValueError("the painted picture was not received")
 
     _copy_parent_files(sc, parent)
@@ -191,49 +221,92 @@ async def paint(sc: Any, params: dict[str, Any]) -> None:
     base_mode = base_img.mode
     base_arr = np.asarray(base_img.convert("RGBA"))
     size = base_arr.shape[0]
-    painted = Image.open(picture_in).convert("RGBA")
-    if painted.size != (base_arr.shape[1], base_arr.shape[0]):
-        raise ValueError(f"the painted picture is {painted.size[0]} by {painted.size[1]}, the picture is "
-                         f"{base_arr.shape[1]} by {base_arr.shape[0]}")
-    mask_img = Image.open(mask_in).convert("L")
-    if mask_img.size != painted.size:
-        raise ValueError("the edit mask and the painted picture have different sizes")
-    edit = np.asarray(mask_img) > 127
-    if not edit.any():
+    edits: dict[str, np.ndarray] = {}
+    painted_px: dict[str, np.ndarray] = {}
+    if has_colour:
+        painted = Image.open(inputs["picture"]).convert("RGBA")
+        if painted.size != (base_arr.shape[1], base_arr.shape[0]):
+            raise ValueError(f"the painted picture is {painted.size[0]} by {painted.size[1]}, the picture is "
+                             f"{base_arr.shape[1]} by {base_arr.shape[0]}")
+        painted_px["colour"] = np.asarray(painted)
+        edits["colour"] = _edit_of(inputs["mask"], painted.size)
+    for key in maps:
+        painted_map = Image.open(inputs[key]).convert("RGBA")
+        if painted_map.size != (size, size):
+            raise ValueError(f"the painted {key} picture is {painted_map.size[0]} by {painted_map.size[1]}, the picture is {size} by {size}")
+        painted_px[key] = np.asarray(painted_map)
+        edits[key] = _edit_of(inputs[f"{key}_mask"], painted_map.size)
+    if not any(e.any() for e in edits.values()):
         raise ValueError("nothing was painted")
 
     sc.progress(0.1, "padding the paint onto the picture edges")
 
     def work() -> dict[str, Any]:
         island = _picture_layout(parent_glb, size)
-        out, counts = merge_picture(base_arr, np.asarray(painted), edit, island, _pad_px(size))
-        mode = "RGBA" if base_mode == "RGBA" else "RGB"
-        img = Image.fromarray(out if mode == "RGBA" else out[..., :3], mode)
-        new_base = sc.dir / "base_color.png"
-        img.save(new_base)
+        out: dict[str, Any] = {"counts": {}}
+        if has_colour:
+            merged, counts = merge_picture(base_arr, painted_px["colour"], edits["colour"], island, _pad_px(size))
+            mode = "RGBA" if base_mode == "RGBA" else "RGB"
+            new_base = sc.dir / "base_color.png"
+            Image.fromarray(merged if mode == "RGBA" else merged[..., :3], mode).save(new_base)
+            out.update(base=new_base, counts=counts)
+        for key, file_name in (("shine", "roughness"), ("metal", "metallic")):
+            if key not in maps:
+                continue
+            parent_file = library.version_file(parent, file_name, sc.settings)
+            if parent_file is None:
+                raise ValueError(f"the clean-up has no {key} picture to paint on")
+            parent_map = np.asarray(Image.open(parent_file).convert("RGBA"))
+            if parent_map.shape[:2] != (size, size):
+                raise ValueError(f"the clean-up's {key} picture is not the same size as its colour picture")
+            merged, counts = merge_picture(parent_map, painted_px[key], edits[key], island, _pad_px(size))
+            new_file = sc.dir / f"{file_name}.png"
+            Image.fromarray(merged[..., :3], "RGB").save(new_file)
+            out[key] = new_file
+            out[f"{key}_counts"] = counts
         new_glb = sc.dir / Path(parent_glb).name
         shutil.copyfile(parent_glb, new_glb)
-        if not imaging.glb_replace_images(new_glb, base_color=new_base):
+        if not imaging.glb_replace_images(new_glb, base_color=out.get("base"), roughness=out.get("shine"), metallic=out.get("metal")):
             raise ValueError("the new picture could not be written into the model")
-        mask_out = sc.dir / "paint_mask.png"
-        Image.fromarray((edit * 255).astype(np.uint8), "L").save(mask_out)
-        return {"base": new_base, "glb": new_glb, "mask": mask_out, "counts": counts}
+        out["glb"] = new_glb
+        return out
 
     done = await asyncio.to_thread(work)
-    sc.register("base_color", done["base"])
+    counts = done["counts"]
+    if has_colour:
+        mask_out = sc.dir / "paint_mask.png"
+        Image.fromarray((edits["colour"] * 255).astype(np.uint8), "L").save(mask_out)
+        sc.register("base_color", done["base"])
+        sc.register("paint_mask", mask_out)
     sc.register("glb", done["glb"])
-    sc.register("paint_mask", done["mask"])
+    for key, file_name in (("shine", "roughness"), ("metal", "metallic")):
+        if key not in maps:
+            continue
+        sc.register(file_name, done[key])
+        mask_file = sc.dir / f"paint_{key}_mask.png"
+        Image.fromarray((edits[key] * 255).astype(np.uint8), "L").save(mask_file)
+        sc.register(f"paint_{key}_mask", mask_file)
     strokes_out = sc.dir / "paint_strokes.json"
-    shutil.copyfile(strokes_in, strokes_out)
+    shutil.copyfile(inputs["strokes"], strokes_out)
     sc.register("paint_strokes", strokes_out)
     carried = {k: v for k, v in (parent.metrics or {}).items() if k not in _RUN_METRICS}
     sc.set_metrics(**carried, painted=True, painted_of=parent.id, geometry_of=(parent.metrics or {}).get("geometry_of") or parent.id,
                    paint_strokes=len(json.loads(strokes_out.read_text(encoding="utf-8"))), paint_texture_size=size,
-                   paint_texels=done["counts"]["painted_texels"], paint_island_texels=done["counts"]["painted_on_island"],
-                   paint_padding_texels=done["counts"]["padding_texels"])
-    for p in (picture_in, mask_in, strokes_in):
+                   paint_texels=int(edits["colour"].sum()) if has_colour else 0,
+                   paint_island_texels=counts.get("painted_on_island", 0),
+                   paint_padding_texels=counts.get("padding_texels", 0),
+                   paint_shine_texels=int(edits["shine"].sum()) if "shine" in edits else None,
+                   paint_metal_texels=int(edits["metal"].sum()) if "metal" in edits else None)
+    for p in inputs.values():
         p.unlink(missing_ok=True)
     sc.set_params(paint_of=parent.id)
+
+
+def _edit_of(mask_path: Path, size: tuple[int, int]) -> np.ndarray:
+    mask_img = Image.open(mask_path).convert("L")
+    if mask_img.size != size:
+        raise ValueError("the edit mask and the painted picture have different sizes")
+    return np.asarray(mask_img) > 127
 
 
 # --- Smooth the paint (WP-24) ------------------------------------------------------------------------------------

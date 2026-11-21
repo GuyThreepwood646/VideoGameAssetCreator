@@ -5,6 +5,8 @@ import * as THREE from 'three'
 import { MeshBVH } from 'three-mesh-bvh'
 import { fillRegion, paintDab, smudgeDab, type Brush, type Dab, type DabTarget } from '../src/paint/paintDab'
 import { PaintLayer, type StrokeRecord } from '../src/paint/paintLayer'
+import { DEFAULT_PAINT, PaintSession, paintableMaps, targetRgb } from '../src/paint/paintSession'
+import { SurfacePicker, type ViewerModel } from '../src/viewerTool'
 
 const SIZE = 64
 
@@ -147,6 +149,67 @@ test('a brush dab still paints the same way after the smudge and fill code was a
   assert.ok(layer.endStroke())
   assert.deepEqual(at(layer, 32, 32), [0, 0, 0])
 })
+
+test('shine and metal paint their own channel of the metallic-roughness picture, and a save sends them', () => {
+  const m = square()
+  const mr = new THREE.DataTexture(new Uint8Array(SIZE * SIZE * 4), SIZE, SIZE)
+  for (let o = 0; o < SIZE * SIZE * 4; o += 4) {
+    mr.image.data[o] = 255 // occlusion, left alone
+    mr.image.data[o + 1] = 200 // green: roughness
+    mr.image.data[o + 2] = 0 // blue: metal
+    mr.image.data[o + 3] = 255
+  }
+  mr.flipY = false
+  mr.needsUpdate = true
+  const colour = new THREE.DataTexture(new Uint8Array(SIZE * SIZE * 4).fill(255), SIZE, SIZE)
+  colour.flipY = false
+  colour.needsUpdate = true
+  const mat = m.material as THREE.MeshStandardMaterial
+  mat.map = colour
+  mat.roughnessMap = mr
+  mat.metalnessMap = mr
+  m.updateMatrixWorld(true)
+  const model = { meshes: [m], renderer: {} as THREE.WebGLRenderer, picker: new SurfacePicker([m]), texturedMaterial: (mesh: THREE.Mesh) => mesh.material } as unknown as ViewerModel
+  assert.deepEqual(paintableMaps(model), { shine: true, metal: true })
+  const session = new PaintSession(model)
+  const hooks = { picked: () => {}, changed: () => {}, renderer: () => undefined, notice: () => {} }
+  const tool = session.tool(() => ({ ...DEFAULT_PAINT, target: 'shine', shine: 1, radius: 0.2, hardness: 1, strength: 1 }), hooks)
+  const hit = model.picker.pick(new THREE.Ray(new THREE.Vector3(0, 0, 5), new THREE.Vector3(0, 0, -1)))
+  assert.ok(hit)
+  tool.down?.(hit, {} as PointerEvent)
+  tool.up?.(hit, {} as PointerEvent)
+  const maps = session.saveableMaps()
+  assert.ok(maps && maps.shine && maps.metal, 'the shine and metal pictures are saveable')
+  // Shine 1 (shiny) is roughness 0 at the spot; the colour and the metal are untouched there.
+  assert.deepEqual(px(maps.shine!, 32, 32), [0, 0, 0])
+  assert.deepEqual(px(maps.colour, 32, 32), [255, 255, 255])
+  assert.equal(maps.metal!.changedMask().some((v) => v === 1), false, 'metal changed nothing')
+  assert.equal(session.undoLabel, 'a shine brush stroke')
+  // A metal stroke is its own undo step, and it does not touch the shine.
+  const metalSettings = { ...DEFAULT_PAINT, target: 'metal' as const, metal: 1, radius: 0.2, hardness: 1, strength: 1 }
+  const tool2 = session.tool(() => metalSettings, hooks)
+  tool2.down?.(hit, {} as PointerEvent)
+  tool2.up?.(hit, {} as PointerEvent)
+  assert.deepEqual(px(maps.metal!, 32, 32), [255, 255, 255])
+  assert.deepEqual(px(maps.shine!, 32, 32), [0, 0, 0])
+  assert.equal(session.undoLabel, 'a metal brush stroke')
+  session.undo()
+  assert.deepEqual(px(maps.metal!, 32, 32), [0, 0, 0], 'undo takes the metal back')
+  assert.deepEqual(px(maps.shine!, 32, 32), [0, 0, 0])
+})
+
+test('a shine setting maps to roughness (matt is high roughness), and metal maps straight through', () => {
+  assert.deepEqual(targetRgb({ ...DEFAULT_PAINT, target: 'shine', shine: 0 }), [255, 255, 255])
+  assert.deepEqual(targetRgb({ ...DEFAULT_PAINT, target: 'shine', shine: 1 }), [0, 0, 0])
+  assert.deepEqual(targetRgb({ ...DEFAULT_PAINT, target: 'metal', metal: 1 }), [255, 255, 255])
+  assert.deepEqual(targetRgb({ ...DEFAULT_PAINT, target: 'colour', rgb: [1, 2, 3] }), [1, 2, 3])
+})
+
+// The pixel at (x, y) of a layer, as [r, g, b].
+function px(layer: PaintLayer, x: number, y: number): number[] {
+  const o = (y * layer.width + x) * 4
+  return [layer.pixels[o], layer.pixels[o + 1], layer.pixels[o + 2]]
+}
 
 // The face index of the square's triangle that holds the world point (x, y) on the z = 0 plane.
 function findFaceAt(m: THREE.Mesh, x: number, y: number): number {
