@@ -41,19 +41,26 @@ bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", use_selection=True)
 '''
 
 
-# A chain of flat grids that touch only at one corner vertex each (a tree's leaf cards): after the weld every touching
-# vertex is pinched, two fans of faces meeting at a point, and the collapse stalled well above its ratio.
+# An icosphere with 800 random pairs of far-apart vertices welded together: every weld is a pinched vertex (two fans of
+# faces meeting at one point, like the leaf cards of a tree), and only a few edges are shared by three faces. Splitting
+# only those edges left a collapse decimation at 0.28 of the triangles for a ratio of 0.1 (the leafy tree stopped at 0.34);
+# splitting the pinched vertices as well reaches 0.1.
 MAKE_PINCH = r'''
-import bpy, bmesh, sys
-from mathutils import Matrix
+import bpy, bmesh, random, sys
 out = sys.argv[sys.argv.index("--") + 1]
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bm = bmesh.new()
-import math
-for i in range(12):
-    # every grid has a vertex at its centre; all twelve centres sit on one point, at different tilts
-    rot = Matrix.Rotation(i * 0.5, 4, "X") @ Matrix.Rotation(i * 0.9, 4, "Z")
-    bmesh.ops.create_grid(bm, x_segments=8, y_segments=8, size=0.5, matrix=rot)
+bmesh.ops.create_icosphere(bm, subdivisions=5, radius=1.0)
+random.seed(3)
+verts = list(bm.verts)
+targets, used = {}, set()
+for _ in range(800):
+    a, b = random.sample(verts, 2)
+    if a in used or b in used:
+        continue
+    used.update((a, b))
+    targets[a] = b
+bmesh.ops.weld_verts(bm, targetmap=targets)
 mesh = bpy.data.meshes.new("Pinch")
 bm.to_mesh(mesh)
 bm.free()
@@ -113,12 +120,12 @@ def test_lods_of_pieces_that_touch_at_single_vertices_are_reduced(tmp_path):
     assert src.is_file()
     out = tmp_path / "out"
     run = subprocess.run([str(exe), "-b", "--factory-startup", "--python", str(PACK), "--", str(src), str(out), "pinch",
-                          "--lods", "0.5,0.1", "--formats", "glb", "--collider", "none"],
+                          "--lods", "0.1", "--formats", "glb", "--collider", "none"],
                          capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
     report_path = out / "report.json"
     assert report_path.is_file(), run.stdout[-800:] + run.stderr[-800:]
     report = json.loads(report_path.read_text(encoding="utf-8"))
     lod0 = _tris(report, "LOD0")
-    assert lod0 > 1000
-    assert _tris(report, "LOD1") <= 0.6 * lod0, report["lods"]
-    assert _tris(report, "LOD2") <= 0.15 * lod0, report["lods"]
+    assert lod0 > 4000
+    # within 10 percent of the ratio (0.09 to 0.11 of LOD0); without the pinch split this level stays near 0.28
+    assert 0.09 * lod0 <= _tris(report, "LOD1") <= 0.11 * lod0, report["lods"]
