@@ -412,6 +412,15 @@ def free_bytes(where: Path) -> int:
     return shutil.disk_usage(p).free
 
 
+def part_bytes(part: Path) -> int:
+    """Bytes already in a half-finished download, 0 when there is none. Asked from the status poll while the run's thread may
+    be renaming that file away, so a missing file is read as no file rather than checked with exists() first."""
+    try:
+        return part.stat().st_size
+    except FileNotFoundError:
+        return 0
+
+
 def needed_bytes(kit: Kit, sources: list[Source]) -> int:
     need = 0
     for s in sources:
@@ -419,7 +428,7 @@ def needed_bytes(kit: Kit, sources: list[Source]) -> int:
             continue
         if not s.zip_path.exists():
             part = s.store / (s.zip_name + ".part")
-            need += max(0, s.size - (part.stat().st_size if part.exists() else 0))
+            need += max(0, s.size - part_bytes(part))
         need += int(s.size * UNPACK_FACTOR)
     if kit.build:
         need += BUILD_MARGIN
