@@ -41,8 +41,10 @@ export function platformLabel(ref: RefData | null, id: string): string {
   return ref?.platforms.find((p) => p.id === id)?.label ?? id
 }
 
+// Empty until the categories have loaded, so the raw key ("environment") never shows for a moment before its label.
 export function categoryLabel(ref: RefData | null, id: string): string {
-  return ref?.categories.find((c) => c.id === id)?.label ?? id
+  if (!ref) return ''
+  return ref.categories.find((c) => c.id === id)?.label ?? id
 }
 
 // Category id -> the plain name the app shows for it ("Humanoid", "Rigid prop").

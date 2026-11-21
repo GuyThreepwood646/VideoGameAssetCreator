@@ -443,7 +443,9 @@ export default function AssetPage() {
             const cls = ['rail-stage', s === stage ? 'active' : '', reached ? 'reached' : 'future', kept ? 'kept' : ''].join(' ')
             const stopped = st !== 'running' && stoppedVersions(asset, s).length > 0
             // A step with a Stop or Resume button next to it needs no status word: the button says it.
-            const meta = st === 'running' ? '' : stopped ? 'stopped' : st === 'error' ? 'failed' : kept ? 'kept' : st === 'done' ? 'choose one' : ''
+            // Step 5 for a category with no skeleton engine only runs when the asset declares moving parts (WP-29).
+            const movingPartsOnly = s === 'rig' && !reached && ref !== null && ref.categories.find((c) => c.id === asset.category)?.rig_engine === 'none' && asset.parts.length === 0
+            const meta = movingPartsOnly ? 'only for moving parts' : st === 'running' ? '' : stopped ? 'stopped' : st === 'error' ? 'failed' : kept ? 'kept' : st === 'done' ? 'choose one' : ''
             const help = stageInfo(s)
             return (
               <div key={s} className={cls + (stopped ? ' stopped' : '')}>
