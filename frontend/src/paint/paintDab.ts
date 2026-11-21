@@ -37,7 +37,8 @@ export const FACING_NONE = 0.1
 export const FACING_FULL = 0.3
 // Points further than this share of the radius from the brush's plane are skipped (the far side of a thin part).
 const SLAB = 0.5
-const EPS = 1e-6
+// Half a texel: the reach of a texel centre past a triangle's edge that still counts as inside it.
+const HALF_TEXEL = 0.5
 
 // Called for each picture texel inside a triangle, with the texel's index, its 3D point on the surface and its unit
 // normal there. Returns true when the texel changed.
@@ -221,12 +222,23 @@ function rasterTriangle(layer: PaintLayer, mesh: THREE.Mesh, f: number, visit: T
   const cy = uv.getY(ic) * H
   const denom = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
   if (Math.abs(denom) < 1e-12) return 0
-  const x0 = Math.floor(Math.min(ax, bx, cx))
-  const x1 = Math.ceil(Math.max(ax, bx, cx))
-  const y0 = Math.floor(Math.min(ay, by, cy))
-  const y1 = Math.ceil(Math.max(ay, by, cy))
+  // A texel counts when its centre lies within half a texel of the triangle (WP-32 review: a triangle thinner than a
+  // texel, or one whose edge runs between texel centres, used to leave a one-texel seam unpainted). The bounds grow by a
+  // texel so those centres are visited.
+  const x0 = Math.floor(Math.min(ax, bx, cx)) - 1
+  const x1 = Math.ceil(Math.max(ax, bx, cx)) + 1
+  const y0 = Math.floor(Math.min(ay, by, cy)) - 1
+  const y1 = Math.ceil(Math.max(ay, by, cy)) + 1
+  // Altitude of each corner over its opposite edge, in texels: a barycentric weight times it is the distance to that edge.
+  const lenBC = Math.hypot(bx - cx, by - cy)
+  const lenCA = Math.hypot(cx - ax, cy - ay)
+  const lenAB = Math.hypot(ax - bx, ay - by)
+  const altA = Math.abs(denom) / Math.max(lenBC, 1e-12)
+  const altB = Math.abs(denom) / Math.max(lenCA, 1e-12)
+  const altC = Math.abs(denom) / Math.max(lenAB, 1e-12)
   // A triangle much bigger than the picture would wrap the picture; those are not painted.
-  if (x1 - x0 > W || y1 - y0 > H) return 0
+  // (The bounds include the one-texel margin, so a triangle covering the whole picture is allowed two texels more.)
+  if (x1 - x0 > W + 2 || y1 - y0 > H + 2) return 0
 
   let changed = 0
   let minX = Infinity
@@ -240,7 +252,7 @@ function rasterTriangle(layer: PaintLayer, mesh: THREE.Mesh, f: number, visit: T
       const l1 = ((by - cy) * (cxp - cx) + (cx - bx) * (cyp - cy)) / denom
       const l2 = ((cy - ay) * (cxp - cx) + (ax - cx) * (cyp - cy)) / denom
       const l3 = 1 - l1 - l2
-      if (l1 < -EPS || l2 < -EPS || l3 < -EPS) continue
+      if (l1 * altA < -HALF_TEXEL || l2 * altB < -HALF_TEXEL || l3 * altC < -HALF_TEXEL) continue
       _p.set(
         _wa.x * l1 + _wb.x * l2 + _wc.x * l3,
         _wa.y * l1 + _wb.y * l2 + _wc.y * l3,
