@@ -130,7 +130,7 @@ _READ = textwrap.dedent('''
 
 
 @needs_blender
-def test_a_welded_sleeve_is_cut_from_the_skirt_with_nothing_moved_at_rest(tmp_path):
+def test_with_split_a_welded_sleeve_is_cut_from_the_skirt_with_nothing_moved_at_rest(tmp_path):
     src, out, rep = tmp_path / "in.glb", tmp_path / "out.glb", tmp_path / "rep.json"
     (tmp_path / "make.py").write_text(_MAKE, encoding="utf-8")
     (tmp_path / "read.py").write_text(_READ, encoding="utf-8")
@@ -138,7 +138,7 @@ def test_a_welded_sleeve_is_cut_from_the_skirt_with_nothing_moved_at_rest(tmp_pa
     r = run("--python", str(tmp_path / "make.py"), "--", str(src))
     assert src.is_file(), r.stdout[-800:] + r.stderr[-800:]
     script = inspect.getsourcefile(sk)
-    r = run("--python", script, "--", str(src), str(out), "--report", str(rep))
+    r = run("--python", script, "--", str(src), str(out), "--report", str(rep), "--split")
     data = json.loads(rep.read_text(encoding="utf-8"))
     assert data["ok"] and data["changed"] == 1 and data["leg_weight_vertices"] >= 1 and data["seam_edges"] >= 1, r.stdout[-800:]
     r = run("--python", str(tmp_path / "read.py"), "--", str(out), str(__import__("pathlib").Path(script).parent))
@@ -204,3 +204,18 @@ def test_nothing_changed_or_not_run_leaves_the_rig_as_it_was(tmp_path):
     assert glb.read_bytes() == b"OLD" and not (tmp_path / "rig_before_sleeve_skin.glb").exists() and sc.metrics["sleeve_skin"]["ok"]
     sc2, glb2 = _step(tmp_path, {"ok": False, "reason": "no forearm bones"})
     assert glb2.read_bytes() == b"OLD" and sc2.metrics["sleeve_skin"] == {"ok": False, "reason": "no forearm bones"}
+
+
+@needs_blender
+def test_without_split_only_weights_change_and_no_vertex_is_added(tmp_path):
+    src, out, rep = tmp_path / "in.glb", tmp_path / "out.glb", tmp_path / "rep.json"
+    (tmp_path / "make.py").write_text(_MAKE, encoding="utf-8")
+    (tmp_path / "read.py").write_text(_READ, encoding="utf-8")
+    run = lambda *a: subprocess.run([str(BLENDER), "-b", "--threads", "2", *a], capture_output=True, text=True, timeout=300)  # noqa: E731
+    run("--python", str(tmp_path / "make.py"), "--", str(src))
+    run("--python", inspect.getsourcefile(sk), "--", str(src), str(out), "--report", str(rep))
+    data = json.loads(rep.read_text(encoding="utf-8"))
+    assert data["ok"] and data["leg_weight_vertices"] >= 1 and data["seam_edges"] == 0 and data["reweighted_vertices"] == 0
+    r = run("--python", str(tmp_path / "read.py"), "--", str(out), str(__import__("pathlib").Path(inspect.getsourcefile(sk)).parent))
+    res = json.loads(next(ln for ln in r.stdout.splitlines() if ln.startswith("RESULT"))[len("RESULT"):])
+    assert len(res["rows"]) == 16

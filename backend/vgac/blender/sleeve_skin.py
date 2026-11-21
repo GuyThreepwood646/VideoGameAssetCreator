@@ -1,6 +1,6 @@
 """Blender headless: sleeve skin pass on a rigged GLB (WP-79), run last in the rig step's skin passes.
 
-Run: blender -b --python sleeve_skin.py -- <rig.glb> <out.glb> --report <json>
+Run: blender -b --python sleeve_skin.py -- <rig.glb> <out.glb> --report <json> [--split]
 
 A robe with a bell sleeve tears at the sleeve in the moves: the mage's cuff and forearm skin was measured 100 times
 longer than at rest in the attack (5 mm edges over 0.7 m). Two causes, both on forearm skin only (vertices with at
@@ -10,13 +10,13 @@ least ARM_MASS_MIN of their weight on the arm chain: shoulder, upper arm, forear
    bone.
    The other way round, skirt or leg skin (under half arm chain, at least LEG_MASS_MIN on the legs) gives away the
    forearm weight it picked up from the sleeve lying against it, to its strongest leg bone.
-2. The sleeve is welded to the skirt. Edges 5 to 15 mm long at rest join forearm skin to skin on the hips or thigh, and
-   they stretch as the arm swings away. The mesh is cut along those seams: a vertex that has faces of both kinds is
-   split in two, one copy for the forearm faces and one for the others. A copy that does not fit its faces takes the
-   average weights of its neighbours of the matching kind. Nothing moves at rest (the copies share a place), no hole
-   opens, and the sleeve and the skirt move on their own. A seam whose far side is itself arm chain (the elbow, the
-   shoulder) is left joined.
-Each step alone left the mage's sleeve torn on one side (step 1 clears the left, step 2 the right). The rest mesh, the
+With --split (off in the rig step: it opened a 14 to 34 mm see-through slit between sleeve and skirt in walk, run and death)
+the mesh is also cut where the sleeve is welded to the skirt:
+2. Edges 5 to 15 mm long at rest join forearm skin to skin on the hips or thigh, and they stretch as the arm swings away. A vertex
+   that has faces of both kinds is split in two, one copy for the forearm faces and one for the others. A copy that does not fit
+   its faces takes the average weights of its neighbours of the matching kind. A seam whose far side is itself arm chain (the
+   elbow, the shoulder) is left joined.
+Step 1 clears the mage's left sleeve; the right sleeve's welded bridge to the skirt is only cut by step 2. The rest mesh, the
 bones, the other weights and the animation are not touched. Only a skeleton with forearm bones is touched.
 
 Everything above main() is plain numpy so the backend tests can run it without Blender.
@@ -150,7 +150,7 @@ def limit_influences(weights, keep=MAX_INFLUENCES):
 # ---- Blender side -------------------------------------------------------------------------------------------------
 
 
-def _process_mesh(o, report):  # pragma: no cover - runs inside Blender
+def _process_mesh(o, report, split=False):  # pragma: no cover - runs inside Blender
     import bmesh
 
     names = [g.name for g in o.vertex_groups]
@@ -192,7 +192,7 @@ def _process_mesh(o, report):  # pragma: no cover - runs inside Blender
     ffore = face_is_fore(faces, vf)
     fkind = {f: ffore[i] for i, f in enumerate(bm.faces)}
     seams = seam_edges(faces, ffore, va)
-    if seams:
+    if seams and split:
         want = set(seams)
         edges = [e for e in bm.edges if (min(e.verts[0].index, e.verts[1].index), max(e.verts[0].index, e.verts[1].index)) in want]
         bmesh.ops.split_edges(bm, edges=edges)
@@ -241,6 +241,7 @@ def main():  # pragma: no cover - runs inside Blender
     argv = _common.after_double_dash()
     src, dst = os.path.abspath(argv[0]), os.path.abspath(argv[1])
     report_path = _common.opt("--report", None)
+    split = _common.flag("--split")
     _common.open_glb(src)
     scene = bpy.context.scene
     arm = next((o for o in scene.objects if o.type == "ARMATURE"), None)
@@ -253,7 +254,7 @@ def main():  # pragma: no cover - runs inside Blender
     else:
         any_changed = False
         for o in meshes:
-            any_changed = _process_mesh(o, report) or any_changed
+            any_changed = _process_mesh(o, report, split) or any_changed
         report["ok"] = True
         report["changed"] = int(any_changed)
     if report_path:
