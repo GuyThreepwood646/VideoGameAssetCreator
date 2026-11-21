@@ -506,6 +506,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         await _fingers(sc, rig_glb, params)
         await _finger_rigid(sc, rig_glb, params)
         await _palm_down(sc, rig_glb, params)
+        await _sleeve_skin(sc, rig_glb)
         await _worn_region(sc, rig_glb, params)
     sc.register("glb", rig_glb)
     link_textures(sc)
@@ -643,6 +644,7 @@ async def _fix_weights_again(sc: StageContext, rig_glb: Path) -> None:
         if out.is_file() and out.stat().st_size > 0:
             shutil.move(str(out), str(rig_glb))
             sc.set_metrics(weights_fix=WEIGHTS_FIX, stray_weights=int((rep.get("stray_weights") or {}).get("verts") or 0), weights_fixed_again=True)
+            await _sleeve_skin(sc, rig_glb)  # the clean-up gave the sleeve its first weights back
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(weights_fix_error=str(e)[:300])
 
@@ -1332,6 +1334,30 @@ async def _leg_skin(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> 
             sc.set_metrics(leg_skin={"ok": False, "reason": rep.get("reason") or "not run"})
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(leg_skin={"error": str(e)[:300]})
+
+
+async def _sleeve_skin(sc: StageContext, rig_glb: Path) -> None:
+    """Sleeve skin pass (blender/sleeve_skin.py, WP-79): on forearm skin, leg weight goes to the arm; skirt skin gives back
+    the forearm weight it took from a sleeve lying against it, so a bell sleeve does not follow the legs. In place,
+    only when something changed; the rig before it is kept as rig_before_sleeve_skin.glb. metrics.sleeve_skin: {ok,
+    changed, leg_weight_vertices} or {reason}. Never raises."""
+    out = sc.dir / "rig_sleeve_skin.glb"
+    report = sc.dir / "sleeve_skin.json"
+    try:
+        await sc.blender("sleeve_skin.py", [rig_glb, out, "--report", report], log_name="sleeve_skin.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        if rep.get("ok") and rep.get("changed") and out.is_file() and out.stat().st_size > 0:
+            shutil.copy2(rig_glb, sc.dir / "rig_before_sleeve_skin.glb")
+            shutil.move(str(out), str(rig_glb))
+        sc.set_metrics(sleeve_skin={"ok": True, **{k: int(rep.get(k) or 0) for k in
+                                                    ("changed", "leg_weight_vertices")}}
+                       if rep.get("ok") else {"ok": False, "reason": rep.get("reason") or "not run"})
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(sleeve_skin={"error": str(e)[:300]})
+    finally:
+        report.unlink(missing_ok=True)
+        out.unlink(missing_ok=True)
 
 
 async def _shoulder_skin(sc: StageContext, rig_glb: Path) -> None:
