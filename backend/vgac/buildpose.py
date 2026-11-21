@@ -24,8 +24,11 @@ the person's picture. Nothing here raises: a failure is recorded as not measured
 
 from __future__ import annotations
 
+import logging
 import math
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -89,7 +92,9 @@ PART_NEIGHBOURS = {"torso": ("upper arms", "thighs"), "upper arms": ("torso", "f
 POSE_MODEL = "pose_landmarker_heavy.task"
 HAND_MODEL = "hand_landmarker.task"
 _models: dict[str, Any] = {}
-_failed: set[str] = set()
+_failed: dict[str, float] = {}  # name -> when its load failed; tried again after lipmarks.RETRY_SECONDS
+_lock = threading.Lock()  # one load and one detect at a time (the landmarkers are shared across job threads)
+log = logging.getLogger(__name__)
 
 
 def model_path(name: str) -> Path:
@@ -100,25 +105,33 @@ def model_path(name: str) -> Path:
 
 
 def _model(name: str) -> Any:
-    """The MediaPipe pose or hand landmarker, or None (package or model file missing)."""
-    if name in _models or name in _failed:
-        return _models.get(name)
-    try:
-        from mediapipe.tasks import python as mpt
-        from mediapipe.tasks.python import vision
+    """The MediaPipe pose or hand landmarker, or None (package or model file missing, or the load failed). A failed
+    load is logged and tried again after lipmarks.RETRY_SECONDS, never given up for the life of the backend."""
+    from .lipmarks import RETRY_SECONDS
 
-        base = mpt.BaseOptions(model_asset_buffer=model_path(name).read_bytes())
-        if name == "pose":
-            opts = vision.PoseLandmarkerOptions(base_options=base, running_mode=vision.RunningMode.IMAGE, num_poses=1,
-                                                min_pose_detection_confidence=0.2, min_pose_presence_confidence=0.2)
-            _models[name] = vision.PoseLandmarker.create_from_options(opts)
-        else:
-            opts = vision.HandLandmarkerOptions(base_options=base, running_mode=vision.RunningMode.IMAGE, num_hands=2,
-                                                min_hand_detection_confidence=0.3, min_hand_presence_confidence=0.3)
-            _models[name] = vision.HandLandmarker.create_from_options(opts)
-    except Exception:  # noqa: BLE001  (package or model missing: the measure says what it could not read)
-        _failed.add(name)
-    return _models.get(name)
+    with _lock:
+        if name in _models:
+            return _models[name]
+        if name in _failed and time.monotonic() - _failed[name] < RETRY_SECONDS:
+            return None
+        try:
+            from mediapipe.tasks import python as mpt
+            from mediapipe.tasks.python import vision
+
+            base = mpt.BaseOptions(model_asset_buffer=model_path(name).read_bytes())
+            if name == "pose":
+                opts = vision.PoseLandmarkerOptions(base_options=base, running_mode=vision.RunningMode.IMAGE, num_poses=1,
+                                                    min_pose_detection_confidence=0.2, min_pose_presence_confidence=0.2)
+                _models[name] = vision.PoseLandmarker.create_from_options(opts)
+            else:
+                opts = vision.HandLandmarkerOptions(base_options=base, running_mode=vision.RunningMode.IMAGE, num_hands=2,
+                                                    min_hand_detection_confidence=0.3, min_hand_presence_confidence=0.3)
+                _models[name] = vision.HandLandmarker.create_from_options(opts)
+            _failed.pop(name, None)
+        except Exception as exc:  # noqa: BLE001  (package or model missing: the measure says what it could not read)
+            _failed[name] = time.monotonic()
+            log.warning("%s landmarker did not load from %s: %s", name, model_path(name), f"{type(exc).__name__}: {exc}"[:300])
+        return _models.get(name)
 
 
 def available(name: str) -> bool:
@@ -246,7 +259,8 @@ def pose_points(rgb: np.ndarray) -> np.ndarray | None:
         return None
     import mediapipe as mp
 
-    res = lm.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(rgb)))
+    with _lock:
+        res = lm.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(rgb)))
     if not res.pose_landmarks:
         return None
     h, w = rgb.shape[:2]
@@ -310,7 +324,8 @@ def _detect_hands(rgb: np.ndarray, box: tuple[int, int, int, int]) -> list[dict[
     from PIL import Image as _I
 
     img = np.asarray(_I.fromarray(canvas).resize((size, size), _I.Resampling.BICUBIC))
-    res = lm.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(img)))
+    with _lock:
+        res = lm.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(img)))
     out = []
     for i, hl in enumerate(res.hand_landmarks):
         pts = np.array([[p.x * side + x0, p.y * side + y0] for p in hl])

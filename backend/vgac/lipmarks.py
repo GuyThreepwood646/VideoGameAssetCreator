@@ -16,7 +16,10 @@ and eye_px (the eyes' middle and distance), face_w (the face contour's width) an
 
 from __future__ import annotations
 
+import logging
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -31,8 +34,12 @@ EYE_B = (362, 263)
 FACE_A, FACE_B = 234, 454
 
 MODEL_NAME = "face_landmarker.task"
+RETRY_SECONDS = 60.0  # after a failed load, try again this long after; a failure is never kept for the process's life
+log = logging.getLogger(__name__)
 _landmarker: Any = None
-_landmarker_failed = False
+_failed_at: float | None = None
+_last_error: str | None = None
+_lock = threading.Lock()  # one load at a time, and one detect at a time (the landmarker is shared across job threads)
 
 
 def model_path() -> Path:
@@ -165,23 +172,36 @@ def available() -> bool:
 
 
 def _get_landmarker() -> Any:
-    global _landmarker, _landmarker_failed
-    if _landmarker is not None or _landmarker_failed:
-        return _landmarker
-    try:
-        from mediapipe.tasks import python as mpt
-        from mediapipe.tasks.python import vision
-
+    """The shared MediaPipe face landmarker, or None (package or model missing, or the load failed). A failed load is
+    logged with its reason and tried again after RETRY_SECONDS, so one bad moment does not take the processor finder
+    away for the life of the backend."""
+    global _landmarker, _failed_at, _last_error
+    with _lock:
+        if _landmarker is not None:
+            return _landmarker
+        if _failed_at is not None and time.monotonic() - _failed_at < RETRY_SECONDS:
+            return None
         path = model_path()
-        opts = vision.FaceLandmarkerOptions(
-            base_options=mpt.BaseOptions(model_asset_buffer=path.read_bytes()),
-            running_mode=vision.RunningMode.IMAGE, num_faces=1,
-            min_face_detection_confidence=0.2, min_face_presence_confidence=0.2, min_tracking_confidence=0.2)
-        _landmarker = vision.FaceLandmarker.create_from_options(opts)
-    except Exception:  # noqa: BLE001  (package or model missing: callers fall back)
-        _landmarker_failed = True
-        _landmarker = None
-    return _landmarker
+        try:
+            from mediapipe.tasks import python as mpt
+            from mediapipe.tasks.python import vision
+
+            opts = vision.FaceLandmarkerOptions(
+                base_options=mpt.BaseOptions(model_asset_buffer=path.read_bytes()),
+                running_mode=vision.RunningMode.IMAGE, num_faces=1,
+                min_face_detection_confidence=0.2, min_face_presence_confidence=0.2, min_tracking_confidence=0.2)
+            _landmarker = vision.FaceLandmarker.create_from_options(opts)
+            _failed_at, _last_error = None, None
+        except Exception as exc:  # noqa: BLE001  (package or model missing, or a failed load: callers fall back)
+            _landmarker, _failed_at = None, time.monotonic()
+            _last_error = f"{type(exc).__name__}: {exc}"[:300]
+            log.warning("face landmarker did not load from %s: %s", path, _last_error)
+        return _landmarker
+
+
+def last_error() -> str | None:
+    """Why the last load of the face landmarker failed, or None."""
+    return _last_error
 
 
 def find(img: np.ndarray) -> dict[str, Any] | None:
@@ -195,7 +215,8 @@ def find(img: np.ndarray) -> dict[str, Any] | None:
     if arr.dtype != np.uint8:
         arr = np.clip(arr[..., :3] * 255.0 + 0.5, 0, 255).astype(np.uint8)
     arr = np.ascontiguousarray(arr[..., :3])
-    res = lm.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=arr))
+    with _lock:
+        res = lm.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=arr))
     if not res.face_landmarks:
         return None
     h, w = arr.shape[:2]
