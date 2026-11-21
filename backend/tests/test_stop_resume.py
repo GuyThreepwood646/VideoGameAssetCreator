@@ -387,3 +387,32 @@ def test_a_stopped_version_marked_kept_by_an_older_row_can_be_deleted(client, ga
         db.get(Version, vid).selected = True
         db.commit()
     assert client.delete(f"/api/versions/{vid}").status_code == 200
+
+
+def test_a_stopped_version_an_older_row_calls_kept_is_not_shown_kept(client, gate):  # noqa: F811
+    """UX-06: asset B Bldg NeonClub had a stopped version stored as kept (stopped before WP-02). The page showed both
+    badges, and step 1 and step 2 disagreed. The API must not report it kept, and the startup repair must clear the row."""
+    from vgac.db import get_engine, unkeep_stopped_and_failed
+
+    p, a = _project_asset(client)
+    aid = a["id"]
+    first = client.post(f"/api/assets/{aid}/stages/concept/run", json={}).json()
+    vid = first["version"]["id"]
+    _until(lambda: client.get(f"/api/jobs/{first['job']['id']}").json()["status"] == "running")
+    client.post(f"/api/assets/{aid}/stop", json={"stage": "concept"})
+    _until(lambda: _versions(client, aid, "concept")[0]["stopped"])
+    with session_factory()() as db:
+        db.get(Version, vid).selected = True  # the old row
+        db.commit()
+
+    full = client.get(f"/api/assets/{aid}").json()
+    assert full["stages"]["concept"][0]["selected"] is False
+    assert "concept" not in full["selected"]
+
+    with session_factory()() as db:
+        db.get(Version, vid).selected = True
+        db.commit()
+    assert unkeep_stopped_and_failed(get_engine()) == 1
+    with session_factory()() as db:
+        assert db.get(Version, vid).selected is False
+    assert unkeep_stopped_and_failed(get_engine()) == 0

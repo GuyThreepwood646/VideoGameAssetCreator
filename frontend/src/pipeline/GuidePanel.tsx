@@ -3,7 +3,7 @@
 // the page: it lives here, except in the review state where it is the "Yes, keep it"
 // answer next to the picture.
 import { Link } from 'react-router'
-import { libraryUrl, previousStage, selectedVersion, STAGES, stoppedVersions, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
+import { api, libraryUrl, previousStage, selectedVersion, STAGES, stoppedVersions, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
 import { Info } from '../components/Info'
 import { Disclosure, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
 import { conceptCountLabel } from '../guide'
@@ -121,7 +121,7 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
 export function laterFailed(asset: Asset, stage: StageId): boolean {
   return STAGES.slice(STAGES.indexOf(stage) + 1).some((s) => {
     const vs = versionsOf(asset, s)
-    return vs.length > 0 && vs[vs.length - 1].status === 'error' && !vs.some((v) => v.selected && v.status === 'done')
+    return (vs.length > 0 && vs[vs.length - 1].status === 'error' && !vs.some((v) => v.selected && v.status === 'done')) || (stoppedVersions(asset, s).length > 0 && !vs.some((v) => v.selected && v.status === 'done'))
   })
 }
 
@@ -158,7 +158,6 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
   const next = nextStage(stage)
   const state = guideState(asset, stage, jobs, selected)
   const est = stageEstimate(stage, info(stage), estimates)
-  const stepNo = STAGES.indexOf(stage) + 1
 
   // The autopilot owns the card while it runs, is paused or stopped.
   if (autopilot && isAutopilotActive(autopilot)) {
@@ -185,6 +184,8 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
   let now: string
   let action: React.ReactNode = null
   let extra: React.ReactNode = null
+  // The step the card's action is for: this page's step, or a later step that was stopped or failed.
+  let cardStage: StageId = stage
 
   switch (state) {
     case 'blocked': {
@@ -294,8 +295,26 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
         const vs = versionsOf(asset, s)
         return vs.length > 0 && vs[vs.length - 1].status === 'error' && !vs.some((v) => v.selected && v.status === 'done')
       })
+      // A later step that was stopped: the same Resume that step's own card offers, so the cards agree (UX-06).
+      const stoppedLater = STAGES.slice(STAGES.indexOf(stage) + 1).find((s) => stoppedVersions(asset, s).length > 0 && !versionsOf(asset, s).some((v) => v.selected && v.status === 'done'))
+      if (!failedLater && stoppedLater) {
+        const si = info(stoppedLater)
+        cardStage = stoppedLater
+        happened = `You stopped step ${STAGES.indexOf(stoppedLater) + 1}, ${stagePlain(stoppedLater, si)}.`
+        now = 'Nothing you kept was lost. Resume runs it again from the start with the same settings.'
+        action = (
+          <>
+            <ResumeButton disabled={busy} onClick={() => void api.resumeAsset(asset.id, stoppedLater).then(() => onChanged?.())} est={fmtDuration(stageEstimate(stoppedLater, si, estimates))} />
+            <Link className="btn" to={`/assets/${asset.id}/${stoppedLater}`}>
+              Go to step {STAGES.indexOf(stoppedLater) + 1}
+            </Link>
+          </>
+        )
+        break
+      }
       if (failedLater) {
         const fi = info(failedLater)
+        cardStage = failedLater
         const failedV = versionsOf(asset, failedLater).slice(-1)[0]
         happened = `Step ${STAGES.indexOf(failedLater) + 1}, ${stagePlain(failedLater, fi)}, did not finish.`
         now = `${humanError(failedV.error)} Your kept version here is fine; the problem is further on.`
@@ -359,8 +378,8 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       <div className="guide-body">
         <div className="guide-kicker">
           Your next step
-          <span className="muted"> (step {stepNo} of {STAGES.length}: {stagePlain(stage, info(stage))})</span>
-          <Info term={'stage.' + stage} />
+          <span className="muted"> (step {STAGES.indexOf(cardStage) + 1} of {STAGES.length}: {stagePlain(cardStage, info(cardStage))})</span>
+          <Info term={'stage.' + cardStage} />
         </div>
         <div className="guide-happened">{happened}</div>
         <div className="guide-now">{now}</div>

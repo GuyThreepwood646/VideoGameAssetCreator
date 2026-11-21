@@ -18,6 +18,16 @@ function getRenderer() {
     // Studio preview light (previewLight.ts), built once for every thumbnail: metal reads as metal.
     renderer.toneMapping = THREE.NeutralToneMapping
     renderer.toneMappingExposure = 0.85
+    // The browser may drop this context (many canvases on the page, a busy graphics card). A lost context draws nothing
+    // for good, so forget it: the next still makes a new renderer, and the environment built on the old one goes too.
+    const lost = renderer
+    renderer.domElement.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault()
+      if (renderer === lost) {
+        renderer = null
+        studioEnv = null
+      }
+    })
   }
   return renderer
 }
@@ -40,6 +50,11 @@ export type SnapshotOptions = { yawDeg?: number; front?: boolean }
 
 function render(model: THREE.Object3D, opts: SnapshotOptions): string {
   const r = getRenderer()
+  if (r.getContext().isContextLost()) {
+    renderer = null
+    studioEnv = null
+    throw new Error('the graphics context was lost')
+  }
   const scene = new THREE.Scene()
   scene.background = new THREE.Color(0x2a2d33)
   scene.environment = studio(r)
@@ -82,7 +97,11 @@ export function snapshotGlbMany(url: string, list: SnapshotOptions[]): Promise<s
     for (const o of missing) {
       const p = loaded.then((model) => {
         try {
-          return render(model, o)
+          try {
+            return render(model, o)
+          } catch {
+            return render(model, o) // once more on a fresh renderer, after a lost context
+          }
         } finally {
           left -= 1
           if (left === 0) dispose(model)

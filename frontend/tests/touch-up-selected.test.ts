@@ -29,6 +29,7 @@ function paintWith(settings: PaintSettings): PaintState {
     notice: null,
     saveMaps: () => null,
     saveable: true,
+    modelSaveable: true,
     maps: { shine: true, metal: true },
   } as unknown as PaintState
 }
