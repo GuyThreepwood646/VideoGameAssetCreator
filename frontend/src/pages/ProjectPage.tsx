@@ -393,7 +393,7 @@ function CreateAssetForm({ project }: { project: Project }) {
         ...(differs ? { different_look: true } : {}),
         platform_target: platform,
         prompt: prompt.trim(),
-        parts: parts.map((name) => ({ name, kind: 'separate' })),
+        parts: parts.map((name) => ({ name })),
         ...(chosenModel && !fromPicture && !fromModel ? { concept_model: chosenModel } : {}),
         ...(fromPicture && picture ? { image: picture.dataUrl } : {}),
         // A box round the main person cuts the photo first; the people found are recorded with it (no box = the whole photo).

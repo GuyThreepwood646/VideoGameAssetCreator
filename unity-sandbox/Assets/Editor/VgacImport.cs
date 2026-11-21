@@ -110,7 +110,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "22";
+    public const string Version = "23";
     public const string HairShaderName = "VGAC/Hair";
     public const string HairCutoutShaderName = "VGAC/HairCutout";
 
@@ -195,6 +195,9 @@ public static class VgacImport
         public bool secondaryUVOnMesh;         // LOD0's mesh really has a UV1 channel after import
         public string secondaryUVSettings = "";
         public List<string> staticFlags = new List<string>();
+        public List<string> movingParts = new List<string>();     // Version 23: the moving nodes (WP-29), "<node> <kind>"
+        public List<string> partColliders = new List<string>();   // Version 23: hulls that ride on a moving node
+        public List<string> partLayers = new List<string>();      // Version 23: the parts controller's layers
         public string lodFadeMode = "";        // G20: CrossFade for foliage
         public float lodFadeWidth;
         public string textureFilter = "";      // recipes: Bilinear or Point, as set on the textures
@@ -511,6 +514,10 @@ public static class VgacImport
                 report.secondaryUVOnMesh = uv1.Count > 0;
             }
 
+            // Moving parts (Version 23, WP-29): '<part>_<n>_Pivot' nodes, each with its moving node '<part>_<n>' under it.
+            var pivots = instance.GetComponentsInChildren<Transform>(true).Where(t => t.name.EndsWith("_Pivot")).ToList();
+            var movers = pivots.SelectMany(p => p.Cast<Transform>().Where(c => c.name + "_Pivot" == p.name)).ToList();
+
             // Hit boxes and the body shape for moving (G34): a rigged character gets trigger shapes on its bones and a
             // simple body shape on the root, which replaces the convex hull (a hull does not follow the animation).
             bool rigged = instance.GetComponentsInChildren<SkinnedMeshRenderer>(true).Any(s => s.bones.Length > 0);
@@ -532,6 +539,10 @@ public static class VgacImport
             // and cylinder a convex MeshCollider; mesh (static scenery) a non-convex MeshCollider. The source meshes stay
             // in the model, switched off. A rigged character with a body shape for moving (G34) gets none of them.
             var colMeshes = instance.GetComponentsInChildren<MeshFilter>(true).Where(m => IsColliderName(m.name)).OrderBy(m => m.name).ToList();
+            var partCols = colMeshes.Where(m => movers.Any(mv => m.transform.IsChildOf(mv))).ToList();
+            colMeshes = colMeshes.Except(partCols).ToList();
+            foreach (var mf in partCols) AddPartCollider(mf, report);
+            if (partCols.Count > 0) renderers = renderers.Where(r => r != null).ToArray();  // the hulls' drawing is gone
             if (colMeshes.Count > 0)
             {
                 if (!bodyShape) AddColliders(instance, colMeshes, ReadColliders(a.colliders, report), report);
@@ -552,6 +563,20 @@ public static class VgacImport
                 lodGroup.SetLODs(lods);
                 lodGroup.RecalculateBounds();
                 report.warnings.Add("LODGroup built by script, not by importer naming");
+            }
+            if (lodGroup != null && movers.Count > 0)
+            {
+                // Version 23: each moving piece's levels join the body's (by the _LOD<n> ending), so a piece draws one
+                // level at a time and its levels follow the body's switch distances.
+                var levels = lodGroup.GetLODs();
+                for (int i = 0; i < levels.Length; i++)
+                {
+                    var suffix = "_LOD" + i;
+                    var extra = renderers.Where(r => r.name.EndsWith(suffix) && !IsColliderName(r.name) && movers.Any(mv => r.transform.IsChildOf(mv)));
+                    levels[i].renderers = levels[i].renderers.Concat(extra).Distinct().ToArray();
+                }
+                lodGroup.SetLODs(levels);
+                lodGroup.RecalculateBounds();
             }
             if (lodGroup != null)
             {
@@ -586,7 +611,8 @@ public static class VgacImport
             if (category == "environment")
             {
                 var flags = StaticEditorFlags.ContributeGI | StaticEditorFlags.BatchingStatic;
-                foreach (var t in instance.GetComponentsInChildren<Transform>(true)) GameObjectUtility.SetStaticEditorFlags(t.gameObject, flags);
+                foreach (var t in instance.GetComponentsInChildren<Transform>(true))
+                    if (!movers.Any(mv => t.IsChildOf(mv))) GameObjectUtility.SetStaticEditorFlags(t.gameObject, flags);  // Version 23: moving pieces stay dynamic
                 report.staticFlags.Add("ContributeGI");
                 report.staticFlags.Add("BatchingStatic");
             }
@@ -650,7 +676,8 @@ public static class VgacImport
             {
                 if (clipsSrc != null) report.warnings.Add("clips library skipped: avatar not humanoid or file missing");
                 var side = ReadClipInfo(a.clipInfo, report);
-                SetClipLoops(importer, report, side);
+                if (movers.Count > 0 && side != null && side.Values.Any(c => c.fbx_first >= 0)) SetPartClips(importer, report, side);
+                else SetClipLoops(importer, report, side);
                 addedClips = AddedClips(side);
                 sidecarClips = side;
                 if (avatar != null && avatar.isHuman && avatar.isValid) FaceForward(fbxPath, new[] { importer }, report);
@@ -668,7 +695,14 @@ public static class VgacImport
                 var c = clipSet.FirstOrDefault(x => x.name == info.name);
                 if (c != null) info.loop = AnimationUtility.GetAnimationClipSettings(c).loopTime;
             }
-            if (clipSet.Count > 0)
+            if (clipSet.Count > 0 && movers.Count > 0)
+            {
+                // Version 23: an object with moving parts gets one layer per part (open and close, or spin), not locomotion.
+                var ctrl = BuildPartsController(assetDir + "/" + name + ".controller", clipSet, movers, ReadPartInfo(a.clipInfo), report, instance.transform);
+                animator.runtimeAnimatorController = ctrl;
+                report.clipCount = clipSet.Count;
+            }
+            else if (clipSet.Count > 0)
             {
                 var ctrl = BuildController(assetDir + "/" + name + ".controller", clipSet, humanoid, speedScale, report.controller, addedClips, ownIdle, sidecarClips, fbxPath);
                 animator.runtimeAnimatorController = ctrl;
@@ -904,6 +938,160 @@ public static class VgacImport
             var rb = lod0.bounds;
             report.colliderBoundsError = Mathf.Max((cb.min - rb.min).magnitude, (cb.max - rb.max).magnitude);
         }
+    }
+
+    // A moving piece's convex hull (Version 23, WP-29): a convex MeshCollider on the hull's own node under the moving
+    // node, so it turns or slides with the piece; its drawing is removed. The moving node gets a kinematic Rigidbody, as
+    // Unity asks for colliders that move.
+    static void AddPartCollider(MeshFilter mf, Report report)
+    {
+        var mesh = mf.sharedMesh;
+        if (mesh == null) return;
+        var c = mf.gameObject.AddComponent<MeshCollider>();
+        c.sharedMesh = mesh;
+        c.convex = true;
+        var mr = mf.GetComponent<MeshRenderer>();
+        if (mr != null) UnityEngine.Object.DestroyImmediate(mr);
+        var mover = mf.transform.parent;
+        if (mover != null && mover.GetComponent<Rigidbody>() == null)
+        {
+            var rb = mover.gameObject.AddComponent<Rigidbody>();
+            rb.isKinematic = true;
+            rb.useGravity = false;
+        }
+        report.partColliders.Add(mf.name);
+        report.colliderVertices += mesh.vertexCount;
+        report.colliderCount++;
+        report.colliderTrianglesMax = Math.Max(report.colliderTrianglesMax, mesh.triangles.Length / 3);
+        if (!report.colliderKinds.Contains("part")) report.colliderKinds.Add("part");
+    }
+
+    [Serializable] class SidecarPart { public string name = ""; public string kind = ""; public string node = ""; public bool open_at_rest; }
+    [Serializable] class PartSidecar { public List<SidecarPart> parts = new List<SidecarPart>(); }
+
+    // The moving parts the rig step wrote into anim_clips.json (Version 23), by moving node.
+    static Dictionary<string, SidecarPart> ReadPartInfo(string path)
+    {
+        var map = new Dictionary<string, SidecarPart>(StringComparer.OrdinalIgnoreCase);
+        if (path == null || !File.Exists(path)) return map;
+        try { foreach (var p in JsonUtility.FromJson<PartSidecar>(File.ReadAllText(path)).parts ?? new List<SidecarPart>()) if (!string.IsNullOrEmpty(p.node)) map[p.node] = p; }
+        catch (Exception) { }
+        return map;
+    }
+
+    public const string HoldEndParam = "PartsHoldEnd";  // always 1: the still Open and Closed states show their clip's last frame
+
+    // The parts controller (Version 23, WP-29). One layer per part, named after it, weight 1 (each layer moves only its own
+    // nodes). A hinged or sliding part: bool <Part>Open (true when the model shows it open) and states Closed, Opening,
+    // Open, Closing; Closed and Open hold the last frame of the close and open clips. A spinning part: state Spin playing
+    // its loop, its speed the float <Part>Speed (1 = one turn a second, negative turns it backwards, 0 stops it).
+    // Moving parts (Version 23): the FBX holds every clip one after another on one take (blender/pack.py lay_out_takes);
+    // each clip is cut from it by the first and last frame anim_clips.json gives, looping as the sidecar says.
+    static void SetPartClips(ModelImporter mi, Report report, Dictionary<string, SidecarClip> side)
+    {
+        var take = mi.defaultClipAnimations.FirstOrDefault();
+        if (take == null) { report.warnings.Add("the moving parts' take is missing from the FBX"); return; }
+        var list = new List<ModelImporterClipAnimation>();
+        foreach (var c in side.Values.Where(c => c.fbx_first >= 0).OrderBy(c => c.fbx_first))
+        {
+            list.Add(new ModelImporterClipAnimation
+            {
+                name = c.name, takeName = take.takeName, firstFrame = c.fbx_first, lastFrame = c.fbx_last,
+                loopTime = c.loop, loopPose = false, wrapMode = c.loop ? WrapMode.Loop : WrapMode.ClampForever,
+            });
+            report.clips.Add(new ClipInfo { name = c.name, defaultLoop = false, loop = c.loop });
+        }
+        mi.clipAnimations = list.ToArray();
+        mi.SaveAndReimport();
+    }
+
+    // A layer's mask: only the transforms under the part's own pivot nodes, so a clip of one part (which holds every
+    // moving node of the take) never writes another part's nodes.
+    static AvatarMask PartMask(Transform root, List<Transform> nodes, string label)
+    {
+        var mask = new AvatarMask { name = label + "Mask" };
+        mask.AddTransformPath(root, true);
+        var mine = nodes.Select(n => AnimationUtility.CalculateTransformPath(n.parent != null ? n.parent : n, root)).ToList();
+        for (int i = 0; i < mask.transformCount; i++)
+        {
+            var path = mask.GetTransformPath(i);
+            mask.SetTransformActive(i, mine.Any(m => path == m || path.StartsWith(m + "/", StringComparison.Ordinal)));
+        }
+        return mask;
+    }
+
+    static AnimatorController BuildPartsController(string path, List<AnimationClip> clips, List<Transform> movers,
+                                                   Dictionary<string, SidecarPart> info, Report report, Transform root)
+    {
+        AssetDatabase.DeleteAsset(path);
+        var ctrl = AnimatorController.CreateAnimatorControllerAtPath(path);
+        ctrl.AddParameter(new AnimatorControllerParameter { name = HoldEndParam, type = AnimatorControllerParameterType.Float, defaultFloat = 1f });
+        AnimationClip Clip(string n) => clips.FirstOrDefault(c => string.Equals(ShortName(c.name), n, StringComparison.OrdinalIgnoreCase));
+        var parts = movers.Select(m => { var i = m.name.LastIndexOf('_'); return i > 0 ? m.name.Substring(0, i) : m.name; })
+                          .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        bool first = true;
+        foreach (var part in parts)
+        {
+            var nodes = movers.Where(m => m.name.StartsWith(part + "_", StringComparison.OrdinalIgnoreCase)).ToList();
+            SidecarPart pi = null;
+            foreach (var n in nodes) if (info.TryGetValue(n.name, out pi)) break;
+            var label = Pascal(part);
+            var mask = PartMask(root, nodes, label);
+            AssetDatabase.AddObjectToAsset(mask, ctrl);
+            AnimatorStateMachine sm;
+            if (first) { var l0 = ctrl.layers; l0[0].name = label; l0[0].avatarMask = mask; ctrl.layers = l0; sm = ctrl.layers[0].stateMachine; first = false; }
+            else
+            {
+                ctrl.AddLayer(label);
+                var ls = ctrl.layers; ls[ls.Length - 1].defaultWeight = 1f; ls[ls.Length - 1].avatarMask = mask; ctrl.layers = ls;
+                sm = ctrl.layers[ls.Length - 1].stateMachine;
+            }
+            var spin = Clip(part + "_spin");
+            var open = Clip(part + "_open");
+            var close = Clip(part + "_close");
+            foreach (var n in nodes) report.movingParts.Add(n.name + " " + (spin != null ? "spin" : (pi != null ? pi.kind : "hinge")));
+            if (spin != null)
+            {
+                var speed = label + "Speed";
+                ctrl.AddParameter(new AnimatorControllerParameter { name = speed, type = AnimatorControllerParameterType.Float, defaultFloat = 1f });
+                var st = sm.AddState("Spin");
+                st.motion = spin;
+                st.speedParameterActive = true;
+                st.speedParameter = speed;
+                sm.defaultState = st;
+                report.partLayers.Add(label + ": Spin (" + speed + ")");
+                continue;
+            }
+            if (open == null || close == null) { report.warnings.Add("moving part " + part + " has no open and close clips"); continue; }
+            var openParam = label + "Open";
+            bool atRest = pi != null && pi.open_at_rest;
+            ctrl.AddParameter(new AnimatorControllerParameter { name = openParam, type = AnimatorControllerParameterType.Bool, defaultBool = atRest });
+            AnimatorState Held(string n, AnimationClip c)
+            {
+                var st = sm.AddState(n); st.motion = c; st.timeParameterActive = true; st.timeParameter = HoldEndParam; return st;
+            }
+            var closed = Held("Closed", close);
+            var opened = Held("Open", open);
+            var opening = sm.AddState("Opening"); opening.motion = open;
+            var closing = sm.AddState("Closing"); closing.motion = close;
+            void When(AnimatorState from, AnimatorState to, bool value)
+            {
+                var t = from.AddTransition(to); t.hasExitTime = false; t.duration = 0f;
+                t.AddCondition(value ? AnimatorConditionMode.If : AnimatorConditionMode.IfNot, 0f, openParam);
+            }
+            void After(AnimatorState from, AnimatorState to)
+            {
+                var t = from.AddTransition(to); t.hasExitTime = true; t.exitTime = 1f; t.duration = 0f;
+            }
+            When(closed, opening, true); After(opening, opened); When(opening, closing, false);
+            When(opened, closing, false); After(closing, closed); When(closing, opening, true);
+            sm.defaultState = atRest ? opened : closed;
+            // The saved prefab stands as its default state shows it (Unity takes a model's pose from the take's first frame).
+            (atRest ? open : close).SampleAnimation(root.gameObject, (atRest ? open : close).length);
+            report.partLayers.Add(label + ": Closed, Opening, Open, Closing (" + openParam + (atRest ? ", open at rest" : "") + ")");
+        }
+        AssetDatabase.SaveAssets();
+        return ctrl;
     }
 
     static float ParseFloat(string s, float fallback) =>
@@ -1878,7 +2066,8 @@ public static class VgacImport
 
     // anim_clips.json from the rig stage (procanim.py): the loop flag per clip, which the GLB and FBX do not carry.
     [Serializable] class SidecarClip { public string name = ""; public bool loop; public bool hold_last; public bool in_place = true; public bool added; public string source = "";
-        public float speed_mps = -1f; public string speed_method = ""; public int hit_frame = -1; public float hit_time = -1f; public string hit_end = ""; }
+        public float speed_mps = -1f; public string speed_method = ""; public int hit_frame = -1; public float hit_time = -1f; public string hit_end = "";
+        public int fbx_first = -1; public int fbx_last = -1; }  // Version 23: a moving part's clip on the FBX's one take
 
     static HashSet<string> AddedClips(Dictionary<string, SidecarClip> side) =>
         side == null ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)

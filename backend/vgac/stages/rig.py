@@ -152,12 +152,79 @@ async def _skip(sc: StageContext, reason: str, src: Path | None) -> None:
     link_textures(sc)
     moving = _moving_parts(sc)
     sc.set_metrics(rigid=True, bones=0, reason=reason, moving_parts=moving)
-    sc.set_metrics(**quality.summarise(quality.rig_checks({"bones": 0}, rig_expected=False, moving_parts=moving)))
+    checks = quality.rig_checks({"bones": 0}, rig_expected=False, moving_parts=moving)
+    cut = await _cut_moving_parts(sc, src)
+    if cut is not None:
+        checks.append(cut)
+    sc.set_metrics(**quality.summarise(checks))
 
 
 def _moving_parts(sc: StageContext) -> list[str]:
-    """The names of the asset's declared parts that are to move (kind separate), for a rigid asset's bones check."""
+    """The names of the asset's declared parts that are to move as their own skinned piece (kind separate), which a
+    rigid asset cannot do yet, for the bones check. Hinged, spinning and sliding parts are _cut_moving_parts's."""
     return [p["name"] for p in (sc.asset.parts or []) if p.get("kind") == "separate"]
+
+
+# The run's moving-part points (WP-29), recorded in the version's params like STIFF_PARAM: [{name, kind, locations,
+# side, open_at_rest, angle or distance}] in the parts file's order, or absent when none are placed.
+MOVING_PARAM = "moving_points"
+
+
+def moving_points_for(sc: StageContext) -> list[dict[str, Any]]:
+    """The hinged, spinning and sliding parts with points this run applies (the parts file stiff_parts_path finds)."""
+    rows = declared_parts.for_moving(declared_parts.read_placed(stiff_parts_path(sc)))
+    return [{**r, "locations": [[round(float(v), 4) for v in loc] for loc in r["locations"]]} for r in rows]
+
+
+async def _cut_moving_parts(sc: StageContext, src: Path | None) -> dict[str, Any] | None:
+    """Hinged lids and doors, spinning wheels and sliding drawers on an object with no skeleton (blender/moving_parts.py,
+    WP-29). Each placed part is cut from the model, capped, and put under a still pivot node and a moving node with its
+    clips; rig.glb becomes that model at rest and anim.glb the same with the clips (anim_clips.json beside it, as the
+    moves step writes for characters). -> the moving_parts check, or None when the asset declared no such part (then
+    nothing here touches the version: no param, no metric, no file). metrics.moving_cut: the pass's report."""
+    declared = [p for p in (sc.asset.parts or []) if p.get("kind") in declared_parts.MOVING_KINDS]
+    points = moving_points_for(sc)
+    if not declared and not points:
+        return None
+    sc.set_params(**{MOVING_PARAM: points or None})
+    unplaced = declared_parts.unplaced_moving(sc.asset.parts or [], points)
+    missing: list[str] = []
+    done: list[str] = []
+    if points and src is not None:
+        sc.progress(0.3, "cutting the moving parts free")
+        rig_glb, anim_glb = sc.dir / "rig.glb", sc.dir / "anim.glb"
+        out_rig, report_path = sc.dir / "rig_moving.glb", sc.dir / "moving_parts.json"
+        parts_file = declared_parts.write_placed(sc.dir / "moving_points.json", points)
+        t0 = time.time()
+        try:
+            await sc.blender("moving_parts.py", [src, out_rig, anim_glb, "--parts", parts_file, "--report", report_path],
+                             log_name="moving_parts.log", timeout=sc.settings.blender_timeout_seconds)
+            rep = (json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file()
+                   else {"ok": False, "reason": "the Blender pass wrote no report (moving_parts.log says why)"})
+        except Exception as e:  # noqa: BLE001
+            rep = {"ok": False, "reason": str(e)[:300]}
+        rep["seconds"] = round(time.time() - t0, 1)
+        if rep.get("ok") and out_rig.is_file() and anim_glb.is_file():
+            shutil.move(str(out_rig), str(rig_glb))
+            sc.register("glb", rig_glb)
+            sc.register("anim_glb", anim_glb)
+            clips = sc.dir / "anim_clips.json"
+            clips.write_text(json.dumps({"version": 1, "fps": rep.get("fps"), "root_motion": False, "clips": rep.get("clips", []),
+                                         "parts": rep.get("parts", [])}, indent=1), encoding="utf-8")
+            sc.register("anim_clips", clips)
+            sc.register("moving_report", report_path)
+        else:
+            anim_glb.unlink(missing_ok=True)
+        cut = {k: rep.get(k) for k in ("ok", "reason", "seconds", "rest_offset_m", "added_open_edges", "added_folded_edges")}
+        cut["parts"] = [{k: r.get(k) for k in ("name", "kind", "piece", "node", "how", "amount", "unit", "clips")} for r in rep.get("parts", [])]
+        cut["clips"] = [c.get("name") for c in rep.get("clips", [])]
+        sc.set_metrics(moving_cut=cut)
+        done = sorted({r["name"] for r in rep.get("parts", [])}) if rep.get("ok") else []
+        missing = [p["name"] for p in points if p["name"] not in done]
+    elif points:
+        missing = [p["name"] for p in points]
+    return quality.check("moving_parts", not unplaced and not missing, len(done), len(declared) or len(points),
+                         vars={"moved": done, "unplaced": unplaced, "not_found": missing})
 
 
 def guard_budget(sc: StageContext, src: Path) -> None:

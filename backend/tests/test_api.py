@@ -96,7 +96,7 @@ def test_project_and_asset_crud(client):
     r = client.post(f"/api/projects/{p['id']}/assets", json={"name": "chest", "category": "prop_articulated", "style_preset": "painted", "prompt": "a chest"})
     assert r.status_code == 201
     a = r.json()
-    assert a["platform_target"] == "high" and a["parts"] == [{"name": "lid", "kind": "separate"}] and a["stages"]["concept"] == [] and a["selected"] == {}
+    assert a["platform_target"] == "high" and a["parts"] == [{"name": "lid", "kind": "hinge"}] and a["stages"]["concept"] == [] and a["selected"] == {}
     assert client.post(f"/api/projects/{p['id']}/assets", json={"name": "x", "category": "nope", "style_preset": "painted"}).status_code == 400
     r = client.put(f"/api/assets/{a['id']}", json={"prompt": "a big chest", "parts": [{"name": "lid", "kind": "separate"}, {"name": "lock", "kind": "separate"}]})
     assert r.json()["prompt"] == "a big chest" and r.json()["parts"] == [{"name": "lid", "kind": "separate"}, {"name": "lock", "kind": "separate"}]

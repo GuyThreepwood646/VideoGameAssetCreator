@@ -114,6 +114,7 @@ SAMPLES = {
     "neck_join": ((3.0, 2.0), (0.5, 2.0)),
     "straight_on": ((1.1, 2.0), (3.5, 2.0)),
     "body_marks": ((0, 0), (3, 0)),  # marks on the body still to check (bodymarks.py)
+    "moving_parts": ((2, 2), (1, 2)),  # WP-29: moving parts cut free against the parts declared (stages/rig.py)
 }
 
 

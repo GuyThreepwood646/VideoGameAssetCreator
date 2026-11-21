@@ -405,6 +405,30 @@ def _no_skeleton_ok(c: dict[str, Any]) -> str:
     return "No skeleton, as intended for this kind of asset."
 
 
+def _names(c: dict[str, Any], name: str) -> str:
+    return ", ".join(str(m).replace("{", "{{").replace("}", "}}") for m in (_var(c, name) or []))  # formatted later
+
+
+def _riding(c: dict[str, Any]) -> str:
+    """collider_count: the hulls that ride on moving parts (WP-29), counted apart from the body's shapes."""
+    n = int(_var(c, "moving") or 0)
+    return f" Each moving part also has its own shape that moves with it ({n} in all)." if n else ""
+
+
+def _moving_ok(c: dict[str, Any]) -> str:
+    """The moving_parts check passed (WP-29): every hinged, spinning and sliding part is cut free with its clips."""
+    return f"The moving parts ({_names(c, 'moved')}) are cut free, each turning or sliding about its own pivot, with open, close or spin clips."
+
+
+def _moving_fail(c: dict[str, Any]) -> str:
+    out = []
+    if _var(c, "unplaced"):
+        out.append(f"These moving parts have no points yet, so they stay fixed: {_names(c, 'unplaced')}.")
+    if _var(c, "not_found"):
+        out.append(f"No piece was found at the points of: {_names(c, 'not_found')}, so they stay fixed.")
+    return " ".join(out) or "The moving parts could not be cut free, so they stay fixed."
+
+
 LIGHT_LEFT_WORDS = {  # lightfix.left_alone keys
     "black": "black and very dark colours (a shadow cannot be told from a dark colour there)",
     "hair": "the hair",
@@ -631,6 +655,11 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": lambda c: _no_skeleton_ok(c) if c.get("limit") == 0 else "The skeleton has {value:n} bones.",
         "fail": lambda c: "The model has {value:n} bones, but this kind of asset should have none." if c.get("limit") == 0
         else "No skeleton was found in the rigged model.",
+    },
+    "moving_parts": {
+        "severity": "warn",
+        "ok": _moving_ok,
+        "fail": _moving_fail,
     },
     "single_root": {
         "severity": "warn",
@@ -866,8 +895,8 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     },
     "collider_count": {
         "severity": "warn",
-        "ok": "{value:n} collision shape(s), inside the {limit:n} your platform allows.",
-        "fail": "The collision is {value:n} shapes, more than the {limit:n} we aim for on your platform; physics costs a little more each frame.",
+        "ok": lambda c: "{value:n} collision shape(s), inside the {limit:n} your platform allows." + _riding(c),
+        "fail": lambda c: "The collision is {value:n} shapes, more than the {limit:n} we aim for on your platform; physics costs a little more each frame." + _riding(c),
         "fix": lambda c: {"stage": "export", "params": {"collider_max_parts": c.get("limit")}},
         "fix_label": "Use fewer shapes",
     },

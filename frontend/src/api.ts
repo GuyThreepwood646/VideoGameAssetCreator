@@ -136,13 +136,26 @@ export type VersionStatus = 'queued' | 'running' | 'done' | 'error' | 'rejected'
 // backend); without one the button reads "Fix automatically". `knob` is an optional Fine-tune setting to focus.
 export interface DeclaredPart {
   name: string
-  kind: 'separate' | 'sway' | 'stiff' | string
+  // Left out when creating an asset: the backend takes it from the name (lid: hinge, wheels: spin, drawer: slide).
+  kind?: 'separate' | 'sway' | 'stiff' | 'hinge' | 'spin' | 'slide' | string
 }
 
 // A declared part on one version (WP-20): GET/PUT /api/versions/{vid}/parts. A location is three metres in the rig GLB's
 // rest pose (y up), or null when no point is set.
-// A stiff part takes a list of points (locations); a sway part takes one (location).
-export type PlacedPart = { name: string; kind: string; location: number[] | null; locations?: number[][] }
+// A stiff part takes a list of points (locations); a sway part takes one (location). A moving part (hinge, spin, slide,
+// WP-29) takes points like a stiff part, plus its hinge side, whether the model shows it open, its opening angle in
+// degrees (hinge) and how far it slides out as a share of its depth (slide).
+export type HingeSide = 'auto' | 'back' | 'front' | 'left' | 'right' | 'top' | 'bottom'
+export type PlacedPart = {
+  name: string
+  kind: string
+  location: number[] | null
+  locations?: number[][]
+  side?: HingeSide
+  open_at_rest?: boolean
+  angle?: number
+  distance?: number
+}
 export type VersionParts = { version_id: string; category: string; parts: PlacedPart[]; placed: PlacedPart[]; applies_to_rig: boolean }
 // The suggested worn item on a rig version (WP-69 follow-up, item_suggest.py): what the rig page reads. `state` is null
 // when nothing is to be shown; `installed` false means the finder is not set up (the page says nothing then).

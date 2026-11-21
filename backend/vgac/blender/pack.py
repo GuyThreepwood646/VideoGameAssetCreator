@@ -8,6 +8,12 @@ Run: blender -b --python pack.py -- <in.glb> <out_dir> <asset_name> [--lods 0.5,
      [--hair-object VGAC_Hair --hair-mesh hair_mesh.npz --hair-base-color ... [--hair-kind cards] [--hair-alpha cutout]
       [--hair-two-sided]]
 
+Moving parts (WP-29, blender/moving_parts.py): a mesh under a '<part>_<n>_Pivot' node is not joined into the body. It
+keeps its pivot and moving node, gets its own levels <asset>_<part>_<n>_LOD0..n and its own convex hull
+<asset>_<part>_<n>_collider (kind "part") under the moving node, rides in every file (the clean GLB names it
+<asset>_<part>_<n>), and its NLA tracks are the clips (report: parts, clips, default_pose rest). Without such a node
+nothing below changes.
+
 Builds LOD meshes by decimation named <asset>_LOD0..n so Unity's importer creates the LODGroup automatically; the
 collision shapes (G16, G35): one convex hull, the parts the backend made with vgac/colliders.py (CoACD hulls or a
 primitive), or an exact-shape copy of LOD1, named <asset>_collider_00.._nn or <asset>_collider_mesh, each convex part
@@ -100,6 +106,23 @@ meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
 arms = [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]
 if not meshes:
     raise SystemExit("no mesh")
+
+
+def _pivot_of(o):
+    """The '<part>_<n>_Pivot' node a moving piece hangs under (blender/moving_parts.py, WP-29), else None."""
+    p = o.parent
+    while p is not None:
+        if p.type == "EMPTY" and p.name.endswith("_Pivot"):
+            return p
+        p = p.parent
+    return None
+
+
+# Moving parts (WP-29): each piece stays its own object under its pivot and moving node, so the clips can turn or slide
+# it; the body alone is joined. pieces: [(mesh object, moving node)].
+pieces = [(o, o.parent) for o in meshes if _pivot_of(o) is not None]
+part_nodes = [o for o in bpy.context.scene.objects if o.type == "EMPTY" and (o.name.endswith("_Pivot") or _pivot_of(o) is not None)]
+meshes = [o for o in meshes if _pivot_of(o) is None] or meshes
 hair_src = None
 if hair_object:
     hair_src = next((o for o in meshes if o.name == hair_object or o.name.startswith(hair_object + ".")), None)
@@ -232,6 +255,16 @@ if shading == "flat":
     if mesh.data.has_custom_normals:
         bpy.ops.mesh.customdata_custom_splitnormals_clear()
     bpy.ops.object.shade_flat()
+for _piece, _mover in pieces:
+    _bm = bmesh.new()
+    _bm.from_mesh(_piece.data)
+    bmesh.ops.remove_doubles(_bm, verts=_bm.verts[:], dist=0.00001)
+    _bm.to_mesh(_piece.data)
+    _bm.free()
+    _piece.name = _piece.data.name = f"{name}_{_mover.name}_LOD0"
+    if shading == "flat":
+        for _poly in _piece.data.polygons:
+            _poly.use_smooth = False
 
 
 def tri_count(o):
@@ -409,6 +442,22 @@ for i, ratio in enumerate(lods, start=1):
     lod_objs.append(lod)
 
 
+# Each moving piece gets its own levels, under its moving node, named <asset>_<part>_<n>_LOD<i>.
+piece_lods = [[o for o, _ in pieces]]
+for i, ratio in enumerate(lods, start=1):
+    level = []
+    for piece, mover in pieces:
+        bpy.ops.object.select_all(action="DESELECT")
+        piece.select_set(True)
+        bpy.context.view_layer.objects.active = piece
+        bpy.ops.object.duplicate()
+        lod = bpy.context.active_object
+        lod.name = lod.data.name = f"{name}_{mover.name}_LOD{i}"
+        decimate_lod(lod, ratio)
+        level.append(lod)
+    piece_lods.append(level)
+
+
 def hair_tris(o):
     o.data.calc_loop_triangles()
     return sum(1 for t in o.data.loop_triangles if o.data.polygons[t.polygon_index].material_index == 1)
@@ -570,6 +619,12 @@ elif collider_mode == "parts" and collider_obj and os.path.isfile(collider_obj):
             bm = limited_hull(pts)
         _new_collider(nm, bm, kind)
 
+# A moving piece's own convex hull rides under its moving node (kind "part"), so it turns or slides with the piece.
+for piece, mover in pieces:
+    o = _new_collider(f"{name}_{mover.name}_collider", limited_hull(_world_points(piece)), "part")
+    o.parent = mover
+    o.matrix_parent_inverse = mover.matrix_world.inverted()
+
 parts_report = []
 for o, kind in collider_objs:
     o.data.materials.clear()
@@ -594,7 +649,17 @@ if library_hair:
 report["non_manifold_edges"] = sum(1 for e in bm.edges if not e.is_manifold)
 report["boundary_edges"] = sum(1 for e in bm.edges if e.is_boundary)
 bm.free()
-pts = body_points(mesh)
+if pieces:
+    report["parts"] = []
+    for i, (piece, mover) in enumerate(pieces):
+        bm = bmesh.new()
+        bm.from_mesh(piece.data)
+        report["parts"].append({"node": mover.name, "pivot": mover.parent.name if mover.parent else None,
+                                "lods": {f"LOD{k}": tri_count(level[i]) for k, level in enumerate(piece_lods)},
+                                "non_manifold_edges": sum(1 for e in bm.edges if not e.is_manifold),
+                                "boundary_edges": sum(1 for e in bm.edges if e.is_boundary)})
+        bm.free()
+pts = body_points(mesh) + [p for piece, _ in pieces for p in _world_points(piece)]
 if pts:
     report["dims_m"] = [max(p.x for p in pts) - min(p.x for p in pts), max(p.y for p in pts) - min(p.y for p in pts),
                         max(p.z for p in pts) - min(p.z for p in pts)]
@@ -707,19 +772,76 @@ if arm is not None and bpy.data.actions:
     bpy.context.view_layer.update()
     report["default_pose"] = "rest"
 
+if pieces:
+    movers = [o for o in part_nodes if o.animation_data]
+    for o in movers:
+        o.animation_data.action = None
+        for t in o.animation_data.nla_tracks:
+            t.mute = False
+            for st in t.strips:
+                st.extrapolation = "NOTHING"
+    report["clips"] = sorted({t.name for o in movers for t in o.animation_data.nla_tracks})
+    for o in movers:  # the moving nodes stand still at rest (each update writes the playing values back into them)
+        o.location = (0.0, 0.0, 0.0)
+        o.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        o.rotation_euler = (0.0, 0.0, 0.0)
+    bpy.context.scene.frame_set(0)
+    bpy.context.view_layer.update()
+    report["default_pose"] = "rest"
+
+TAKE_GAP = 10  # frames between two clips on the moving parts' one FBX take
+
+
+def lay_out_takes(movers):
+    """The moving parts' clips one after another on the timeline, every track of one name at the same place (all four
+    wheels in one clip). Blender's FBX export bakes one take per NLA strip with every other strip muted and every
+    animated node in it, so two wheels of one clip came out as two takes of the same name (Unity kept one) and every
+    take held the other parts still. -> ({clip: [first, last] frame}, the strips' first frames to put back)."""
+    names = sorted({t.name for o in movers for t in o.animation_data.nla_tracks})
+    before = [(st, st.frame_start, st.frame_end) for o in movers for t in o.animation_data.nla_tracks for st in t.strips]
+    frames, at = {}, 0
+    for nm in names:
+        strips = [st for o in movers for t in o.animation_data.nla_tracks if t.name == nm for st in t.strips]
+        length = max(st.frame_end - st.frame_start for st in strips)
+        for st in strips:
+            st.frame_start_ui = at
+        frames[nm] = [int(round(at)), int(round(at + length))]
+        at += length + TAKE_GAP
+    return frames, before
+
+
 bpy.ops.object.select_all(action="SELECT")
 if "fbx" in formats:
     fbx = os.path.join(out_dir, name + ".fbx")
+    takes_before = None
+    if pieces:
+        # One take holding every clip, laid out by lay_out_takes; the Unity importer cuts it into the clips by the frames
+        # in report["fbx_clip_frames"] (the export step copies them into anim_clips.json).
+        scene_ = bpy.context.scene
+        report["fbx_clip_frames"], takes_before = lay_out_takes([o for o in part_nodes if o.animation_data])
+        report["fbx_fps"] = scene_.render.fps / scene_.render.fps_base
+        frame_range = (scene_.frame_start, scene_.frame_end)
+        scene_.frame_start = 0
+        scene_.frame_end = max(v[1] for v in report["fbx_clip_frames"].values())
     bpy.ops.export_scene.fbx(filepath=fbx, use_selection=True, apply_unit_scale=True, apply_scale_options="FBX_SCALE_ALL",
                              axis_forward="-Z", axis_up="Y", object_types={"ARMATURE", "MESH", "EMPTY"},
                              use_mesh_modifiers=True, mesh_smooth_type="FACE", use_tspace=True,
-                             add_leaf_bones=False, bake_anim=True, bake_anim_use_nla_strips=True, bake_anim_use_all_actions=False,
+                             add_leaf_bones=False, bake_anim=True, bake_anim_use_nla_strips=not pieces, bake_anim_use_all_actions=False,
                              bake_anim_simplify_factor=0.0, path_mode="COPY", embed_textures=True)
+    if takes_before is not None:  # the GLB files keep one animation per clip, each from time 0
+        for st, start, end in takes_before:
+            st.frame_start_ui = start
+        bpy.context.scene.frame_start, bpy.context.scene.frame_end = frame_range
+        for o in [o for o in part_nodes if o.animation_data]:
+            o.location = (0.0, 0.0, 0.0)
+            o.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+            o.rotation_euler = (0.0, 0.0, 0.0)
+        bpy.context.scene.frame_set(0)
     report["fbx"] = fbx
     # Unreal (UCX_ convention): a separate FBX with LOD0 named after the asset and each convex part as
     # UCX_<asset>_NN, which Unreal's FBX import turns into the static mesh's simple collision. Unrigged assets only;
     # not verified in Unreal (no Unreal in the stack).
-    ucx = [o for o, kind in collider_objs if kind != "mesh"]
+    ucx = [o for o, kind in collider_objs if kind not in ("mesh", "part")]
     if arm is None and ucx:
         lod0_name = mesh.name
         old = [(o, o.name) for o in ucx]
@@ -815,13 +937,17 @@ if "glb" in formats:
             o.data.materials[0] = mat
             o.data.materials[1] = hmat
     elif mat is not None:
-        for o in lod_objs:
+        for o in lod_objs + [p for level in piece_lods for p in level]:
             o.data.materials.clear()
             o.data.materials.append(mat)
     rig = ([arm] if arm is not None else []) + socket_objs  # the sockets ride on the skeleton in every GLB
     # The clean GLB: LOD0 only, named after the asset, no collider and no lower detail levels.
     lod0_name = mesh.name
     mesh.name = name
+    piece_names = [(o, o.name) for o in piece_lods[0]]
+    for o, nm in piece_names:
+        o.name = nm[: -len("_LOD0")]  # the clean GLB: <asset>_<part>_<n>, like the body's <asset>
+    rig = rig + part_nodes + piece_lods[0]
     glb = os.path.join(out_dir, name + ".glb")
     export_glb(glb, [mesh] + rig)
     report["glb"] = glb
@@ -837,12 +963,15 @@ if "glb" in formats:
         for o, nm in names:
             o.name = nm
     mesh.name = lod0_name
+    for o, nm in piece_names:
+        o.name = nm
+    rig = [o for o in rig if o not in piece_lods[0]]
     report["glb_lods"] = {}
     if len(lod_objs) > 1:
         os.makedirs(os.path.join(out_dir, "lods"), exist_ok=True)
         for i, o in enumerate(lod_objs[1:], start=1):
             p = os.path.join(out_dir, "lods", f"{name}_LOD{i}.glb")
-            export_glb(p, [o] + rig, animations=False)
+            export_glb(p, [o] + rig + piece_lods[i], animations=False)
             report["glb_lods"][f"LOD{i}"] = p
 
 

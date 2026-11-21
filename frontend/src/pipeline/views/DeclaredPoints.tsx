@@ -4,8 +4,8 @@
 // Undo and redo (WP-71): every saved change of a point (placing, removing) is a step; each one puts the earlier or later
 // list back through the same PUT. Points still pending (not kept) are not saved, so they are not steps.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type PlacedPart, type Version } from '../../api'
-import { markable, MAX_STIFF_POINTS, withPoint, withStiffPoint, withoutStiffPoint, withoutStiffPoints, type Point } from '../../declaredPoints'
+import { api, type HingeSide, type PlacedPart, type Version } from '../../api'
+import { ANGLE_RANGE, DISTANCE_RANGE, HINGE_SIDES, isMoving, isMultiPoint, KIND_WORDS, markable, MAX_STIFF_POINTS, withMotion, withPoint, withStiffPoint, withoutStiffPoint, withoutStiffPoints, type Motion, type Point } from '../../declaredPoints'
 import { useEditHistory, type EditHistory } from '../../editHistory'
 import { suggestionLine, suggestionNote } from '../../suggestion'
 import type { ItemSuggestionState } from '../../api'
@@ -35,6 +35,8 @@ export type DeclaredPointsState = {
   discardStiffPoints: (name: string) => void
   removeLastStiffPoint: (name: string) => void
   clearStiffPoints: (name: string) => void
+  // A moving part's settings (WP-29): hinge side, shown open in the model, how far it opens or slides. Saved at once.
+  setMotion: (name: string, motion: Motion) => void
   // Undo and redo (WP-71) for the saved points, and the call that marks the panel as the editor in use.
   history: EditHistory
   activate: () => void
@@ -141,77 +143,169 @@ export function useDeclaredPoints(version: Version): DeclaredPointsState {
     [change],
   )
 
+  const setMotion = useCallback(
+    (name: string, motion: Motion) => {
+      const cur = partsRef.current
+      if (cur) void change(`change how the ${name} moves`, withMotion(cur, name, motion))
+    },
+    [change],
+  )
+
   const setPendingPoints = useCallback((name: string, points: Point[]) => setPending((m) => ({ ...m, [name]: points.map((p) => [p[0], p[1], p[2]] as Point) })), [])
   const reloadParts = useCallback(() => api.versionParts(version.id).then((d) => setParts(d.parts)).catch((e) => setError(msg(e))), [version.id, setParts])
 
-  return { parts, sway: parts ? markable(parts) : [], busy, error, setPoint, pending, addStiffPoint, keepStiffPoints, discardStiffPoints, removeLastStiffPoint, clearStiffPoints, history, activate, setPendingPoints, reloadParts }
+  return { parts, sway: parts ? markable(parts) : [], busy, error, setPoint, pending, addStiffPoint, keepStiffPoints, discardStiffPoints, removeLastStiffPoint, clearStiffPoints, setMotion, history, activate, setPendingPoints, reloadParts }
 }
 
 export function DeclaredPointsPanel({ dp, done, markName, onMark }: { dp: DeclaredPointsState; done: boolean; markName: string | null; onMark: (name: string | null) => void }) {
   if (dp.sway.length === 0) return null
+  const moving = dp.sway.some((p) => isMoving(p.kind))
+  const bodyParts = dp.sway.some((p) => !isMoving(p.kind))
+  const markKind = dp.sway.find((p) => p.name === markName)?.kind ?? null
   return (
     <div className="declared-points" data-testid="declared-points">
       <div className="row-between">
-        <div className="field-label">Hanging and stiff parts</div>
+        <div className="field-label">{moving && !bodyParts ? 'Moving parts' : 'Hanging and stiff parts'}</div>
         <UndoRedoButtons history={dp.history} />
       </div>
-      <div className="small muted">
-        A hanging part (sway) gets a spring chain where it hangs: place one point, for example the top of a cape's hem. A stiff part
-        (for example a backpack or a quiver on the back) moves with the body and does not bend: place one or more points on it, and
-        the app grows the region from each point and shows it on the model. Right-drag turns the model. Press Escape to stop.
-      </div>
+      {bodyParts && (
+        <div className="small muted">
+          A hanging part (sway) gets a spring chain where it hangs: place one point, for example the top of a cape's hem. A stiff part
+          (for example a backpack or a quiver on the back) moves with the body and does not bend: place one or more points on it, and
+          the app grows the region from each point and shows it on the model. Right-drag turns the model. Press Escape to stop.
+        </div>
+      )}
+      {moving && (
+        <div className="small muted">
+          Click once on each piece that moves: a lid or a door turns on a hinge, a wheel spins on its axle, a drawer slides out. One
+          click per piece, so a cart with four wheels takes four clicks. The lid or drawer found from your click shows on the model
+          before you keep it; a wheel is found from its round shape when the rig is made again. Right-drag turns the model. Press
+          Escape to stop.
+        </div>
+      )}
       {!done && <div className="small muted">Points can be set once the rig has finished.</div>}
       {dp.sway.map((p) => {
-        const isStiff = p.kind === 'stiff'
-        const count = isStiff ? (p.locations ?? []).length : p.location ? 1 : 0
-        const waiting = isStiff ? (dp.pending[p.name] ?? []).length : 0
-        const savedText = `${count} point${count === 1 ? '' : 's'} saved (stiff)`
+        const multi = isMultiPoint(p.kind)
+        const count = multi ? (p.locations ?? []).length : p.location ? 1 : 0
+        const waiting = multi ? (dp.pending[p.name] ?? []).length : 0
+        const savedText = isMoving(p.kind)
+          ? `${KIND_WORDS[p.kind]}: ${count} piece${count === 1 ? '' : 's'} marked`
+          : `${count} point${count === 1 ? '' : 's'} saved (stiff)`
         return (
-          <div key={p.name} className="declared-point-row">
-            <span>{p.name}</span>
-            <span className="small muted">
-              {isStiff ? (waiting ? `${savedText}, ${waiting} to keep` : savedText) : count ? 'Point set' : 'No point yet'}
-            </span>
-            {isStiff && waiting > 0 && (
-              <button type="button" className="btn" disabled={!done || dp.busy} onClick={() => dp.keepStiffPoints(p.name)}>
-                Keep region
-              </button>
-            )}
-            {isStiff && waiting > 0 && (
-              <button type="button" className="btn" disabled={dp.busy} onClick={() => dp.discardStiffPoints(p.name)}>
-                Discard
-              </button>
-            )}
-            {markName === p.name ? (
-              <button type="button" className="btn" onClick={() => onMark(null)}>
-                Stop
-              </button>
-            ) : (
-              <button type="button" className="btn" disabled={!done || dp.busy} onClick={() => onMark(p.name)}>
-                {isStiff ? 'Add point' : 'Place point'}
-              </button>
-            )}
-            {isStiff && (count > 0 || waiting > 0) && markName !== p.name && (
-              <button type="button" className="btn" disabled={!done || dp.busy} onClick={() => dp.removeLastStiffPoint(p.name)}>
-                Remove last point
-              </button>
-            )}
-            {isStiff && count > 0 && markName !== p.name && (
-              <button type="button" className="btn" disabled={!done || dp.busy} onClick={() => dp.clearStiffPoints(p.name)}>
-                Remove region
-              </button>
-            )}
-            {!isStiff && p.location && markName !== p.name && (
-              <button type="button" className="btn" disabled={!done || dp.busy} onClick={() => dp.setPoint(p.name, null)}>
-                Remove point
-              </button>
-            )}
+          <div key={p.name} className="declared-point-block">
+            <div className="declared-point-row">
+              <span>{p.name}</span>
+              <span className="small muted">
+                {multi ? (waiting ? `${savedText}, ${waiting} to keep` : savedText) : count ? 'Point set' : 'No point yet'}
+              </span>
+              {multi && waiting > 0 && (
+                <button type="button" className="btn" disabled={!done || dp.busy} onClick={() => dp.keepStiffPoints(p.name)}>
+                  {isMoving(p.kind) ? 'Keep' : 'Keep region'}
+                </button>
+              )}
+              {multi && waiting > 0 && (
+                <button type="button" className="btn" disabled={dp.busy} onClick={() => dp.discardStiffPoints(p.name)}>
+                  Discard
+                </button>
+              )}
+              {markName === p.name ? (
+                <button type="button" className="btn" onClick={() => onMark(null)}>
+                  Stop
+                </button>
+              ) : (
+                <button type="button" className="btn" disabled={!done || dp.busy} onClick={() => onMark(p.name)}>
+                  {multi ? 'Add point' : 'Place point'}
+                </button>
+              )}
+              {multi && (count > 0 || waiting > 0) && markName !== p.name && (
+                <button type="button" className="btn" disabled={!done || dp.busy} onClick={() => dp.removeLastStiffPoint(p.name)}>
+                  Remove last point
+                </button>
+              )}
+              {multi && count > 0 && markName !== p.name && (
+                <button type="button" className="btn" disabled={!done || dp.busy} onClick={() => dp.clearStiffPoints(p.name)}>
+                  {isMoving(p.kind) ? 'Remove all points' : 'Remove region'}
+                </button>
+              )}
+              {!multi && p.location && markName !== p.name && (
+                <button type="button" className="btn" disabled={!done || dp.busy} onClick={() => dp.setPoint(p.name, null)}>
+                  Remove point
+                </button>
+              )}
+            </div>
+            {isMoving(p.kind) && <MotionRow part={p} disabled={!done || dp.busy} onChange={(m) => dp.setMotion(p.name, m)} />}
           </div>
         )
       })}
-      {markName && <div className="small">Click the model on the {markName}. The grown region shows on the model before you keep it. Press Escape to stop.</div>}
+      {markName && (
+        <div className="small">
+          {markKind && isMoving(markKind)
+            ? `Click the model once on each ${markName} piece. Press Escape to stop.`
+            : `Click the model on the ${markName}. The grown region shows on the model before you keep it. Press Escape to stop.`}
+        </div>
+      )}
       <div className="small muted">Saving does not redo the rig. Make the rig again to use the points.</div>
       {dp.error || dp.history.lastError ? <div className="warn-text">{msg(dp.error ?? dp.history.lastError)}</div> : null}
+    </div>
+  )
+}
+
+// A moving part's settings (WP-29), in plain words. A hinged part: which edge the hinge is on, whether the model shows it
+// open, how far it opens. A sliding part: whether the model shows it out, how far it slides. A wheel needs none.
+function MotionRow({ part, disabled, onChange }: { part: PlacedPart; disabled: boolean; onChange: (m: Motion) => void }) {
+  if (part.kind === 'spin') {
+    return <div className="declared-point-settings small muted">Spins about its own axle, one turn a second; the game sets the speed.</div>
+  }
+  const hinge = part.kind === 'hinge'
+  const angle = part.angle ?? 100
+  const distance = part.distance ?? 0.8
+  return (
+    <div className="declared-point-settings small" data-testid={`motion-${part.name}`}>
+      {hinge && (
+        <label>
+          Hinge on{' '}
+          <select value={part.side ?? 'auto'} disabled={disabled} onChange={(e) => onChange({ side: e.target.value as HingeSide })}>
+            {HINGE_SIDES.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label>
+        <input type="checkbox" checked={!!part.open_at_rest} disabled={disabled} onChange={(e) => onChange({ open_at_rest: e.target.checked })} />{' '}
+        {hinge ? 'The model shows it open' : 'The model shows it pulled out'}
+      </label>
+      {hinge ? (
+        <label>
+          Opens by{' '}
+          <input
+            type="number"
+            min={ANGLE_RANGE[0]}
+            max={ANGLE_RANGE[1]}
+            step={5}
+            value={angle}
+            disabled={disabled || !!part.open_at_rest}
+            onChange={(e) => e.target.value !== '' && onChange({ angle: Number(e.target.value) })}
+          />{' '}
+          degrees{part.open_at_rest ? ' (it is shut by turning it until it meets the body)' : ''}
+        </label>
+      ) : (
+        <label>
+          Slides out by{' '}
+          <input
+            type="number"
+            min={DISTANCE_RANGE[0] * 100}
+            max={DISTANCE_RANGE[1] * 100}
+            step={5}
+            value={Math.round(distance * 100)}
+            disabled={disabled}
+            onChange={(e) => e.target.value !== '' && onChange({ distance: Number(e.target.value) / 100 })}
+          />{' '}
+          percent of its depth
+        </label>
+      )}
     </div>
   )
 }
