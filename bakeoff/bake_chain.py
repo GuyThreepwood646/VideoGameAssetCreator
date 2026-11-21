@@ -96,10 +96,9 @@ def run(subject: str, variant: str, opts: dict) -> dict:
     tex = cfg["tex"]
     cmd = [BLENDER, "-b", "--python", PREP, "--", os.path.join(src, "model.glb"), os.path.join(dest, "model.glb"), "mesh",
            "--maps", mj, "--tex", str(tex), "--padding", str(max(4, tex // 256)), "--margin", str(max(8, tex // 128)), "--rebake", "always"] + cfg["args"]
-    env = dict(os.environ, VGAC_REBAKE_OPTS=json.dumps(opts))
     t = time.time()
     with open(os.path.join(dest, "prep.log"), "w") as log:
-        subprocess.run(cmd, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
+        subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, check=True)
     seconds = round(time.time() - t, 1)
     over = int(opts.get("oversample", 1))
     if over > 1:  # bake at n times the size, shrink outside Blender with Lanczos (colour maps) / area-ish for data maps

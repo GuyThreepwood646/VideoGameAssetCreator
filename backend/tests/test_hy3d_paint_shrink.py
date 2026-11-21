@@ -101,6 +101,7 @@ def test_shrink_measures_the_paint_against_the_shipped_model(tmp_path, monkeypat
 
     class FakeSC:
         dir = tmp_path
+        asset = type("Asset", (), {"category": "humanoid"})
         def progress(self, *a, **k): pass
         async def blender(self, *a, **k): await fake_blender(*a, **k)
         def register(self, *a, **k): pass
@@ -128,6 +129,7 @@ def _capture_shrink_args(tmp_path, monkeypatch, head_args):
 
     class FakeSC:
         dir = tmp_path
+        asset = type("Asset", (), {"category": "humanoid"})
         def progress(self, *a, **k): pass
         async def blender(self, *a, **k): await fake_blender(*a, **k)
         def register(self, *a, **k): pass

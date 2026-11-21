@@ -225,7 +225,8 @@ async def shrink_after_paint(sc: StageContext, out: Path, current: dict[str, Pat
                          encoding="utf-8")
     args = [full, out, "mesh", "--size", size["size_m"], "--size-axis", size["size_axis"], "--yaw", "0", "--pivot", pivot,
             "--smooth-angle", smooth, "--shading", shading, "--budget", int(limit), "--maps", maps_json, "--tex", tex,
-            "--padding", imaging.unwrap_padding(tex), "--margin", imaging.dilation_px(tex), "--rebake", "auto", *(head_args or [])]
+            "--padding", imaging.unwrap_padding(tex), "--margin", imaging.dilation_px(tex), "--rebake", "auto",
+            "--category", sc.asset.category, *(head_args or [])]
     sc.progress(0.8, "Shrinking the painted model")
     await sc.blender("prep.py", args, log_name="prep_shrink.log")
     report = json.loads((sc.dir / "prep_report.json").read_text())
@@ -353,7 +354,7 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         maps_json = sc.dir / "bake_maps.json"
         maps_json.write_text(json.dumps({k: str(p) for k, p in mesh_maps.items()}), encoding="utf-8")
         args += ["--maps", maps_json, "--tex", tex, "--padding", imaging.unwrap_padding(tex), "--margin", imaging.dilation_px(tex),
-                 "--rebake", "always" if params.get("rebake") else "auto"]
+                 "--rebake", "always" if params.get("rebake") else "auto", "--category", sc.asset.category]
     sc.progress(0.1, "Blender prep")
     await sc.blender("prep.py", args, log_name="prep.log")
     report = json.loads((sc.dir / "prep_report.json").read_text())
