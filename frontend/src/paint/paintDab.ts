@@ -35,8 +35,18 @@ export type Dab = {
 // shared diagonal would crack (WP-32 review).
 export const FACING_NONE = 0.1
 export const FACING_FULL = 0.3
-// Points further than this share of the radius from the brush's plane are skipped (the far side of a thin part).
+// Points further than SLAB of the radius from the brush's plane are skipped (the far side of a thin part). The reach
+// fades from full at SLAB_FULL to nothing at SLAB, so where the surface curves away from the brush (a knee, a shoulder)
+// the stroke ends softly instead of in a hard step (WP-32 review).
 const SLAB = 0.5
+const SLAB_FULL = 0.3
+
+// How much of the brush reaches a point this far from the brush's plane (as a share of the radius): 1 near the
+// plane, 0 past SLAB, smooth between.
+export function slabWeight(depthShare: number): number {
+  const t = Math.min(1, Math.max(0, (SLAB - Math.abs(depthShare)) / (SLAB - SLAB_FULL)))
+  return t * t * (3 - 2 * t)
+}
 // Half a texel: the reach of a texel centre past a triangle's edge that still counts as inside it.
 const HALF_TEXEL = 0.5
 
@@ -81,10 +91,11 @@ function brushAlpha(p: THREE.Vector3, n: THREE.Vector3, dab: Dab, brush: Brush):
   _q.subVectors(p, dab.point)
   const d = _q.length()
   if (d >= brush.radius) return 0
-  if (Math.abs(_q.dot(dab.normal)) > SLAB * brush.radius) return 0
+  const slab = slabWeight(_q.dot(dab.normal) / brush.radius)
+  if (slab <= 0) return 0
   const facing = facingWeight(n, dab.normal)
   if (facing <= 0) return 0
-  return falloff(d / brush.radius, brush.hardness) * brush.strength * facing
+  return falloff(d / brush.radius, brush.hardness) * brush.strength * facing * slab
 }
 
 // Paints one dab onto the layer. The layer must be inside a stroke (beginStroke). Returns the number of pixels changed.
