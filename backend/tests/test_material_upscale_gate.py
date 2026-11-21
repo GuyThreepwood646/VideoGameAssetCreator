@@ -72,13 +72,17 @@ def test_trial_wood_and_other_prompts_split_exactly():
 
 def test_the_upscaler_runs_at_the_tested_2048_size():
     assert upscale_plan("old oak planks", "realistic_pbr", texture_budget=2048)["size"] == 2048
-    assert upscale_plan("old oak planks", "realistic_pbr", texture_budget=4096)["size"] == 2048
 
 
 def test_mobile_low_1024_budget_skips_the_upscaler():
     # mobile_low is 1024 px for materials (data/categories/material.yaml); the upscaler is only used at 2048.
     assert upscale_plan("old oak planks", "realistic_pbr", texture_budget=1024) is None
     assert upscale_plan("old oak planks", "realistic_pbr", texture_budget=512) is None
+
+
+def test_high_4096_budget_skips_the_upscaler():
+    # At 4096 the upscaler would ship a 2048 tile where today's path may give 4096: untested, so today's path is kept.
+    assert upscale_plan("old oak planks", "realistic_pbr", texture_budget=4096) is None
 
 
 class _FakeClient:

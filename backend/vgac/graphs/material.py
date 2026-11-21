@@ -105,8 +105,9 @@ def is_wood(prompt: str | None, style_preset: str | None) -> bool:
 
 def upscale_plan(prompt: str | None, style_preset: str | None, texture_budget: int = UPSCALE_OUT) -> dict[str, Any] | None:
     """The upscaler plan for a material, or None (today's path). Used only for wood and only at the tested size: a
-    texture budget below UPSCALE_OUT (2048) keeps today's tile (the trial measured detail at 2048, seams at 1024)."""
-    if not is_wood(prompt, style_preset) or int(texture_budget) < UPSCALE_OUT:
+    texture budget other than exactly UPSCALE_OUT (2048) keeps today's tile (the trial measured detail at 2048, seams at
+    1024; at 4096 the upscaler would ship 2048 where today's path may give 4096)."""
+    if not is_wood(prompt, style_preset) or int(texture_budget) != UPSCALE_OUT:
         return None
     return {"model": UPSCALE_MODEL, "pad": UPSCALE_PAD, "scale": UPSCALE_SCALE, "size": UPSCALE_OUT}
 
