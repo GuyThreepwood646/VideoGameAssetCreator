@@ -348,6 +348,27 @@ def test_cannot_start_twice(world, monkeypatch):
     assert wait(world.client)["run"]["state"] == "done"
 
 
+def test_status_poll_survives_the_part_vanishing_between_check_and_size(world, monkeypatch):
+    """The status poll reads the .part's size while the run's thread may rename the file away. Here the file is removed
+    right after its first size read, which is the window the race needs: the second read must not fail."""
+    part = world.project / "runtime" / "hairpacks" / "sysx" / "sys.zip.part"
+    part.parent.mkdir(parents=True, exist_ok=True)
+    part.write_bytes(b"x" * 10)
+    real_stat = Path.stat
+    gone = {"done": False}
+
+    def stat_then_gone(self, *a, **k):
+        res = real_stat(self, *a, **k)
+        if self == part and not gone["done"]:
+            gone["done"] = True
+            self.unlink()  # the run's thread renames the part away between two reads
+        return res
+    monkeypatch.setattr(Path, "stat", stat_then_gone)
+    st = world.client.get("/api/packs/hair")
+    assert st.status_code == 200 and gone["done"]
+    assert st.json()["download_bytes"] > 0
+
+
 # --- already installed, and removing the downloads --------------------------------------------------------------------------
 
 
