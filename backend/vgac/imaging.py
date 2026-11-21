@@ -857,6 +857,23 @@ def shrink_normal_islands(path: Path | str, uvmesh: dict[str, np.ndarray], size:
     return Path(dest)
 
 
+def shrink_map_islands(path: Path | str, uvmesh: dict[str, np.ndarray], size: int, dest: Path | str) -> Path:
+    """A data map (metallic, roughness, ao) shrunk per UV island like the base colour (shrink_by_island), then the islands
+    grown into the empty space. Written in the file's own mode: greyscale stays greyscale, RGB and RGBA keep every channel
+    (a packed map is never reduced to one). Other modes are converted to RGB or RGBA first."""
+    with Image.open(path) as im:
+        mode = im.mode if im.mode in ("L", "RGB", "RGBA") else ("RGBA" if "A" in im.getbands() else "RGB")
+        arr = np.asarray(im.convert(mode), dtype=np.float32) / 255.0
+    if arr.ndim == 2:
+        arr = arr[..., None]
+    small = shrink_by_island(arr, uvmesh, size)
+    if mode == "L":
+        small = small[..., 0]
+    Image.fromarray(np.clip(np.round(small * 255.0), 0, 255).astype(np.uint8), mode).save(dest)
+    dilate_png(dest, rasterise_uv(uvmesh, size)["labels"] > 0, dilation_px(size))
+    return Path(dest)
+
+
 def shrink_image(path: Path | str, size: int, dest: Path | str | None = None) -> Path:
     """Resize a map to size x size when it is larger, with a box filter (an even average, the classic small soft
     texture). Writes dest (default: in place) in the same mode; a map already at or under the size is copied as is."""
