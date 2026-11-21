@@ -1791,7 +1791,7 @@ def leg_parts():
     """{end bone: every bone from the leg's root down (thigh, robe, shin, foot) for each leg chain}."""
     out = {}
     for li in leg_info:
-        ch = li.get("ik")
+        ch = leg_chain(li)  # the IK chain, or the stance chain of a splayed leg (WP-78)
         if ch:
             out[ch["end_bone"] or ch["m"]] = _below(ch["a"])
     return out
@@ -1802,9 +1802,29 @@ def _leg_clearance(P, passes=8):
     ground in the fall is taken up by bending that limb (two-bone IK on that limb only); the body is not moved for it."""
     g = _rest_low[0]
     parts = {**leg_parts(), **arm_parts()}
-    chains = [(li.get("ik")) for li in leg_info if li.get("ik")] + [(a.get("ik")) for a in arm_info if a.get("ik")]
+    chains = [leg_chain(li) for li in leg_info if leg_chain(li)] + [(a.get("ik")) for a in arm_info if a.get("ik")]
     if not parts or not chains:
         return
+    # A foot whose toes dip is first pitched (the ankle, within 25 degrees either way) to the angle that lifts its
+    # lowest point the most; a knee bend follows only if the toes still dip.
+    for li in leg_info:
+        ch = leg_chain(li)
+        if not ch:
+            continue
+        key = ch["end_bone"] or ch["m"]
+        if key not in parts:
+            continue
+        z0 = limb_lowest_parts(P, {key: parts[key]}).get(key, g)
+        if z0 >= g + 0.002:
+            continue
+        base = P.rot.get(key, Quaternion()).copy()
+        best = (z0, 0)
+        for deg in range(-25, 26, 5):
+            P.rot[key] = base @ Quaternion(local_axis(key, lateral), math.radians(deg))
+            zz = limb_lowest_parts(P, {key: parts[key]}).get(key, g)
+            if zz > best[0] + 1e-6:
+                best = (zz, deg)
+        P.rot[key] = base @ Quaternion(local_axis(key, lateral), math.radians(best[1])) if best[1] else base
     for _ in range(passes):
         lows = limb_lowest_parts(P, parts)
         Mw = fk(P)
