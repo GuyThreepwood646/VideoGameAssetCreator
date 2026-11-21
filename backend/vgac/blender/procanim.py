@@ -1797,6 +1797,79 @@ def leg_parts():
     return out
 
 
+def _splay_clearance(P):
+    """Torso-first death: a splayed leg (no IK chain) whose foot or shin goes under the ground in the fall is taken
+    clear by turning its ankle (within 25 degrees) and then its hip (within 40), about the leg's own swing axis, by
+    the smallest turn that clears it. No knee bend, so the leg skin is not stretched."""
+    g = _rest_low[0]
+    parts = leg_parts()
+    for li in leg_info:
+        ch = leg_chain(li)
+        if li.get("ik") or not ch:
+            continue
+        key = ch["end_bone"] or ch["m"]
+        if key not in parts:
+            continue
+
+        def low():
+            return limb_lowest_parts(P, {key: parts[key]}).get(key, g)
+
+        if low() >= g - 0.003:
+            continue
+        for name, lim in ((key, 25), (li["bones"][0], 40)):
+            base = P.rot.get(name, Quaternion()).copy()
+            ax = local_axis(name, lateral if name == key else li["swing_axis"])
+            best = (low(), 0)
+            for k in range(1, lim // 2 + 1):
+                hit = None
+                for sg in (1, -1):
+                    P.rot[name] = base @ Quaternion(ax, math.radians(2 * k * sg))
+                    z = low()
+                    if z > best[0] + 1e-6:
+                        best = (z, 2 * k * sg)
+                    if z >= g - 0.001:
+                        hit = 2 * k * sg
+                        break
+                if hit is not None:
+                    break
+            P.rot[name] = base @ Quaternion(ax, math.radians(best[1]))
+            if best[0] >= g - 0.001:
+                break
+
+
+def _splay_lay(P, g):
+    """Torso-first death, final pose: a splayed leg that hangs above the ground is swung down at the hip (within 25
+    degrees) until its lowest point is 1 cm over it, so the leg lies along the ground. -> {bone: local correction}."""
+    parts = leg_parts()
+    out = {}
+    for li in leg_info:
+        ch = leg_chain(li)
+        if li.get("ik") or not ch:
+            continue
+        key = ch["end_bone"] or ch["m"]
+        name = li["bones"][0]
+        base = P.rot.get(name, Quaternion()).copy()
+        ax = local_axis(name, li["swing_axis"])
+
+        def low(d):
+            P.rot[name] = base @ Quaternion(ax, math.radians(d))
+            return limb_lowest_parts(P, {key: parts[key]}).get(key, g) - g
+
+        z0 = low(0.0)
+        if z0 <= 0.01:
+            P.rot[name] = base
+            continue
+        sg = 1 if low(3.0) < z0 else -1
+        pick = 0.0
+        for k in range(1, 26):
+            pick = float(k * sg)
+            if low(pick) <= 0.01:
+                break
+        P.rot[name] = base @ Quaternion(ax, math.radians(pick))
+        out[name] = Quaternion(ax, math.radians(pick))
+    return out
+
+
 def _death_render(P, t):
     """The death pose at clip time t: fall, resting hand, settled limbs, torso tilt and head bend."""
     _death_pose(P, t, _death["drop"])
@@ -1805,6 +1878,8 @@ def _death_render(P, t):
     apply_fix(P, _death["fix"], w)
     spine_pitch(P, _death["tilt"] * w)
     head_pitch(P, _death["head"] * w)
+    if _TF[0]:
+        _splay_clearance(P)
 
 
 def _lift_at(table, t):
@@ -1944,134 +2019,211 @@ def _pose_at(render, t):
     return Pt
 
 
-def clip_death(P, t):
-    if not _death:
-        def final(Q, drop=0.0):
-            _death_pose(Q, 1.0, drop)
-            hands_pose(Q, 0.0)  # the resting hand is part of the death pose, so the limbs settle against it (WP-78)
-            finish_serpent(Q)
+_TF = [False]  # True while the torso-first death is being built or drawn
 
-        drop = ground_fix(final)
-        fix = {}
-        head_deg = 0.0
-        if motion != "serpent" and n_legs < 6 and (arm_info or any(li.get("ik") for li in leg_info)):
-            # WP-78: the torso comes down onto the ground first (head, neck, spine, hips), so the arms are aimed from
-            # shoulders that are near the ground rather than from a body held up by its straight arms. The limbs then
-            # settle as before, and the whole pose is put back on the ground.
-            if _rest_low[0] is None:
-                _rest_low[0] = lowest_z(Pose())
-            P0 = Pose()
-            final(P0)
-            drop_t = _rest_low[0] - torso_lowest(P0)
-            g = _rest_low[0]
-            lift = {}
-            for _ in range(5):
-                Q = Pose()
-                final(Q, drop_t)
-                fix = death_settle(Q, g, lift)
-                R = Pose()
-                final(R, drop_t)
-                apply_fix(R, fix, 1.0)
-                lows = limb_lowest(R)
-                # WP-78: an arm's sleeve or upper arm may go under the ground too; the arm is lifted locally for it.
-                lows.update(limb_lowest_parts(R, {**arm_parts(), **leg_parts()}))
-                Mw = fk(R)
-                done = True
-                for end_bone, z in lows.items():
-                    # WP-78: a hand or sleeve may hover above the ground, so it never holds the torso up. Only a point
-                    # that goes under the ground is lifted, locally (its target moves up); the body is not moved for it.
-                    dev = z - g
-                    if dev < -0.004 * height:
-                        lift[end_bone] = lift.get(end_bone, 0.0) + (-dev)
-                        done = False
-                if done:
-                    break
-            # The body is put on the ground by its torso, pelvis and head only, never by an arm, sleeve or hand.
+
+def _torso_first_search(final):
+    """Torso-first death: the spine tilt (within 30 degrees) and head bend (within 35) that bring the hips lowest while
+    the head rests on the ground, judged on the torso and head alone; the limbs then settle against that pose."""
+    hips_name = next(n for n in byname if n.split(":")[-1] == "Hips")
+    hset = set()
+    for hb in head_bones:
+        hset |= _below(hb)
+    g = _rest_low[0]
+
+    def ev(tl, hd_):
+        Q = Pose()
+        _death_pose(Q, 1.0, 0.0)
+        hands_pose(Q, 0.0)
+        finish_serpent(Q)
+        spine_pitch(Q, tl)
+        head_pitch(Q, hd_)
+        d_ = g - torso_lowest(Q)
+        hz = fk(Q)[hips_name].translation.z + d_ - g
+        hl = limb_lowest_parts(Q, {"head": hset}).get("head", g) + d_ - g
+        return hz, hl
+
+    best = None
+    for tl in range(-30, 31, 5):
+        for hd_ in range(-35, 36, 5):
+            hz, hl = ev(float(tl), float(hd_))
+            if hl > 0.03:
+                continue
+            if best is None or hz < best[0]:
+                best = (hz, float(tl), float(hd_))
+    if best is None:
+        return {"tl": 0.0, "hd": 0.0}
+    for tl in range(int(best[1]) - 4, int(best[1]) + 5, 2):
+        for hd_ in range(int(best[2]) - 4, int(best[2]) + 5, 2):
+            if abs(tl) > 30 or abs(hd_) > 35:
+                continue
+            hz, hl = ev(float(tl), float(hd_))
+            if hl <= 0.03 and hz < best[0]:
+                best = (hz, float(tl), float(hd_))
+    print("DEATH_TORSO_FIRST hips", round(best[0], 3), "tilt", best[1], "head", best[2], file=sys.stderr)
+    return {"tl": best[1], "hd": best[2]}
+
+
+def _death_build():
+    """Build the death for this rig into _death: the new death, or Today's when the fallback rule says so."""
+    tf = {"tl": 0.0, "hd": 0.0}  # torso-first variant: the spine tilt and head bend are part of the pose the limbs settle against
+
+    def final(Q, drop=0.0):
+        _death_pose(Q, 1.0, drop)
+        hands_pose(Q, 0.0)  # the resting hand is part of the death pose, so the limbs settle against it (WP-78)
+        finish_serpent(Q)
+        if tf["tl"]:
+            spine_pitch(Q, tf["tl"])
+        if tf["hd"]:
+            head_pitch(Q, tf["hd"])
+
+    drop = ground_fix(final)
+    fix = {}
+    head_deg = 0.0
+    if motion != "serpent" and n_legs < 6 and (arm_info or any(li.get("ik") for li in leg_info)):
+        # WP-78: the torso comes down onto the ground first (head, neck, spine, hips), so the arms are aimed from
+        # shoulders that are near the ground rather than from a body held up by its straight arms. The limbs then
+        # settle as before, and the whole pose is put back on the ground.
+        if _rest_low[0] is None:
+            _rest_low[0] = lowest_z(Pose())
+        if _TF[0]:
+            tf.update(_torso_first_search(final))
+        P0 = Pose()
+        final(P0)
+        drop_t = _rest_low[0] - torso_lowest(P0)
+        g = _rest_low[0]
+        lift = {}
+        for _ in range(5):
+            Q = Pose()
+            final(Q, drop_t)
+            fix = death_settle(Q, g, lift)
             R = Pose()
             final(R, drop_t)
             apply_fix(R, fix, 1.0)
-            extra = _rest_low[0] - torso_lowest(R)
-            drop = drop_t + extra
-            # WP-78: the head is bent (neck, within 35 degrees) so its lowest point rests on the ground, not held up.
-            hset = set()
-            for hb in head_bones:
-                hset |= _below(hb)
+            lows = limb_lowest(R)
+            # WP-78: an arm's sleeve or upper arm may go under the ground too; the arm is lifted locally for it.
+            lows.update(limb_lowest_parts(R, {**arm_parts(), **leg_parts()}))
+            Mw = fk(R)
+            done = True
+            for end_bone, z in lows.items():
+                # WP-78: a hand or sleeve may hover above the ground, so it never holds the torso up. Only a point
+                # that goes under the ground is lifted, locally (its target moves up); the body is not moved for it.
+                dev = z - g
+                if dev < -0.004 * height:
+                    lift[end_bone] = lift.get(end_bone, 0.0) + (-dev)
+                    done = False
+            if done:
+                break
+        # The body is put on the ground by its torso, pelvis and head only, never by an arm, sleeve or hand.
+        R = Pose()
+        final(R, drop_t)
+        apply_fix(R, fix, 1.0)
+        extra = _rest_low[0] - torso_lowest(R)
+        drop = drop_t + extra
+        # WP-78: the head is bent (neck, within 35 degrees) so its lowest point rests on the ground, not held up.
+        hset = set()
+        for hb in head_bones:
+            hset |= _below(hb)
 
-            def head_low(d_):
-                Q = Pose()
-                final(Q, drop)
-                apply_fix(Q, fix, 1.0)
-                head_pitch(Q, d_)
-                return limb_lowest_parts(Q, {"head": hset}).get("head", g) - g
+        def head_low(d_):
+            Q = Pose()
+            final(Q, drop)
+            apply_fix(Q, fix, 1.0)
+            head_pitch(Q, d_)
+            return limb_lowest_parts(Q, {"head": hset}).get("head", g) - g
 
-            best, best_cost = 0.0, None
-            for d_ in range(-35, 36, 2):
-                z = head_low(d_)
-                if z < -0.003:
-                    continue
-                if best_cost is None or abs(z) < best_cost:
-                    best, best_cost = float(d_), abs(z)
-            head_deg = best
-            # WP-78: one bounded torso-tilt try, only where the head-only pose still leaves the hips above 0.25 m. The
-            # spine tilts within 30 degrees and the head bends, the whole body stays on the ground (3 mm tolerance) and
-            # the hips go as low as they can.
-            tilt_deg = 0.0
-            hips_name = next(n for n in byname if n.split(":")[-1] == "Hips")
+        best, best_cost = 0.0, None
+        for d_ in (range(0, 1) if _TF[0] else range(-35, 36, 2)):
+            z = head_low(d_)
+            if z < -0.003:
+                continue
+            if best_cost is None or abs(z) < best_cost:
+                best, best_cost = float(d_), abs(z)
+        head_deg = best
+        # WP-78: one bounded torso-tilt try, only where the head-only pose still leaves the hips above 0.25 m. The
+        # spine tilts within 30 degrees and the head bends, the whole body stays on the ground (3 mm tolerance) and
+        # the hips go as low as they can.
+        tilt_deg = 0.0
+        hips_name = next(n for n in byname if n.split(":")[-1] == "Hips")
 
-            def tilt_eval(tl, hd_):
-                Q = Pose()
-                _death_pose(Q, 1.0, 0.0)
-                hands_pose(Q, 0.0)
-                finish_serpent(Q)
-                apply_fix(Q, fix, 1.0)
-                spine_pitch(Q, tl)
-                head_pitch(Q, hd_)
-                d_ = _rest_low[0] - torso_lowest(Q)
-                hz_ = fk(Q)[hips_name].translation.z + d_ - g
-                hd2 = limb_lowest_parts(Q, {"head": hset}).get("head", g) + d_ - g
-                full_ = lowest_z(Q) + d_ - g
-                return d_, hz_, hd2, full_
+        def tilt_eval(tl, hd_):
+            Q = Pose()
+            _death_pose(Q, 1.0, 0.0)
+            hands_pose(Q, 0.0)
+            finish_serpent(Q)
+            apply_fix(Q, fix, 1.0)
+            spine_pitch(Q, tl)
+            head_pitch(Q, hd_)
+            d_ = _rest_low[0] - torso_lowest(Q)
+            hz_ = fk(Q)[hips_name].translation.z + d_ - g
+            hd2 = limb_lowest_parts(Q, {"head": hset}).get("head", g) + d_ - g
+            full_ = lowest_z(Q) + d_ - g
+            return d_, hz_, hd2, full_
 
-            head_only = tilt_eval(0.0, head_deg)
-            if head_only[1] > 0.25:
-                best_t = None
-                for tl in range(-30, 31, 5):
-                    for hd_ in range(-35, 36, 5):
-                        d_, hz_, hd2, full_ = tilt_eval(float(tl), float(hd_))
-                        if full_ < -0.003 or not (-0.003 <= hd2 <= 0.05):
-                            continue
-                        if best_t is None or hz_ < best_t[1]:
-                            best_t = (d_, hz_, float(tl), float(hd_))
-                if best_t is not None and best_t[1] < head_only[1] - 0.05:
-                    drop, tilt_deg, head_deg = best_t[0], best_t[2], best_t[3]
-        _death.update(drop=drop, fix=fix, head=head_deg, tilt=tilt_deg)
-        # WP-78: contact in the fall. Sample the whole clip, find how far any body point goes under the ground, and lift
-        # the body by the smooth amount that clears it (logged, so the largest lift is visible).
-        samples = 48
-        defs = []
-        raw = []
-        for i in range(samples):
-            Pt = Pose()
-            _death_render(Pt, i / (samples - 1))
-            low = lowest_z(Pt) - _rest_low[0]
-            raw.append(low)
-            defs.append(max(0.0, -low))
-        # WP-78 death_fallback: the new death is kept unless it sinks more than 1 cm deeper than Today's death over the
-        # fall (lowest skinned point). Today's death is then used for this rig, like the idle fallback.
-        new_low = min(raw)
-        _death_old_build()
-        old_low = _lowest_over_fall(_death_old_render)
-        fallback = gait.death_fallback_used(new_low, old_low)
-        report["death_fallback"] = {"used": fallback, "new_lowest_m": round(new_low, 4), "old_lowest_m": round(old_low, 4),
-                                    "rule": "new kept unless it sinks more than 0.01 m deeper than the old death over the fall"}
-        print("DEATH_FALLBACK", report["death_fallback"], file=sys.stderr)
-        if fallback:
+        head_only = tilt_eval(0.0, head_deg)
+        if _TF[0]:
+            drop, tilt_deg, head_deg = _rest_low[0] - torso_lowest(R), tf["tl"], tf["hd"]
+            R = Pose()
+            final(R, drop)
+            apply_fix(R, fix, 1.0)
+            for n_, q_ in _splay_lay(R, g).items():
+                fix[n_] = fix.get(n_, Quaternion()) @ q_
+        elif head_only[1] > 0.25:
+            best_t = None
+            for tl in range(-30, 31, 5):
+                for hd_ in range(-35, 36, 5):
+                    d_, hz_, hd2, full_ = tilt_eval(float(tl), float(hd_))
+                    if full_ < -0.003 or not (-0.003 <= hd2 <= 0.05):
+                        continue
+                    if best_t is None or hz_ < best_t[1]:
+                        best_t = (d_, hz_, float(tl), float(hd_))
+            if best_t is not None and best_t[1] < head_only[1] - 0.05:
+                drop, tilt_deg, head_deg = best_t[0], best_t[2], best_t[3]
+    _death.update(drop=drop, fix=fix, head=head_deg, tilt=tilt_deg)
+    # WP-78: contact in the fall. Sample the whole clip, find how far any body point goes under the ground, and lift
+    # the body by the smooth amount that clears it (logged, so the largest lift is visible).
+    samples = 48
+    defs = []
+    raw = []
+    for i in range(samples):
+        Pt = Pose()
+        _death_render(Pt, i / (samples - 1))
+        low = lowest_z(Pt) - _rest_low[0]
+        raw.append(low)
+        defs.append(max(0.0, -low))
+    # WP-78 death_fallback: the new death is kept unless it sinks more than 1 cm deeper than Today's death over the
+    # fall (lowest skinned point). Today's death is then used for this rig, like the idle fallback.
+    new_low = min(raw)
+    _death_old_build()
+    old_low = _lowest_over_fall(_death_old_render)
+    fallback = gait.death_fallback_used(new_low, old_low)
+    report["death_fallback"] = {"used": fallback, "new_lowest_m": round(new_low, 4), "old_lowest_m": round(old_low, 4),
+                                "rule": "new kept unless it sinks more than 0.01 m deeper than the old death over the fall"}
+    print("DEATH_FALLBACK", report["death_fallback"], file=sys.stderr)
+    if fallback:
+        _death.clear()
+        _death["old"] = True
+    else:
+        table = [min(0.02, v) for v in _smooth_lift(defs)]  # 2 cm at most for any character (the boy needs it: 2.08 cm uncapped)
+        _death["lift"] = table
+        print("DEATH_LIFT max_deficit", round(max(defs), 4), "max_lift", round(max(table), 4), file=sys.stderr)
+
+
+def clip_death(P, t):
+    if not _death:
+        _death_build()
+        # WP-78 goblin: a rig whose legs are splayed (no leg chain) that fails the rule gets one more try, the torso-first
+        # death: the torso and head are tilted down first and the limbs settle against that pose.
+        if _death.get("old") and biped and motion != "serpent" and any(not li.get("ik") for li in leg_info):
+            first = dict(report["death_fallback"])
+            _TF[0] = True
             _death.clear()
-            _death["old"] = True
-        else:
-            table = [min(0.02, v) for v in _smooth_lift(defs)]  # 2 cm at most for any character (the boy needs it: 2.08 cm uncapped)
-            _death["lift"] = table
-            print("DEATH_LIFT max_deficit", round(max(defs), 4), "max_lift", round(max(table), 4), file=sys.stderr)
+            _death_build()
+            report["death_fallback"]["torso_first"] = True
+            report["death_fallback"]["standard"] = first
+            if _death.get("old"):
+                _TF[0] = False
+                report["death_fallback"]["torso_first"] = False
     if _death.get("old"):
         _death_old_render(P, t)
         return
