@@ -805,3 +805,58 @@ def test_smooth_refuses_an_unpainted_parent(version_files, tmp_path):
     sc = _Sc(tmp_path / "child", parent, child)
     with pytest.raises(ValueError, match="only a painted clean-up"):
         asyncio.run(paintsave.smooth(sc, {"strength": "light"}))
+
+
+def _retexture_with_mr(tmp_path, monkeypatch, painted_shine: bool, painted_metal: bool):
+    """A retexture over a donor rig whose GLB has a metallic-roughness picture (green 200, blue 0), and a painted
+    clean-up whose shine and metal pictures are painted (or not) in the block at the centre."""
+    sc, new_rig, donor, base, painted_dir = _retexture_setup(tmp_path)
+    donor_mr = np.zeros((SIZE, SIZE, 3), np.uint8)
+    donor_mr[..., 0] = 255
+    donor_mr[..., 1] = 200
+    donor_mr[..., 2] = 0
+    _glb_mr(Path(donor.files["glb"]), base[..., :3], donor_mr)
+    painted = sc.parent
+    paint_roughness = np.full((SIZE, SIZE), 200, np.uint8)
+    paint_metal = np.zeros((SIZE, SIZE), np.uint8)
+    paint_roughness[20:40, 20:40] = 30
+    paint_metal[20:40, 20:40] = 220
+    rough_file = painted_dir / "roughness.png"
+    metal_file = painted_dir / "metallic.png"
+    Image.fromarray(paint_roughness, "L").save(rough_file)
+    Image.fromarray(paint_metal, "L").save(metal_file)
+    lineage = {"roughness": rough_file, "metallic": metal_file}
+    painted.metrics.update({"paint_shine_texels": 400 if painted_shine else None, "paint_metal_texels": 400 if painted_metal else None})
+    base_lineage = sc.lineage_file
+
+    def lineage_file(key, stages=None):
+        if key in lineage and (painted_shine if key == "roughness" else painted_metal):
+            return lineage[key]
+        return base_lineage(key, stages)
+
+    sc.lineage_file = lineage_file
+    monkeypatch.setattr(rig, "judge", lambda _sc: asyncio.sleep(0))
+    monkeypatch.setattr(rig, "link_textures", lambda s: None)
+    return sc, new_rig, donor, base
+
+
+def test_retexture_carries_painted_shine_and_metal_into_the_rig(version_files, tmp_path, monkeypatch):
+    sc, new_rig, donor, base = _retexture_with_mr(tmp_path, monkeypatch, painted_shine=True, painted_metal=True)
+    assert asyncio.run(rig.retexture(sc, "Mixamo", 4, {})) is True
+    mr = _mr_of(Path(new_rig.files["glb"]))
+    assert (mr[20:40, 20:40, 1] == 30).all(), "the painted shine is the rig's roughness"
+    assert (mr[20:40, 20:40, 2] == 220).all(), "the painted metal is the rig's metal"
+    assert (mr[..., 0] == 255).all(), "occlusion is left alone"
+    assert np.array_equal(mr[..., 1][:20], np.full((20, SIZE), 200, np.uint8)), "outside the paint the donor's values stay"
+    assert (_base_colour(Path(new_rig.files["glb"]))[..., 0] == 240).all(), "the painted colour picture is in the rig too"
+    assert new_rig.metrics["retextured_maps"] == ["metallic", "roughness"]
+    # The donor rig is untouched.
+    assert (_mr_of(Path(donor.files["glb"]))[..., 1] == 200).all()
+
+
+def test_retexture_with_colour_only_paint_rigs_as_before(version_files, tmp_path, monkeypatch):
+    sc, new_rig, donor, base = _retexture_with_mr(tmp_path, monkeypatch, painted_shine=False, painted_metal=False)
+    assert asyncio.run(rig.retexture(sc, "Mixamo", 4, {})) is True
+    mr = _mr_of(Path(new_rig.files["glb"]))
+    assert (mr[..., 1] == 200).all() and (mr[..., 2] == 0).all(), "the donor's maps are kept"
+    assert new_rig.metrics.get("retextured_maps") is None
