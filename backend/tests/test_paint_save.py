@@ -67,6 +67,12 @@ def _grow(mask: np.ndarray, px: int) -> np.ndarray:
     return out
 
 
+def _kept(island: np.ndarray, edit: np.ndarray) -> np.ndarray:
+    """Island texels a paint merge leaves at the parent's value: outside the edit and not on the island border next to
+    it (merge_picture fills that border, which the brush cannot reach)."""
+    return island & ~edit & ~(paintsave._island_rim(island) & _grow(edit, paintsave.RIM_PX))
+
+
 def _island(tmp_path: Path) -> np.ndarray:
     return paintsave._picture_layout(_glb(tmp_path / "layout.glb", np.zeros((SIZE, SIZE, 3), np.uint8)), SIZE)
 
@@ -85,13 +91,38 @@ def test_merge_changes_only_the_mask_and_the_padding(tmp_path):
     pad = 4
     out, counts = paintsave.merge_picture(parent, painted, edit, island, pad_px=pad)
     assert (out[edit] == painted[edit]).all()
-    keep = island & ~edit
+    rim = paintsave._island_rim(island) & _grow(edit, paintsave.RIM_PX) & ~edit
+    keep = island & ~edit & ~rim
     assert np.array_equal(out[keep], parent[keep])
     # Only the padding reach around the islands and the paint may differ from the parent.
     reach = _grow(island | edit, pad)
     untouched = ~reach
     assert np.array_equal(out[untouched], parent[untouched])
-    assert counts["painted_texels"] == int(edit.sum()) and counts["painted_on_island"] == int(edit.sum())
+    assert counts["painted_texels"] == int((edit | rim).sum()) and counts["painted_on_island"] == int((edit | rim).sum())
+
+
+def test_merge_paints_the_island_border_the_brush_cannot_reach(tmp_path):
+    # The brush leaves the outermost island ring unpainted; a stroke over the whole island interior must still reach
+    # the border, and border texels far from the stroke keep the parent's colour.
+    island = _island(tmp_path)
+    rim = paintsave._island_rim(island)
+    assert rim.any() and (island & ~rim).any()
+    parent = np.full((SIZE, SIZE, 4), 40, np.uint8)
+    painted = parent.copy()
+    edit = island & ~rim
+    painted[edit] = [90, 180, 30, 255]
+    out, counts = paintsave.merge_picture(parent, painted, edit, island, pad_px=3)
+    assert (out[island] == [90, 180, 30, 255]).all()  # no unpainted seam left on the border
+    assert counts["rim_texels"] == int(rim.sum())
+    # A stroke on one interior texel paints only the border texels within RIM_PX of it.
+    edit1 = np.zeros_like(island)
+    ys, xs = np.where(island & ~rim)
+    edit1[ys[0], xs[0]] = True
+    painted1 = parent.copy()
+    painted1[edit1] = [200, 10, 10, 255]
+    out1, _ = paintsave.merge_picture(parent, painted1, edit1, island, pad_px=0)
+    far = rim & ~_grow(edit1, paintsave.RIM_PX)
+    assert far.any() and np.array_equal(out1[far], parent[far])
 
 
 def test_merge_pads_the_gutter_from_the_painted_edge(tmp_path):
@@ -233,7 +264,7 @@ def test_paint_job_makes_a_new_version_and_keeps_the_parent(version_files, tmp_p
     assert child.metrics["paint_strokes"] == 1
     new_base = np.array(Image.open(child.files["base_color"]).convert("RGBA"))
     assert (new_base[edit] == [220, 30, 30, 255]).all()
-    keep = island & ~edit
+    keep = _kept(island, edit)
     assert np.array_equal(new_base[keep], base[keep])
     assert Path(child.files["paint_mask"]).is_file() and Path(child.files["paint_strokes"]).is_file()
     assert (_base_colour(Path(child.files["glb"]))[..., :3][edit] == [220, 30, 30]).all()
@@ -330,10 +361,10 @@ def test_paint_job_writes_shine_and_metal_into_their_maps_and_the_model(version_
 
     rough = np.array(Image.open(child.files["roughness"]).convert("L"))
     assert (rough[edit] == 30).all()
-    assert np.array_equal(rough[island & ~edit], mr[..., 1][island & ~edit])
+    assert np.array_equal(rough[_kept(island, edit)], mr[..., 1][_kept(island, edit)])
     metal = np.array(Image.open(child.files["metallic"]).convert("L"))
     assert (metal[edit] == 220).all()
-    assert np.array_equal(metal[island & ~edit], mr[..., 2][island & ~edit])
+    assert np.array_equal(metal[_kept(island, edit)], mr[..., 2][_kept(island, edit)])
     # The model's own picture is the same: the green and blue channels changed, the red (occlusion) did not.
     model_mr = _mr_of(Path(child.files["glb"]))
     assert (model_mr[edit][:, 1] == 30).all() and (model_mr[edit][:, 2] == 220).all()

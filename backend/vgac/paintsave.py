@@ -134,9 +134,25 @@ def write_inputs(folder: Path, inputs: dict[str, bytes]) -> None:
         (folder / names[key]).write_bytes(data)
 
 
+# The island map counts every texel a triangle's outline touches, but the brush only paints texels within half a texel
+# of a triangle, so a ring of island texels on each island's border is never painted. Unfilled, that ring kept the old
+# colour and showed as a thin seam along every picture-layout border inside a stroke (WP-32: 23,460 of 23,597 unpainted
+# island texels were on the border).
+RIM_PX = 2
+
+
+def _island_rim(island: np.ndarray) -> np.ndarray:
+    """Island texels with a 4-neighbour outside the island."""
+    inner = island.copy()
+    for dy, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+        inner &= imaging._shift(island, dy, dx, False)
+    return island & ~inner
+
+
 def merge_picture(parent_px: np.ndarray, painted_px: np.ndarray, edit: np.ndarray, island: np.ndarray,
                   pad_px: int) -> tuple[np.ndarray, dict[str, int]]:
-    """The new picture (H, W, C uint8). Texels in `edit` take the painted colour; island texels outside `edit` keep the
+    """The new picture (H, W, C uint8). Texels in `edit` take the painted colour; island-border texels within RIM_PX of
+    the edit take the nearest painted colour (the brush cannot reach them); other island texels outside `edit` keep the
     parent's colour exactly; gutter texels within pad_px of the island or the edit take the nearest colour (the edge
     padding); gutter texels further away keep the parent's colour. Returns the picture and counts."""
     if parent_px.shape != painted_px.shape or edit.shape != parent_px.shape[:2] or island.shape != edit.shape:
@@ -144,13 +160,18 @@ def merge_picture(parent_px: np.ndarray, painted_px: np.ndarray, edit: np.ndarra
     out = parent_px.copy()
     out[edit] = painted_px[edit]
     out[island & ~edit] = parent_px[island & ~edit]
+    near = imaging.dilate(edit.astype(np.uint8), edit, RIM_PX).astype(bool)
+    rim = _island_rim(island) & ~edit & near
+    out[rim] = imaging.dilate(out, edit, RIM_PX)[rim]
+    edit = edit | rim
     filled = island | edit
     padded = imaging.dilate(out, filled, int(pad_px))
     gutter = ~filled
     out[gutter] = padded[gutter]
     changed_island = int((island & edit).sum())
     padding = int((gutter & (padded != parent_px).any(axis=-1)).sum())
-    return out, {"painted_texels": int(edit.sum()), "painted_on_island": changed_island, "padding_texels": padding}
+    return out, {"painted_texels": int(edit.sum()), "painted_on_island": changed_island, "padding_texels": padding,
+                 "rim_texels": int(rim.sum())}
 
 
 def _copy_parent_files(sc: Any, parent: Version) -> None:
