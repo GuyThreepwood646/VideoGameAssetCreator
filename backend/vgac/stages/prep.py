@@ -507,10 +507,9 @@ def late_cap_of(rec: dict[str, Any], look: dict[str, Any], tex: int) -> int | No
 
 
 async def ship_late(sc: StageContext, glb: Path, maps: dict[str, Path], look: dict[str, Any], tex: int) -> dict[str, Path]:
-    """The look's texture treatment (apply_look: shrink to look.cap) after everything was painted at the bake size; the
-    base colour shrunk by area within each texture piece (imaging.shrink_by_island) and the pieces grown into the empty
-    space again, so no piece takes in a neighbour's colour or the background. The GLB, the version's files and the
-    metrics follow. -> the maps from here."""
+    """The look's texture treatment (apply_look: shrink to look.cap) after everything was painted at the bake size; every
+    map shrunk per texture piece (apply_look, imaging.shrink_by_island), so no piece takes in a neighbour's colour or the
+    background. The GLB, the version's files and the metrics follow. -> the maps from here."""
     def work() -> tuple[dict[str, Any], dict[str, Path], int | None]:
         out_dir = sc.dir / "shipped"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -518,12 +517,6 @@ async def ship_late(sc: StageContext, glb: Path, maps: dict[str, Path], look: di
         base = imaging.read_map(maps["base_color"])
         files: dict[str, Path] = {}
         m, mr_size = apply_look(look, uvf, maps, files, base, int(base.shape[0]), out_dir)
-        cap = int(look["cap"])
-        if files.get("base_color") is not None and uvf is not None:
-            # each texel from its own texture piece only (an area average across pieces lying a texel apart left slivers
-            # of the neighbouring piece's colour on Bob's hat), then the pieces grown into the empty space again
-            imaging.write_map(imaging.shrink_by_island(base, uvf, cap), files["base_color"])
-            imaging.dilate_png(files["base_color"], imaging.rasterise_uv(uvf, cap)["labels"] > 0, imaging.dilation_px(cap))
         imaging.glb_replace_images(glb, base_color=files.get("base_color"), metallic=files.get("metallic"), roughness=files.get("roughness"),
                                    normal=files.get("normal"), mr_size=mr_size)
         return m, files, mr_size
@@ -961,17 +954,26 @@ def apply_look(look: dict[str, Any], uvf: dict[str, Any], maps: dict[str, Path],
             if Path(maps["base_color"]).resolve() != original.resolve():
                 shutil.copy2(maps["base_color"], original)
             files["base_color_original"] = original
-        im = Image.fromarray((np.clip(new_base, 0, 1) * 255).round().astype("uint8"), "RGB").resize((target, target), Image.BOX)
-        files["base_color"] = imaging.write_map(np.asarray(im, dtype="float32") / 255.0, out_dir / "base_color.png")
+        if uvf is not None:
+            # per island: each texel is averaged from its own UV island only, then the islands are grown into the empty
+            # space, so no island takes in a neighbour's colour or the background (the box filter blended them)
+            base = np.clip(np.asarray(new_base, dtype=np.float32), 0.0, 1.0)
+            files["base_color"] = imaging.write_map(imaging.shrink_by_island(base, uvf, target), out_dir / "base_color.png")
+            imaging.dilate_png(files["base_color"], imaging.rasterise_uv(uvf, target)["labels"] > 0, imaging.dilation_px(target))
+        else:
+            im = Image.fromarray((np.clip(new_base, 0, 1) * 255).round().astype("uint8"), "RGB").resize((target, target), Image.BOX)
+            files["base_color"] = imaging.write_map(np.asarray(im, dtype="float32") / 255.0, out_dir / "base_color.png")
     keys = ("metallic", "roughness", "ao") + (("normal",) if look.get("normal_map", True) else ())
     for key in keys:
         src = files.get(key) or maps.get(key)
         if src is None or not Path(src).is_file():
             continue
         if imaging.image_size(src)[0] > target:
-            if key == "normal" and uvf is not None:
-                # per island, as the base colour is shrunk in ship_late: no blending across island borders
+            if uvf is not None and key == "normal":
+                # per island, as the base colour: no blending across island borders
                 files[key] = imaging.shrink_normal_islands(src, uvf, target, out_dir / f"{key}.png")
+            elif uvf is not None:
+                files[key] = imaging.shrink_map_islands(src, uvf, target, out_dir / f"{key}.png")
             elif key == "normal":
                 files[key] = imaging.shrink_normal(src, target, out_dir / f"{key}.png")
             else:
