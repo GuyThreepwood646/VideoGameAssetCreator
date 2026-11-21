@@ -120,7 +120,8 @@ ALLOWED_HF = {  # owner/repo: each one is the author's, the publisher's, or Comf
     "comfyanonymous/flux_text_encoders", "fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA", "lightx2v/Qwen-Image-Edit-2511-Lightning",
     "tarn59/character_turnaround_sheet_qwen_edit_2511", "tencent/Hunyuan3D-2mv",
 }
-ALLOWED_GH = {"xinntao/Real-ESRGAN", "Rizzlord/ComfyUI-SkinToken", "Comfy-Org/ComfyUI"}
+ALLOWED_GH = {"xinntao/Real-ESRGAN", "Rizzlord/ComfyUI-SkinToken", "Comfy-Org/ComfyUI",
+              "Kim2091/Kim2091-Models"}  # Kim2091: the publisher of 4x-PBRify UpscalerV4 (CC0), its own release page
 
 
 def test_every_address_in_the_shipped_list_is_on_an_allowed_host():

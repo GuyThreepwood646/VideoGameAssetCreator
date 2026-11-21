@@ -107,6 +107,7 @@ MODEL_LOADERS: dict[str, tuple[str, str, str, bool]] = {
     "skintoken": ("SkinTokenRigTrimesh", "ckpt_name", "rig", True),
     "upscale_photo": ("UpscaleModelLoader", "model_name", "concept", False),
     "upscale_art": ("UpscaleModelLoader", "model_name", "concept", False),
+    "upscale_wood": ("UpscaleModelLoader", "model_name", "material", False),
     # companions (models.yaml `companions:`): the other files a graph loads next to its main model
     "qwen_te": ("CLIPLoader", "clip_name", "turnaround", True),
     "qwen_vae": ("VAELoader", "vae_name", "turnaround", True),
