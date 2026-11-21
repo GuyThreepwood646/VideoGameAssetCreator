@@ -78,6 +78,16 @@ def edge_stats(rest, posed_frames, edges, regions, threshold=THRESHOLD, min_rest
     return out
 
 
+def pose_spread(frames):
+    """Largest distance any vertex moves between the first sampled frame and any other (metres). 0.0 means every frame is
+    the same pose, which is a measure reading a frozen pose and not the clip (Blender 5.2 does that after an early
+    set_tracks(None); see main)."""
+    if len(frames) < 2:
+        return 0.0
+    first = np.asarray(frames[0], dtype=float)
+    return float(max(np.linalg.norm(np.asarray(f, dtype=float) - first, axis=1).max() for f in frames[1:]))
+
+
 def _figures(ratios, threshold):
     if len(ratios) == 0:
         return _empty()
@@ -124,8 +134,9 @@ def main():  # pragma: no cover - runs inside Blender
         # every frame after unmuting walk); a view-layer update does.
         bpy.context.view_layer.update()
 
-    # Per mesh: edges, region per vertex, rest coordinates (no clip playing).
-    set_tracks(None)
+    # Per mesh: edges, region per vertex, rest coordinates (the mesh data as stored, below). Do not call set_tracks(None)
+    # here: in Blender 5.2.3 an all-muted evaluation before the first clip leaves the pose frozen for every later frame,
+    # so every clip measured one static pose (WP-79 found it; pose_spread_m in the output says when it happens).
     parts = []
     offset = 0
     rest_rows, edge_rows, region_rows = [], [], []
@@ -175,7 +186,8 @@ def main():  # pragma: no cover - runs inside Blender
             frames.append(coords())
         stats = edge_stats(rest, frames, edges, regions)
         floored = edge_stats(rest, frames, edges, regions, min_rest=FLOOR_M)
-        result["clips"][name] = {"frames": len(frames), "regions": stats, "regions_floor_5mm": floored}
+        result["clips"][name] = {"frames": len(frames), "pose_spread_m": round(pose_spread(frames), 4), "regions": stats,
+                                 "regions_floor_5mm": floored}
     set_tracks(None)
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(result, fh, indent=1)
