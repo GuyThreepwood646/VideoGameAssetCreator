@@ -205,6 +205,53 @@ test('a shine setting maps to roughness (matt is high roughness), and metal maps
   assert.deepEqual(targetRgb({ ...DEFAULT_PAINT, target: 'colour', rgb: [1, 2, 3] }), [1, 2, 3])
 })
 
+test('undo and redo follow the order of the steps across the colour and shine pictures', () => {
+  const m = square()
+  const mr = new THREE.DataTexture(new Uint8Array(SIZE * SIZE * 4), SIZE, SIZE)
+  for (let o = 0; o < SIZE * SIZE * 4; o += 4) {
+    mr.image.data[o] = 255
+    mr.image.data[o + 1] = 200
+    mr.image.data[o + 2] = 0
+    mr.image.data[o + 3] = 255
+  }
+  mr.flipY = false
+  mr.needsUpdate = true
+  const colour = new THREE.DataTexture(new Uint8Array(SIZE * SIZE * 4).fill(255), SIZE, SIZE)
+  colour.flipY = false
+  colour.needsUpdate = true
+  const mat = m.material as THREE.MeshStandardMaterial
+  mat.map = colour
+  mat.roughnessMap = mr
+  m.updateMatrixWorld(true)
+  const model = { meshes: [m], renderer: {} as THREE.WebGLRenderer, picker: new SurfacePicker([m]), texturedMaterial: (mesh: THREE.Mesh) => mesh.material } as unknown as ViewerModel
+  const session = new PaintSession(model)
+  const hooks = { picked: () => {}, changed: () => {}, renderer: () => undefined, notice: () => {} }
+  const hit = model.picker.pick(new THREE.Ray(new THREE.Vector3(0, 0, 5), new THREE.Vector3(0, 0, -1)))
+  assert.ok(hit)
+  const colourSettings = { ...DEFAULT_PAINT, target: 'colour' as const, rgb: [0, 0, 0] as [number, number, number], radius: 0.2, hardness: 1, strength: 1 }
+  const shineSettings = { ...DEFAULT_PAINT, target: 'shine' as const, shine: 1, radius: 0.2, hardness: 1, strength: 1 }
+  const maps = () => session.saveableMaps()!
+  const tool = session.tool(() => colourSettings, hooks)
+  tool.down?.(hit, {} as PointerEvent)
+  tool.up?.(hit, {} as PointerEvent)
+  const tool2 = session.tool(() => shineSettings, hooks)
+  tool2.down?.(hit, {} as PointerEvent)
+  tool2.up?.(hit, {} as PointerEvent)
+  assert.equal(session.undoLabel, 'a shine brush stroke', 'the shine stroke is the last step')
+  session.undo()
+  assert.deepEqual(px(maps().colour, 32, 32), [0, 0, 0], 'undo takes back the shine, the colour stays')
+  assert.deepEqual(px(maps().shine!, 32, 32), [200, 200, 200], 'the shine picture is back to the model value')
+  assert.equal(session.undoLabel, 'a brush stroke', 'the colour stroke is next')
+  session.undo()
+  assert.deepEqual(px(maps().colour, 32, 32), [255, 255, 255], 'the next undo takes back the colour')
+  assert.equal(session.canUndo, false)
+  assert.equal(session.redoLabel, 'a brush stroke')
+  session.redo()
+  assert.deepEqual(px(maps().colour, 32, 32), [0, 0, 0], 'redo brings the colour back first')
+  session.redo()
+  assert.deepEqual(px(maps().shine!, 32, 32), [0, 0, 0], 'then the shine')
+})
+
 // The pixel at (x, y) of a layer, as [r, g, b].
 function px(layer: PaintLayer, x: number, y: number): number[] {
   const o = (y * layer.width + x) * 4

@@ -31,7 +31,7 @@ export const DEFAULT_PAINT: PaintSettings = {
   radius: 0.02,
   hardness: 0.6,
   strength: 1,
-  match: 0.25,
+  match: 0.12,
   shine: 0.5,
   metal: 0,
   faceOnly: false,
@@ -197,6 +197,12 @@ export function checkPaint(model: ViewerModel, look: string | null): PaintWarnin
   return out
 }
 
+// The last layer in the list that satisfies the test, or null.
+function lastWith(list: PaintLayer[], ok: (l: PaintLayer) => boolean): PaintLayer | null {
+  for (let i = list.length - 1; i >= 0; i--) if (ok(list[i])) return list[i]
+  return null
+}
+
 // The layers a save sends: the one colour picture, and the shine and metal pictures when the model has them.
 export type SaveMaps = { colour: PaintLayer; shine: PaintLayer | null; metal: PaintLayer | null }
 
@@ -213,7 +219,10 @@ export class PaintSession {
   private readonly metalByMesh = new Map<THREE.Mesh, PaintLayer>()
   private readonly targets = new Map<PaintLayer, DabTarget[]>()
   private readonly mirrorX: number
-  private lastLayer: PaintLayer | null = null
+  // The order of the steps across the pictures (WP-32): one entry per step, naming the picture it changed. Undo and redo
+  // follow this order, so the step on the button is always the last thing done, whichever picture it was on.
+  private undoOrder: PaintLayer[] = []
+  private redoOrder: PaintLayer[] = []
 
   constructor(model: ViewerModel) {
     const layerOf = new Map<THREE.Texture, PaintLayer>()
@@ -306,14 +315,12 @@ export class PaintSession {
   get undoCount(): number {
     return this.layers.reduce((n, l) => n + l.undoCount, 0)
   }
-  // The step names for the next undo and the next redo (the layer that would change), or null.
+  // The step names for the next undo and the next redo, or null.
   get undoLabel(): string | null {
-    const l = this.lastLayer?.canUndo ? this.lastLayer : this.layers.find((x) => x.canUndo)
-    return l?.undoLabel ?? null
+    return lastWith(this.undoOrder, (l) => l.canUndo)?.undoLabel ?? null
   }
   get redoLabel(): string | null {
-    const l = this.lastLayer?.canRedo ? this.lastLayer : this.layers.find((x) => x.canRedo)
-    return l?.redoLabel ?? null
+    return lastWith(this.redoOrder, (l) => l.canRedo)?.redoLabel ?? null
   }
   // Changes with every new step, undo or redo; equal to the mark taken when the picture was saved means nothing is unsaved.
   get editMark(): string {
@@ -336,25 +343,37 @@ export class PaintSession {
   }
 
   undo(renderer?: THREE.WebGLRenderer): boolean {
-    const layer = this.lastLayer?.canUndo ? this.lastLayer : this.layers.find((l) => l.canUndo)
-    if (!layer || !layer.undo()) return false
+    const layer = lastWith(this.undoOrder, (l) => l.canUndo)
+    if (!layer) return false
+    this.undoOrder.splice(this.undoOrder.lastIndexOf(layer), 1)
+    layer.undo()
     layer.upload(renderer)
-    this.lastLayer = layer
+    this.redoOrder.push(layer)
     return true
   }
 
   redo(renderer?: THREE.WebGLRenderer): boolean {
-    const layer = this.lastLayer?.canRedo ? this.lastLayer : this.layers.find((l) => l.canRedo)
-    if (!layer || !layer.redo()) return false
+    const layer = lastWith(this.redoOrder, (l) => l.canRedo)
+    if (!layer) return false
+    this.redoOrder.splice(this.redoOrder.lastIndexOf(layer), 1)
+    layer.redo()
     layer.upload(renderer)
-    this.lastLayer = layer
+    this.undoOrder.push(layer)
     return true
+  }
+
+  // Records a new step on a picture: it is undone before any earlier step, and a new step clears the redo steps.
+  private noteStep(layer: PaintLayer): void {
+    this.undoOrder.push(layer)
+    this.redoOrder = []
   }
 
   // Sets every picture back to the model's own. Undoable.
   resetAll(renderer?: THREE.WebGLRenderer): void {
     for (const layer of this.layers) {
+      const before = layer.undoCount
       layer.resetToOriginal()
+      if (layer.undoCount > before) this.noteStep(layer)
       layer.upload(renderer)
     }
   }
@@ -436,7 +455,7 @@ export class PaintSession {
       last = null
       strokeFace = null
       if (layer.endStroke()) {
-        this.lastLayer = layer
+        this.noteStep(layer)
         hooks.changed()
       }
     }
