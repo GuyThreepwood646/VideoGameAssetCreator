@@ -135,23 +135,54 @@ def write_inputs(folder: Path, inputs: dict[str, bytes]) -> None:
 
 
 # The island map counts every texel a triangle's outline touches, but the brush only paints texels within half a texel
-# of a triangle, so a ring of island texels on each island's border is never painted. Unfilled, that ring kept the old
+# of a triangle, so a band of island texels (up to two deep) on each island's border is never painted. Unfilled, that band kept the old
 # colour and showed as a thin seam along every picture-layout border inside a stroke (WP-32: 23,460 of 23,597 unpainted
 # island texels were on the border).
 RIM_PX = 2
 
 
 def _island_rim(island: np.ndarray) -> np.ndarray:
-    """Island texels with a 4-neighbour outside the island."""
+    """Island texels within RIM_PX 8-neighbour steps of a texel outside the island (the brush misses up to two)."""
     inner = island.copy()
-    for dy, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
-        inner &= imaging._shift(island, dy, dx, False)
+    for _ in range(RIM_PX):
+        step = inner.copy()
+        for dy, dx in imaging._neighbours():
+            step &= imaging._shift(inner, dy, dx, False)
+        inner = step
     return island & ~inner
+
+
+HOLE_NEIGHBOURS = 5  # an island texel the brush missed is a hole when at least this many of its 8 neighbours were painted
+HOLE_PASSES = 2
+
+
+def _close_holes(px: np.ndarray, edit: np.ndarray, island: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Island texels outside `edit` that are mostly surrounded by painted texels (single missed texels and one-texel
+    cracks inside a stroke, where the per-texel facing or slab test or a sliver triangle dropped them) take the mean of
+    their painted neighbours. Returns the picture and the texels filled."""
+    out = px.astype(np.float32)
+    done = edit.copy()
+    filled = np.zeros_like(edit)
+    for _ in range(HOLE_PASSES):
+        count = np.zeros(edit.shape, np.int32)
+        total = np.zeros(px.shape, np.float32)
+        for dy, dx in imaging._neighbours():
+            nb = imaging._shift(done, dy, dx, False)
+            count += nb
+            total += imaging._shift(out, dy, dx) * nb[..., None]
+        hole = island & ~done & (count >= HOLE_NEIGHBOURS)
+        if not hole.any():
+            break
+        out[hole] = total[hole] / count[hole][:, None]
+        done |= hole
+        filled |= hole
+    return np.clip(np.rint(out), 0, 255).astype(px.dtype), filled
 
 
 def merge_picture(parent_px: np.ndarray, painted_px: np.ndarray, edit: np.ndarray, island: np.ndarray,
                   pad_px: int) -> tuple[np.ndarray, dict[str, int]]:
-    """The new picture (H, W, C uint8). Texels in `edit` take the painted colour; island-border texels within RIM_PX of
+    """The new picture (H, W, C uint8). Texels in `edit` take the painted colour; island texels the brush missed inside
+    a stroke take the mean of their painted neighbours (_close_holes); island-border texels within RIM_PX of
     the edit take the nearest painted colour (the brush cannot reach them); other island texels outside `edit` keep the
     parent's colour exactly; gutter texels within pad_px of the island or the edit take the nearest colour (the edge
     padding); gutter texels further away keep the parent's colour. Returns the picture and counts."""
@@ -159,6 +190,8 @@ def merge_picture(parent_px: np.ndarray, painted_px: np.ndarray, edit: np.ndarra
         raise ValueError("the picture, the mask and the layout have different sizes")
     out = parent_px.copy()
     out[edit] = painted_px[edit]
+    out, holes = _close_holes(out, edit, island)
+    edit = edit | holes
     out[island & ~edit] = parent_px[island & ~edit]
     near = imaging.dilate(edit.astype(np.uint8), edit, RIM_PX).astype(bool)
     rim = _island_rim(island) & ~edit & near
@@ -171,7 +204,7 @@ def merge_picture(parent_px: np.ndarray, painted_px: np.ndarray, edit: np.ndarra
     changed_island = int((island & edit).sum())
     padding = int((gutter & (padded != parent_px).any(axis=-1)).sum())
     return out, {"painted_texels": int(edit.sum()), "painted_on_island": changed_island, "padding_texels": padding,
-                 "rim_texels": int(rim.sum())}
+                 "rim_texels": int(rim.sum()), "hole_texels": int(holes.sum())}
 
 
 def _copy_parent_files(sc: Any, parent: Version) -> None:

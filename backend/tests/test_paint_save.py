@@ -70,6 +70,8 @@ def _grow(mask: np.ndarray, px: int) -> np.ndarray:
 def _kept(island: np.ndarray, edit: np.ndarray) -> np.ndarray:
     """Island texels a paint merge leaves at the parent's value: outside the edit and not on the island border next to
     it (merge_picture fills that border, which the brush cannot reach)."""
+    holes = paintsave._close_holes(np.zeros(edit.shape + (1,), np.uint8), edit, island)[1]
+    edit = edit | holes
     return island & ~edit & ~(paintsave._island_rim(island) & _grow(edit, paintsave.RIM_PX))
 
 
@@ -91,8 +93,8 @@ def test_merge_changes_only_the_mask_and_the_padding(tmp_path):
     pad = 4
     out, counts = paintsave.merge_picture(parent, painted, edit, island, pad_px=pad)
     assert (out[edit] == painted[edit]).all()
-    rim = paintsave._island_rim(island) & _grow(edit, paintsave.RIM_PX) & ~edit
-    keep = island & ~edit & ~rim
+    keep = _kept(island, edit)
+    rim = island & ~edit & ~keep
     assert np.array_equal(out[keep], parent[keep])
     # Only the padding reach around the islands and the paint may differ from the parent.
     reach = _grow(island | edit, pad)
@@ -123,6 +125,23 @@ def test_merge_paints_the_island_border_the_brush_cannot_reach(tmp_path):
     out1, _ = paintsave.merge_picture(parent, painted1, edit1, island, pad_px=0)
     far = rim & ~_grow(edit1, paintsave.RIM_PX)
     assert far.any() and np.array_equal(out1[far], parent[far])
+
+
+def test_merge_closes_texels_the_brush_missed_inside_a_stroke(tmp_path):
+    # Single missed texels and a one-texel crack inside a painted patch take the painted value; texels at the patch's
+    # straight edge stay the parent's.
+    island = np.ones((SIZE, SIZE), bool)
+    parent = np.full((SIZE, SIZE, 4), 40, np.uint8)
+    edit = np.zeros((SIZE, SIZE), bool)
+    edit[10:30, 10:30] = True
+    edit[15, 15] = edit[20, 22] = False
+    edit[25, 12:28] = False  # a crack
+    painted = parent.copy()
+    painted[edit] = [90, 180, 30, 255]
+    out, counts = paintsave.merge_picture(parent, painted, edit, island, pad_px=0)
+    assert (out[10:30, 10:30] == [90, 180, 30, 255]).all()
+    assert counts["hole_texels"] == 2 + 16
+    assert (out[9, 10:30] == 40).all() and (out[10:30, 30] == 40).all()  # no growth past a straight edge
 
 
 def test_merge_pads_the_gutter_from_the_painted_edge(tmp_path):
