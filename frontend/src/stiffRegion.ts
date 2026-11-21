@@ -1,18 +1,92 @@
 // The region a stiff part covers, grown from its points on the model (WP-69). This mirrors backend/vgac/blender/
-// worn_region.py (grow_region and fill_holes), so the preview on the rig page is the region the rig step will make.
-// Keep the two in step: the same rules, the same constants.
+// worn_region.py (grow_region, _sectors and fill_holes), so the preview on the rig page is the region the rig step will
+// make. Keep the two in step: the same rules, the same constants. tests/fixtures/stiff_region_floor.json is checked by
+// both (backend/tests/test_worn_region.py and frontend/tests/stiff-region.test.ts).
 //
-// Growth crosses mesh edges and seam duplicates (same position, normals within about 30 degrees), and stops at a
-// concave edge: where the next face lies behind this one (a valley, such as where a backpack meets the back). Convex
-// ridges, such as a box's own edges, are crossed. Safety nets: a radius from the point and a vertex limit. Then holes
-// (a vertex outside whose edge neighbours are all inside) are taken in, for a few rounds.
+// Growth crosses mesh edges and seam duplicates (same position, normals within about 30 degrees). It stops at a valley:
+// a concave edge, where the next face lies in front of this face's plane (where a backpack meets the back, or a box
+// meets the floor). Convex ridges, such as a box's own edges, are crossed. A sharp valley (faces turning 30 degrees or
+// more) also stops growth through a vertex it shares: each vertex is split into sectors (see sectorGraph). Safety nets:
+// a radius from the point and a vertex limit. Then holes (a vertex outside whose edge neighbours are all inside) are
+// taken in, for a few rounds.
 
 export const STIFF_RADIUS = 0.8 // metres from a point; the region never reaches further
 export const STIFF_LIMIT = 4000 // vertices per point
 export const STIFF_HOLE_ROUNDS = 3
 const CREASE_DOT = 0.87 // seam duplicates join only when their normals agree within about 30 degrees
+const SECTOR_COS = 0.87 // a valley splits a vertex into sectors only when its two faces turn by about 30 degrees or more
 
 export type Vec3 = [number, number, number]
+
+// The sector graph (worn_region._sectors): a node is one sector of a vertex; adjacency joins the nodes at the two ends
+// of each edge that is not a valley. nodeOf is keyed by vertex * faceCount + face.
+function sectorGraph(
+  V: number,
+  F: number,
+  indices: ArrayLike<number>,
+  edgeFaces: Map<number, number[]>,
+  concave: Set<number>,
+  sharp: Set<number>,
+) {
+  const parent = new Map<number, number>()
+  const find = (x: number): number => {
+    if (!parent.has(x)) parent.set(x, x)
+    let r = x
+    while (parent.get(r) !== r) r = parent.get(r) as number
+    let y = x
+    while (y !== r) {
+      const next = parent.get(y) as number
+      parent.set(y, r)
+      y = next
+    }
+    return r
+  }
+  const union = (a: number, b: number) => {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra !== rb) parent.set(ra, rb)
+  }
+  for (const [e, faces] of edgeFaces) {
+    if (sharp.has(e)) continue
+    const p = Math.floor(e / V)
+    const q = e - p * V
+    const f0 = faces[0]
+    for (let i = 1; i < faces.length; i++) {
+      union(p * F + f0, p * F + faces[i])
+      union(q * F + f0, q * F + faces[i])
+    }
+  }
+  const nodeIdOfRoot = new Map<number, number>()
+  const nodeVertex: number[] = []
+  const nodeOf = new Map<number, number>()
+  const vertexNodes: number[][] = Array.from({ length: V }, () => [])
+  for (let f = 0; f < F; f++) {
+    for (let k = 0; k < 3; k++) {
+      const v = indices[3 * f + k]
+      const r = find(v * F + f)
+      let n = nodeIdOfRoot.get(r)
+      if (n === undefined) {
+        n = nodeVertex.length
+        nodeIdOfRoot.set(r, n)
+        nodeVertex.push(v)
+      }
+      nodeOf.set(v * F + f, n)
+      if (!vertexNodes[v].includes(n)) vertexNodes[v].push(n)
+    }
+  }
+  const adj: number[][] = Array.from({ length: nodeVertex.length }, () => [])
+  for (const [e, faces] of edgeFaces) {
+    if (concave.has(e)) continue
+    const p = Math.floor(e / V)
+    const q = e - p * V
+    const f0 = faces[0]
+    const a = nodeOf.get(p * F + f0) as number
+    const b = nodeOf.get(q * F + f0) as number
+    adj[a].push(b)
+    adj[b].push(a)
+  }
+  return { nodeVertex, vertexNodes, adj }
+}
 
 // positions: flat x, y, z per vertex. indices: triangles (three per face), into positions.
 export function growStiffRegion(
@@ -97,31 +171,24 @@ export function growStiffRegion(
       else edgeFaces.set(e, [f])
     }
   }
-  const adj: number[][] = Array.from({ length: V }, () => [])
-  // every mesh edge, for the hole fill (the growth's own joins are not used there, as in worn_region.py)
-  const meshAdj: number[][] = Array.from({ length: V }, () => [])
-  for (const e of edgeFaces.keys()) {
-    const p = Math.floor(e / V)
-    const q = e - p * V
-    meshAdj[p].push(q)
-    meshAdj[q].push(p)
-  }
+  // valleys: a concave edge (the next face lies in front of this face's plane); a sharp one also splits vertices
+  const concave = new Set<number>()
+  const sharp = new Set<number>()
   for (const [e, faces] of edgeFaces) {
-    const p = Math.floor(e / V)
-    const q = e - p * V
-    let concave = false
-    if (faces.length === 2) {
-      const f1 = faces[0]
-      const f2 = faces[1]
-      const d12 = (fc[3 * f2] - fc[3 * f1]) * fn[3 * f1] + (fc[3 * f2 + 1] - fc[3 * f1 + 1]) * fn[3 * f1 + 1] + (fc[3 * f2 + 2] - fc[3 * f1 + 2]) * fn[3 * f1 + 2]
-      const d21 = (fc[3 * f1] - fc[3 * f2]) * fn[3 * f2] + (fc[3 * f1 + 1] - fc[3 * f2 + 1]) * fn[3 * f2 + 1] + (fc[3 * f1 + 2] - fc[3 * f2 + 2]) * fn[3 * f2 + 2]
-      concave = d12 < -1e-6 || d21 < -1e-6
-    }
-    if (!concave) {
-      adj[p].push(q)
-      adj[q].push(p)
+    if (faces.length !== 2) continue
+    const f1 = faces[0]
+    const f2 = faces[1]
+    const d12 =
+      (fc[3 * f2] - fc[3 * f1]) * fn[3 * f1] + (fc[3 * f2 + 1] - fc[3 * f1 + 1]) * fn[3 * f1 + 1] + (fc[3 * f2 + 2] - fc[3 * f1 + 2]) * fn[3 * f1 + 2]
+    const d21 =
+      (fc[3 * f1] - fc[3 * f2]) * fn[3 * f2] + (fc[3 * f1 + 1] - fc[3 * f2 + 1]) * fn[3 * f2 + 1] + (fc[3 * f1 + 2] - fc[3 * f2 + 2]) * fn[3 * f2 + 2]
+    if (d12 > 1e-6 || d21 > 1e-6) {
+      concave.add(e)
+      const dot = fn[3 * f1] * fn[3 * f2] + fn[3 * f1 + 1] * fn[3 * f2 + 1] + fn[3 * f1 + 2] * fn[3 * f2 + 2]
+      if (dot < SECTOR_COS) sharp.add(e)
     }
   }
+  const { nodeVertex, vertexNodes, adj } = sectorGraph(V, F, indices, edgeFaces, concave, sharp)
   // seam duplicates: the same position, normals agreeing
   const buckets = new Map<string, number[]>()
   for (let v = 0; v < V; v++) {
@@ -135,30 +202,55 @@ export function growStiffRegion(
     for (const a of group) {
       for (const b of group) {
         if (a < b && vn[3 * a] * vn[3 * b] + vn[3 * a + 1] * vn[3 * b + 1] + vn[3 * a + 2] * vn[3 * b + 2] > CREASE_DOT) {
-          adj[a].push(b)
-          adj[b].push(a)
+          for (const na of vertexNodes[a]) {
+            for (const nb of vertexNodes[b]) {
+              adj[na].push(nb)
+              adj[nb].push(na)
+            }
+          }
         }
       }
     }
   }
 
-  // flood from the start vertex, within the radius and the limit
+  // flood from the start vertex's sectors, within the radius and the limit
+  const visited = new Uint8Array(nodeVertex.length)
   mask[start] = 1
-  const stack = [start]
+  const stack: number[] = []
+  for (const n of vertexNodes[start]) {
+    visited[n] = 1
+    stack.push(n)
+  }
   let count = 1
   while (stack.length && count < limit) {
     const u = stack.pop() as number
-    for (const w of adj[u]) {
+    for (const m of adj[u]) {
       if (count >= limit) break
-      if (!mask[w] && dist[w] <= radius) {
+      if (visited[m]) continue
+      const w = nodeVertex[m]
+      if (dist[w] > radius) continue
+      visited[m] = 1
+      if (!mask[w]) {
         mask[w] = 1
         count++
-        stack.push(w)
       }
+      stack.push(m)
     }
   }
-  fillHoles(mask, meshAdj, STIFF_HOLE_ROUNDS)
+  fillHoles(mask, meshAdjacency(V, edgeFaces), STIFF_HOLE_ROUNDS)
   return mask
+}
+
+// Every mesh edge as a neighbour list, for the hole fill (the growth's own joins are not used there, as in worn_region.py).
+function meshAdjacency(V: number, edgeFaces: Map<number, number[]>): number[][] {
+  const adj: number[][] = Array.from({ length: V }, () => [])
+  for (const e of edgeFaces.keys()) {
+    const p = Math.floor(e / V)
+    const q = e - p * V
+    adj[p].push(q)
+    adj[q].push(p)
+  }
+  return adj
 }
 
 // Take in vertices outside the region whose edge neighbours are all inside it, for a few rounds (in place).

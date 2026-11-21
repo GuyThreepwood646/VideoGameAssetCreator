@@ -1,5 +1,8 @@
 """WP-69: the numpy core of the stiff-part pass (blender/worn_region.py) and the stiff kind (declared_parts.py).
 Runs without Blender."""
+import json
+from pathlib import Path
+
 import numpy as np
 
 from vgac import declared_parts as dp
@@ -21,11 +24,73 @@ def _quad_pair(z_fold):
     return co, faces
 
 
-def test_grow_crosses_a_convex_ridge():
-    # a convex ridge: the second face folds up (outward normals turn away), so growth continues across it
-    co, faces = _quad_pair(-0.5)
-    m = wr.grow_region(co, faces, [0.1, 0.1, 0.0], radius=5.0)
+def _convex_strip():
+    # a convex half-cylinder (axis along y), 4 segments by 2 rows: every interior edge is a convex ridge, with outward
+    # normals. Growth from one corner must cross the shared interior edges to reach the far corner.
+    co, faces = [], []
+    for y in (0.0, 1.0):
+        for k in range(5):
+            t = k * np.pi / 8
+            co.append([np.cos(t), y, np.sin(t)])
+    co = np.asarray(co, dtype=float)
+    for k in range(4):
+        a0, b0, c0, d0 = k, k + 1, k + 6, k + 5
+        for tri in ((a0, b0, c0), (a0, c0, d0)):
+            p0, p1, p2 = co[list(tri)]
+            n = np.cross(p1 - p0, p2 - p0)
+            radial = np.array([(p0[0] + p1[0] + p2[0]) / 3, 0.0, (p0[2] + p1[2] + p2[2]) / 3])
+            faces.append(tri if np.dot(n, radial) > 0 else (tri[0], tri[2], tri[1]))
+    return co, np.asarray(faces, dtype=int)
+
+
+def test_grow_crosses_the_shared_edges_of_a_convex_ridge():
+    co, faces = _convex_strip()
+    m = wr.grow_region(co, faces, co[0], radius=10.0)
     assert m.all()
+
+
+def _cube():
+    corners = [[x, y, z] for x in (-1.0, 1.0) for y in (-1.0, 1.0) for z in (-1.0, 1.0)]
+    quads = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+    faces = []
+    for q in quads:
+        for tri in ((q[0], q[1], q[2]), (q[0], q[2], q[3])):
+            a, b, c = (np.asarray(corners[i], dtype=float) for i in tri)
+            n = np.cross(b - a, c - a)
+            if np.dot(n, (a + b + c) / 3.0) < 0:  # outward
+                tri = (tri[0], tri[2], tri[1])
+            faces.append(tri)
+    return np.asarray(corners, dtype=float), np.asarray(faces, dtype=int)
+
+
+def test_one_click_covers_a_box():
+    co, faces = _cube()
+    m = wr.grow_region(co, faces, co[0], radius=10.0)
+    assert m.all()
+
+
+_FIXTURE = Path(__file__).parent / "fixtures" / "stiff_region_floor.json"
+
+
+def test_box_on_a_floor_stops_at_the_valley_and_takes_the_box():
+    fx = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+    co = np.asarray(fx["verts"], dtype=float)
+    faces = np.asarray(fx["faces"], dtype=int)
+    m = wr.grow_region(co, faces, co[fx["click"]], radius=fx["radius"], limit=fx["limit"])
+    assert m[fx["box_top"]].all() and m[fx["box_bottom"]].all()
+    floor = [i for i in range(len(co)) if i not in set(fx["box_top"]) | set(fx["box_bottom"])]
+    assert not m[floor].any()
+
+
+def test_shared_fixture_region_matches_the_typescript_region():
+    # frontend/tests/stiff-region.test.ts reads the same file and must give the same region: grow, then hole fill
+    fx = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+    co = np.asarray(fx["verts"], dtype=float)
+    faces = np.asarray(fx["faces"], dtype=int)
+    m = wr.grow_region(co, faces, co[fx["click"]], radius=fx["radius"], limit=fx["limit"])
+    edges = np.array([[f[k], f[(k + 1) % 3]] for f in faces for k in range(3)], dtype=int)
+    m, _ = wr.fill_holes(m, edges)
+    assert sorted(int(i) for i in np.where(m)[0]) == fx["expected_region"]
 
 
 def test_grow_respects_radius_and_empty_when_far():
