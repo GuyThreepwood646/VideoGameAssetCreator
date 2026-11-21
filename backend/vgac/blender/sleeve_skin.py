@@ -1,6 +1,6 @@
 """Blender headless: sleeve skin pass on a rigged GLB (WP-79), run last in the rig step's skin passes.
 
-Run: blender -b --python sleeve_skin.py -- <rig.glb> <out.glb> --report <json> [--split]
+Run: blender -b --python sleeve_skin.py -- <rig.glb> <out.glb> --report <json>
 
 A robe with a bell sleeve tears at the sleeve in the moves: the mage's cuff and forearm skin was measured 100 times
 longer than at rest in the attack (5 mm edges over 0.7 m). Two causes, both on forearm skin only (vertices with at
@@ -10,13 +10,9 @@ least ARM_MASS_MIN of their weight on the arm chain: shoulder, upper arm, forear
    bone.
    The other way round, skirt or leg skin (under half arm chain, at least LEG_MASS_MIN on the legs) gives away the
    forearm weight it picked up from the sleeve lying against it, to its strongest leg bone.
-With --split (off in the rig step: it opened a 14 to 34 mm see-through slit between sleeve and skirt in walk, run and death)
-the mesh is also cut where the sleeve is welded to the skirt:
-2. Edges 5 to 15 mm long at rest join forearm skin to skin on the hips or thigh, and they stretch as the arm swings away. A vertex
-   that has faces of both kinds is split in two, one copy for the forearm faces and one for the others. A copy that does not fit
-   its faces takes the average weights of its neighbours of the matching kind. A seam whose far side is itself arm chain (the
-   elbow, the shoulder) is left joined.
-Step 1 clears the mage's left sleeve; the right sleeve's welded bridge to the skirt is only cut by step 2. The rest mesh, the
+A third step that cut the mesh where the sleeve is welded to the skirt was tried and dropped: a cut turns the stretch into a
+gap of the same size, and it opened a 14 to 34 mm see-through slit in walk, run and death (the copy is in bakeoff/mage_sleeve).
+Known limit: a bell sleeve welded to the skirt keeps its stretched bridge at the cuff. The rest mesh, the
 bones, the other weights and the animation are not touched. Only a skeleton with forearm bones is touched.
 
 Everything above main() is plain numpy so the backend tests can run it without Blender.
@@ -114,32 +110,6 @@ def hand_over_fore_weight(W, cols, leg_min=LEG_MASS_MIN, mass_min=ARM_MASS_MIN):
     return W, int(len(rows))
 
 
-def face_is_fore(faces, vertex_fore):
-    """Per face: True when more than half its corners are forearm skin. faces: list of vertex index sequences."""
-    vf = np.asarray(vertex_fore, dtype=bool)
-    return [2 * int(sum(vf[v] for v in f)) > len(f) for f in faces]
-
-
-def seam_edges(faces, face_fore, vertex_arm):
-    """Edges (sorted vertex index pairs) shared by exactly two faces of different kind, forearm skin on one side. A seam
-    is left joined when every corner of its non-forearm face is itself arm chain skin (vertex_arm): the elbow."""
-    owner = {}
-    for fi, f in enumerate(faces):
-        n = len(f)
-        for k in range(n):
-            a, b = f[k], f[(k + 1) % n]
-            owner.setdefault((min(a, b), max(a, b)), []).append(fi)
-    out = []
-    for e, fs in owner.items():
-        if len(fs) != 2 or face_fore[fs[0]] == face_fore[fs[1]]:
-            continue
-        other = fs[0] if not face_fore[fs[0]] else fs[1]
-        if all(vertex_arm[v] for v in faces[other]):
-            continue
-        out.append(e)
-    return sorted(out)
-
-
 def limit_influences(weights, keep=MAX_INFLUENCES):
     """{group: weight} cut to the `keep` largest and normalised to 1 (an empty or zero row stays as it is)."""
     top = sorted(((g, w) for g, w in weights.items() if w > 1e-9), key=lambda gw: -gw[1])[:keep]
@@ -150,7 +120,7 @@ def limit_influences(weights, keep=MAX_INFLUENCES):
 # ---- Blender side -------------------------------------------------------------------------------------------------
 
 
-def _process_mesh(o, report, split=False):  # pragma: no cover - runs inside Blender
+def _process_mesh(o, report):  # pragma: no cover - runs inside Blender
     import bmesh
 
     names = [g.name for g in o.vertex_groups]
@@ -183,48 +153,6 @@ def _process_mesh(o, report, split=False):  # pragma: no cover - runs inside Ble
             for g, w in row.items():
                 bm.verts[i][dl][int(g)] = w
     report["leg_weight_vertices"] += n_leg
-    fshare = fore_share(W2, cols)
-    ashare = arm_chain_share(W2, cols)
-    vf = fshare >= ARM_MASS_MIN
-    va = ashare >= ARM_MASS_MIN
-    bm.faces.ensure_lookup_table()
-    faces = [[v.index for v in f.verts] for f in bm.faces]
-    ffore = face_is_fore(faces, vf)
-    fkind = {f: ffore[i] for i, f in enumerate(bm.faces)}
-    seams = seam_edges(faces, ffore, va)
-    if seams and split:
-        want = set(seams)
-        edges = [e for e in bm.edges if (min(e.verts[0].index, e.verts[1].index), max(e.verts[0].index, e.verts[1].index)) in want]
-        bmesh.ops.split_edges(bm, edges=edges)
-        changed = True
-        report["seam_edges"] += len(edges)
-
-        def share(v):
-            return sum(w for g, w in v[dl].items() if g in fore_set)
-
-        fore_set = set(cols["fore"])
-        fixes = {}
-        for v in bm.verts:
-            kinds = {fkind[f] for f in v.link_faces if f in fkind}
-            if len(kinds) != 1:
-                continue
-            kind = next(iter(kinds))
-            if (share(v) >= ARM_MASS_MIN) == kind:
-                continue
-            near = [u for f in v.link_faces for u in f.verts if u is not v and (share(u) >= ARM_MASS_MIN) == kind]
-            if not near:
-                continue
-            acc = {}
-            for u in near:
-                for g, w in u[dl].items():
-                    acc[g] = acc.get(g, 0.0) + w / len(near)
-            fixes[v] = limit_influences(acc)
-        for v, row in fixes.items():
-            for g in list(v[dl].keys()):
-                del v[dl][g]
-            for g, w in row.items():
-                v[dl][int(g)] = w
-        report["reweighted_vertices"] += len(fixes)
     if changed:
         bm.to_mesh(me)
         me.update()
@@ -241,12 +169,11 @@ def main():  # pragma: no cover - runs inside Blender
     argv = _common.after_double_dash()
     src, dst = os.path.abspath(argv[0]), os.path.abspath(argv[1])
     report_path = _common.opt("--report", None)
-    split = _common.flag("--split")
     _common.open_glb(src)
     scene = bpy.context.scene
     arm = next((o for o in scene.objects if o.type == "ARMATURE"), None)
     meshes = [o for o in scene.objects if o.type == "MESH" and o.vertex_groups]
-    report = {"ok": False, "leg_weight_vertices": 0, "seam_edges": 0, "reweighted_vertices": 0, "changed": 0}
+    report = {"ok": False, "leg_weight_vertices": 0, "changed": 0}
     if arm is None or not meshes:
         report["reason"] = "no armature or no skinned mesh"
     elif not any(kind_columns([g.name for g in o.vertex_groups])["fore"] for o in meshes):
@@ -254,7 +181,7 @@ def main():  # pragma: no cover - runs inside Blender
     else:
         any_changed = False
         for o in meshes:
-            any_changed = _process_mesh(o, report, split) or any_changed
+            any_changed = _process_mesh(o, report) or any_changed
         report["ok"] = True
         report["changed"] = int(any_changed)
     if report_path:
@@ -268,7 +195,7 @@ def main():  # pragma: no cover - runs inside Blender
         bpy.context.view_layer.objects.active = keep_objs[0]
         bpy.ops.export_scene.gltf(filepath=dst, export_format="GLB", use_selection=True, export_apply=False, export_animations=True)
     print("SLEEVE_SKIN_OK" if report["ok"] else "SLEEVE_SKIN_SKIPPED", report.get("reason", ""), report["changed"],
-          report["leg_weight_vertices"], report["seam_edges"], report["reweighted_vertices"])
+          report["leg_weight_vertices"])
 
 
 if __name__ == "__main__":  # pragma: no cover

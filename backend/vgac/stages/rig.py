@@ -1338,10 +1338,9 @@ async def _leg_skin(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> 
 
 async def _sleeve_skin(sc: StageContext, rig_glb: Path) -> None:
     """Sleeve skin pass (blender/sleeve_skin.py, WP-79): on forearm skin, leg weight goes to the arm; skirt skin gives back
-    the forearm weight it took from a sleeve lying against it; and where the mesh welds the sleeve to the skirt the
-    vertices along the seam are split, so a bell sleeve does not tear when the arm swings away from the hip. In place,
+    the forearm weight it took from a sleeve lying against it, so a bell sleeve does not follow the legs. In place,
     only when something changed; the rig before it is kept as rig_before_sleeve_skin.glb. metrics.sleeve_skin: {ok,
-    changed, leg_weight_vertices, seam_edges, reweighted_vertices} or {reason}. Never raises."""
+    changed, leg_weight_vertices} or {reason}. Never raises."""
     out = sc.dir / "rig_sleeve_skin.glb"
     report = sc.dir / "sleeve_skin.json"
     try:
@@ -1352,7 +1351,7 @@ async def _sleeve_skin(sc: StageContext, rig_glb: Path) -> None:
             shutil.copy2(rig_glb, sc.dir / "rig_before_sleeve_skin.glb")
             shutil.move(str(out), str(rig_glb))
         sc.set_metrics(sleeve_skin={"ok": True, **{k: int(rep.get(k) or 0) for k in
-                                                    ("changed", "leg_weight_vertices", "seam_edges", "reweighted_vertices")}}
+                                                    ("changed", "leg_weight_vertices")}}
                        if rep.get("ok") else {"ok": False, "reason": rep.get("reason") or "not run"})
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(sleeve_skin={"error": str(e)[:300]})

@@ -66,23 +66,6 @@ def test_shares_and_influence_limit():
     assert len(row) == 4 and sum(row.values()) == pytest.approx(1.0) and 4 not in row
 
 
-def test_seams_are_the_edges_between_forearm_faces_and_other_faces_but_not_the_elbow():
-    # Vertices 0..3 forearm skin, 4..5 skirt skin. Faces: two forearm faces, one bridge (2 forearm + 1 skirt), two skirt faces.
-    faces = [(0, 1, 2), (1, 2, 3), (2, 3, 4), (3, 4, 5), (4, 5, 6)]
-    vf = np.array([1, 1, 1, 1, 0, 0, 0], dtype=bool)
-    ffore = sk.face_is_fore(faces, vf)
-    assert ffore == [True, True, True, False, False]
-    arm = np.zeros(7, dtype=bool)
-    assert sk.seam_edges(faces, ffore, arm) == [(2, 4), (3, 4)] or sk.seam_edges(faces, ffore, arm) == [(3, 4)]
-    # the seam between face 2 (forearm) and face 3 (skirt) is the edge (3, 4); the elbow rule drops it when the far face is arm chain
-    assert (3, 4) in sk.seam_edges(faces, ffore, arm)
-    arm_all = np.ones(7, dtype=bool)
-    assert sk.seam_edges(faces, ffore, arm_all) == []
-    # an edge on a mesh border (one face) or shared by three faces is never a seam
-    assert sk.seam_edges([(0, 1, 2)], [True], arm) == []
-    assert sk.seam_edges([(0, 1, 2), (0, 1, 3), (0, 1, 4)], [True, False, False], arm) == []
-
-
 # --- the script, for real ----------------------------------------------------------------------------------------
 
 _MAKE = textwrap.dedent('''
@@ -129,34 +112,6 @@ _READ = textwrap.dedent('''
 ''')
 
 
-@needs_blender
-def test_with_split_a_welded_sleeve_is_cut_from_the_skirt_with_nothing_moved_at_rest(tmp_path):
-    src, out, rep = tmp_path / "in.glb", tmp_path / "out.glb", tmp_path / "rep.json"
-    (tmp_path / "make.py").write_text(_MAKE, encoding="utf-8")
-    (tmp_path / "read.py").write_text(_READ, encoding="utf-8")
-    run = lambda *a: subprocess.run([str(BLENDER), "-b", "--threads", "2", *a], capture_output=True, text=True, timeout=300)  # noqa: E731
-    r = run("--python", str(tmp_path / "make.py"), "--", str(src))
-    assert src.is_file(), r.stdout[-800:] + r.stderr[-800:]
-    script = inspect.getsourcefile(sk)
-    r = run("--python", script, "--", str(src), str(out), "--report", str(rep), "--split")
-    data = json.loads(rep.read_text(encoding="utf-8"))
-    assert data["ok"] and data["changed"] == 1 and data["leg_weight_vertices"] >= 1 and data["seam_edges"] >= 1, r.stdout[-800:]
-    r = run("--python", str(tmp_path / "read.py"), "--", str(out), str(__import__("pathlib").Path(script).parent))
-    res = json.loads(next(ln for ln in r.stdout.splitlines() if ln.startswith("RESULT"))[len("RESULT"):])
-    rows, edges, co = res["rows"], res["edges"], res["co"]
-    assert len(rows) > 16  # seam vertices were split in two
-    for row in rows:  # rows stay whole
-        assert sum(row.values()) == pytest.approx(1.0, abs=0.02)
-    # no edge joins a forearm-dominated vertex to a thigh-dominated one any more
-    dom = [max(r, key=r.get) for r in rows]
-    assert not [e for e in edges if {dom[e[0]], dom[e[1]]} == {"LeftForeArm", "LeftUpLeg"}]
-    # the forearm vertex that carried 0.3 thigh weight gives it to the arm
-    assert all(r.get("LeftUpLeg", 0) < 0.05 for r, d in zip(rows, dom) if d == "LeftForeArm")
-    # nothing moved at rest: every split copy sits where an original vertex sat
-    first = {tuple(c) for c in co}
-    assert len(first) == 16
-
-
 # --- the rig step's call -----------------------------------------------------------------------------------------
 
 
@@ -194,20 +149,20 @@ def _step(tmp_path, report):
 
 
 def test_a_changed_rig_replaces_the_old_one_and_the_old_one_is_kept(tmp_path):
-    sc, glb = _step(tmp_path, {"ok": True, "changed": 1, "leg_weight_vertices": 400, "seam_edges": 85, "reweighted_vertices": 174})
+    sc, glb = _step(tmp_path, {"ok": True, "changed": 1, "leg_weight_vertices": 400})
     assert glb.read_bytes() == b"NEW" and (tmp_path / "rig_before_sleeve_skin.glb").read_bytes() == b"OLD"
-    assert sc.metrics["sleeve_skin"] == {"ok": True, "changed": 1, "leg_weight_vertices": 400, "seam_edges": 85, "reweighted_vertices": 174}
+    assert sc.metrics["sleeve_skin"] == {"ok": True, "changed": 1, "leg_weight_vertices": 400}
 
 
 def test_nothing_changed_or_not_run_leaves_the_rig_as_it_was(tmp_path):
-    sc, glb = _step(tmp_path, {"ok": True, "changed": 0, "leg_weight_vertices": 0, "seam_edges": 0, "reweighted_vertices": 0})
+    sc, glb = _step(tmp_path, {"ok": True, "changed": 0, "leg_weight_vertices": 0})
     assert glb.read_bytes() == b"OLD" and not (tmp_path / "rig_before_sleeve_skin.glb").exists() and sc.metrics["sleeve_skin"]["ok"]
     sc2, glb2 = _step(tmp_path, {"ok": False, "reason": "no forearm bones"})
     assert glb2.read_bytes() == b"OLD" and sc2.metrics["sleeve_skin"] == {"ok": False, "reason": "no forearm bones"}
 
 
 @needs_blender
-def test_without_split_only_weights_change_and_no_vertex_is_added(tmp_path):
+def test_only_weights_change_and_no_vertex_is_added(tmp_path):
     src, out, rep = tmp_path / "in.glb", tmp_path / "out.glb", tmp_path / "rep.json"
     (tmp_path / "make.py").write_text(_MAKE, encoding="utf-8")
     (tmp_path / "read.py").write_text(_READ, encoding="utf-8")
@@ -215,7 +170,7 @@ def test_without_split_only_weights_change_and_no_vertex_is_added(tmp_path):
     run("--python", str(tmp_path / "make.py"), "--", str(src))
     run("--python", inspect.getsourcefile(sk), "--", str(src), str(out), "--report", str(rep))
     data = json.loads(rep.read_text(encoding="utf-8"))
-    assert data["ok"] and data["leg_weight_vertices"] >= 1 and data["seam_edges"] == 0 and data["reweighted_vertices"] == 0
+    assert data["ok"] and data["changed"] == 1 and data["leg_weight_vertices"] >= 1
     r = run("--python", str(tmp_path / "read.py"), "--", str(out), str(__import__("pathlib").Path(inspect.getsourcefile(sk)).parent))
     res = json.loads(next(ln for ln in r.stdout.splitlines() if ln.startswith("RESULT"))[len("RESULT"):])
     assert len(res["rows"]) == 16
