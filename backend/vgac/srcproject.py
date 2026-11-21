@@ -2452,11 +2452,23 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
                               tilts=[float(prec["tilt"]) + d for d in (-20.0, -10.0, 0.0, 10.0, 20.0)] if near else None,
                               lenses=[prec.get("lens")] if near else None, prior=INTENDED_TURN[name],
                               window=DRAWN_PRIOR_DEG, keep=1)  # expected at the turn it was drawn at; best coarse pose only
-            # Any refusal stands, the outline one too (round 5): a drawn view whose pose near the turn it was drawn at misses
-            # the outline is not fitted again at any turn (that put the hat's back view 28 degrees off, onto the side).
-            if pv is not None:
+            if pv is None:  # the search failed outright: today's turn-only fit, logged by _pose_fit
+                return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, bar, log=log, outlines=outlines)
+            if pv.ok or not _silhouette_refused(pv):  # a D2 or expected-turn refusal stands
                 return pv
-            return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, bar, log=log, outlines=outlines)  # search failed
+            # The searched pose misses the outline: today's turn-only fit, over the turns within DRAWN_PRIOR_DEG of the
+            # turn the view was drawn at only (round 5). Over every turn it put the hat's back view 28 degrees off, onto
+            # the side; inside the window it keeps the side views of a candid photo build that fit.
+            near_yaws = [y for y in yaws if _angdiff(float(y), INTENDED_TURN[name]) <= DRAWN_PRIOR_DEG]
+            if not near_yaws:
+                return pv
+            tv = fit_view(mesh, tex, p_, a_, name, near_yaws, centre, scale, size, bar, log=log, outlines=outlines)
+            # fit_view settles its turn a little past the turns it is given: the result must still be inside the window
+            if not tv.ok or _angdiff(float(tv.info.get("yaw", 1e9)), INTENDED_TURN[name]) > DRAWN_PRIOR_DEG:
+                return pv
+            tv.info["turn_source"] = "turn-only fit near the drawn turn"
+            tv.info["pose_search"] = {**(pv.info.get("pose_search") or {}), "refused": pv.info.get("refused")}
+            return tv
         return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, bar, log=log, outlines=outlines)
 
     # Every view is fitted at the same time, in threads (each is independent of the others; separate processes were

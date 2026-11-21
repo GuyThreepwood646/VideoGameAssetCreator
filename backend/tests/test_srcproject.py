@@ -459,14 +459,15 @@ def test_the_refinement_stays_inside_the_turn_window(monkeypatch: pytest.MonkeyP
     assert held.turn <= 110.0 + 1e-9 and held.turn >= 108.0
 
 
-def test_a_drawn_view_refused_for_its_outline_is_not_fitted_again_at_any_turn(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Round 5: a drawn view whose pose near its drawn turn misses the outline stays refused; the old turn-only fit over
-    every turn is not tried (on the hat it put the back view at 152.5, onto the side)."""
-    fitted: list[str] = []
+def test_a_drawn_view_refused_for_its_outline_is_fitted_again_only_near_its_drawn_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round 5: a drawn view whose pose near its drawn turn misses the outline is fitted again by today's turn-only fit
+    over the turns within DRAWN_PRIOR_DEG of the drawn turn only, never over every turn (on the hat that put the back
+    view at 152.5, onto the side)."""
+    fitted: list[tuple[str, list[float]]] = []
     real_fit = srcproject.fit_view
 
     def spy_fit(mesh, tex, pic, alpha, name, yaws, *a, **k):  # noqa: ANN001
-        fitted.append((name, len(yaws)))
+        fitted.append((name, [float(y) for y in yaws]))
         return real_fit(mesh, tex, pic, alpha, name, yaws, *a, **k)
 
     real_pose = srcproject._pose_fit
@@ -481,8 +482,10 @@ def test_a_drawn_view_refused_for_its_outline_is_not_fitted_again_at_any_turn(mo
     monkeypatch.setattr(srcproject, "fit_view", spy_fit)
     monkeypatch.setattr(srcproject, "_pose_fit", pose)
     r = srcproject.paint(model(), soft_base(), picture(), {"left": picture()}, size=256, mode="full")
-    assert not any(n == "left" for n, _ in fitted)
-    assert "silhouette" in str(r["metrics"]["srcproject_views"]["left"]["refused"])
+    left = [ys for n, ys in fitted if n == "left"]
+    assert left and all(srcproject._angdiff(y, 90.0) <= srcproject.DRAWN_PRIOR_DEG for ys in left for y in ys)
+    rec = r["metrics"]["srcproject_views"]["left"]
+    assert "silhouette" in str(rec.get("refused") or rec["pose_search"].get("refused"))
 
 
 def test_the_picture_is_expected_at_the_turn_of_the_view_the_model_was_built_from(monkeypatch: pytest.MonkeyPatch) -> None:
