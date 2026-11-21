@@ -153,7 +153,7 @@ class ProjectPatch(BaseModel):
 class DeclaredPartIn(BaseModel):
     """A part the character has (declared_parts.py): a name and what it is for."""
     name: str = Field(max_length=200)
-    kind: str = Field(default="separate", max_length=20)
+    kind: str | None = Field(default=None, max_length=20)  # none: from the name (declared_parts.kind_from_name)
 
 
 class AssetIn(BaseModel):
@@ -633,8 +633,10 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
         a.face_matters = False
     a.wears_armour = body.wears_armour
     a.body_is_metal = body.body_is_metal
+    from . import declared_parts
+
     a.parts = _declared(body.parts, body.category) if body.parts is not None else [
-        {"name": str(n), "kind": "separate"} for n in (cat.get("parts_default") or [])]
+        {"name": str(n), "kind": declared_parts.kind_from_name(str(n), body.category)} for n in (cat.get("parts_default") or [])]
     db.add(a)
     db.commit()
     db.refresh(a)

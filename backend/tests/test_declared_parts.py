@@ -24,7 +24,8 @@ from test_springs import PONYTAIL, character, tube  # noqa: E402
 
 def test_normalize_gives_name_and_kind_and_refuses_the_label_form():
     assert dp.normalize([{"name": "  Cape  hem ", "kind": "sway"}], "humanoid") == [{"name": "Cape hem", "kind": "sway"}]
-    assert dp.normalize([{"name": "lid"}], "prop_articulated") == [{"name": "lid", "kind": "separate"}]
+    assert dp.normalize([{"name": "lid"}], "prop_articulated") == [{"name": "lid", "kind": "hinge"}]
+    assert dp.normalize([{"name": "belt"}], "humanoid") == [{"name": "belt", "kind": "separate"}]
     with pytest.raises(dp.PartError, match="kind now"):
         dp.normalize(["lid"], "prop_articulated")
 
@@ -41,7 +42,7 @@ def test_sway_is_for_humanoids_only_and_names_are_unique():
 def test_location_is_three_metres_and_bounded():
     assert dp.clean_location(None) is None
     assert dp.clean_location([0.1, 0.25, -0.3333333]) == [0.1, 0.25, -0.3333]
-    for bad in ([1, 2], [1, 2, "x"], [1, 2, float("nan")], [1, 2, 9], [True, 0, 0]):
+    for bad in ([1, 2], [1, 2, "x"], [1, 2, float("nan")], [1, 2, 25], [True, 0, 0]):
         with pytest.raises(dp.PartError):
             dp.clean_location(bad)
 
@@ -225,3 +226,61 @@ def test_blender_args_pass_the_declared_file(tmp_path):
     assert "--declared" in args and str(d) in [str(a) for a in args]
     plain = springs_mod.blender_args(tmp_path / "a.glb", tmp_path / "o.glb", tmp_path, None, None, None, None)
     assert "--declared" not in plain
+
+
+# --- moving parts (WP-29) ------------------------------------------------------------------------------------------
+
+
+def test_a_moving_kind_comes_from_the_name_on_objects_only():
+    assert dp.kind_from_name("Front wheels", "vehicle") == "spin"
+    assert dp.kind_from_name("top drawer", "prop_rigid") == "slide"
+    assert dp.kind_from_name("Lid", "prop_articulated") == "hinge"
+    assert dp.kind_from_name("door", "environment") == "hinge"
+    assert dp.kind_from_name("turret", "vehicle") == "separate"
+    assert dp.kind_from_name("wheel", "humanoid") == "separate"  # people have no moving kinds
+    assert dp.kind_from_name("lid", "foliage") == "separate"
+
+
+def test_moving_kinds_are_refused_on_characters_and_stiff_on_objects():
+    with pytest.raises(dp.PartError, match="no skeleton"):
+        dp.normalize([{"name": "lid", "kind": "hinge"}], "humanoid")
+    with pytest.raises(dp.PartError, match="only for humanoid"):
+        dp.normalize([{"name": "pack", "kind": "stiff"}], "vehicle")
+
+
+def test_a_placed_moving_part_keeps_points_and_settings_with_defaults():
+    declared = [{"name": "lid", "kind": "hinge"}, {"name": "door", "kind": "hinge"}, {"name": "drawer", "kind": "slide"},
+                {"name": "wheels", "kind": "spin"}]
+    rows = dp.placed([{"name": "lid", "locations": [[0, 0.8, 0]]}, {"name": "door", "locations": [[0, 1, 0.3]], "side": "left"},
+                      {"name": "drawer", "locations": [[0, 0.3, 0.3]], "distance": 0.5},
+                      {"name": "wheels", "locations": [[1, 0.3, 1], [-1, 0.3, 1]], "open_at_rest": True}], declared, "vehicle")
+    lid, door, drawer, wheels = rows
+    assert lid == {"name": "lid", "kind": "hinge", "location": None, "locations": [[0, 0.8, 0]], "side": "auto",
+                   "open_at_rest": False, "angle": 100.0}
+    assert door["angle"] == 90.0 and door["side"] == "left"
+    assert drawer["distance"] == 0.5 and "angle" not in drawer
+    assert wheels["open_at_rest"] is True and "angle" not in wheels and "distance" not in wheels
+    assert [r["name"] for r in dp.for_moving(rows)] == ["lid", "door", "drawer", "wheels"]
+    assert dp.for_moving(rows)[0] == {"name": "lid", "kind": "hinge", "locations": [[0, 0.8, 0]], "side": "auto",
+                                      "open_at_rest": False, "angle": 100.0}
+
+
+def test_moving_settings_are_checked():
+    declared = [{"name": "lid", "kind": "hinge"}, {"name": "drawer", "kind": "slide"}]
+    for bad, match in (({"side": "under"}, "hinge side"), ({"angle": 200}, "opening angle"), ({"angle": True}, "opening angle")):
+        with pytest.raises(dp.PartError, match=match):
+            dp.placed([{"name": "lid", "locations": [[0, 0, 0]], **bad}], declared, "prop_articulated")
+    with pytest.raises(dp.PartError, match="sliding distance"):
+        dp.placed([{"name": "drawer", "locations": [[0, 0, 0]], "distance": 1.5}], declared, "prop_articulated")
+    with pytest.raises(dp.PartError, match="at most 8"):
+        dp.placed([{"name": "lid", "locations": [[0, 0, 0]] * 9}], declared, "prop_articulated")
+
+
+def test_unplaced_moving_parts_are_named_and_the_view_shows_settings():
+    declared = [{"name": "lid", "kind": "hinge"}, {"name": "wheels", "kind": "spin"}, {"name": "sign", "kind": "separate"}]
+    rows = dp.placed([{"name": "lid", "locations": [[0, 1, 0]]}], declared, "prop_articulated")
+    assert dp.unplaced_moving(declared, rows) == ["wheels"]
+    v = dp.view(declared, rows, True)["parts"]
+    assert v[0]["angle"] == 100.0 and v[0]["side"] == "auto"
+    assert v[1]["locations"] == [] and v[1]["side"] == "auto" and "angle" not in v[1]
+    assert "side" not in v[2]
