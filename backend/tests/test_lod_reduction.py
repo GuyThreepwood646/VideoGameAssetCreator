@@ -41,6 +41,31 @@ bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", use_selection=True)
 '''
 
 
+# A chain of flat grids that touch only at one corner vertex each (a tree's leaf cards): after the weld every touching
+# vertex is pinched, two fans of faces meeting at a point, and the collapse stalled well above its ratio.
+MAKE_PINCH = r'''
+import bpy, bmesh, sys
+from mathutils import Matrix
+out = sys.argv[sys.argv.index("--") + 1]
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bm = bmesh.new()
+import math
+for i in range(12):
+    # every grid has a vertex at its centre; all twelve centres sit on one point, at different tilts
+    rot = Matrix.Rotation(i * 0.5, 4, "X") @ Matrix.Rotation(i * 0.9, 4, "Z")
+    bmesh.ops.create_grid(bm, x_segments=8, y_segments=8, size=0.5, matrix=rot)
+mesh = bpy.data.meshes.new("Pinch")
+bm.to_mesh(mesh)
+bm.free()
+obj = bpy.data.objects.new("Pinch", mesh)
+bpy.context.scene.collection.objects.link(obj)
+bpy.ops.object.select_all(action="DESELECT")
+obj.select_set(True)
+bpy.context.view_layer.objects.active = obj
+bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", use_selection=True)
+'''
+
+
 def _blender_or_skip():
     exe = blender()
     if exe is None:
@@ -76,3 +101,24 @@ def test_lods_of_a_multi_piece_non_manifold_mesh_are_reduced(tmp_path):
     assert 0.18 * lod0 <= _tris(report, "LOD2") <= 0.32 * lod0, report["lods"]
     # the lower level is smaller than the one above it, not the same mesh again
     assert _tris(report, "LOD2") < _tris(report, "LOD1")
+
+
+def test_lods_of_pieces_that_touch_at_single_vertices_are_reduced(tmp_path):
+    exe = _blender_or_skip()
+    script = tmp_path / "make_pinch.py"
+    script.write_text(MAKE_PINCH, encoding="utf-8")
+    src = tmp_path / "pinch.glb"
+    subprocess.run([str(exe), "-b", "--factory-startup", "--python", str(script), "--", str(src)],
+                   capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+    assert src.is_file()
+    out = tmp_path / "out"
+    run = subprocess.run([str(exe), "-b", "--factory-startup", "--python", str(PACK), "--", str(src), str(out), "pinch",
+                          "--lods", "0.5,0.1", "--formats", "glb", "--collider", "none"],
+                         capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
+    report_path = out / "report.json"
+    assert report_path.is_file(), run.stdout[-800:] + run.stderr[-800:]
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    lod0 = _tris(report, "LOD0")
+    assert lod0 > 1000
+    assert _tris(report, "LOD1") <= 0.6 * lod0, report["lods"]
+    assert _tris(report, "LOD2") <= 0.15 * lod0, report["lods"]
