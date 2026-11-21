@@ -42,6 +42,9 @@ def make_seamless(raw_path: Path | str, dest: Path | str, power: float = 1.6) ->
     wgt = np.outer(yy, xx)[..., None]
     wgt_s = np.roll(np.roll(wgt, h // 2, axis=0), w // 2, axis=1)
     out = (im * wgt + shifted * wgt_s) / np.maximum(wgt + wgt_s, 1e-6)
+    # Where a border meets a middle line both weights are 0 (8 texels, a 2 x 2 dot at the middle of each join in a
+    # repeat): take the plain average there instead of 0 / 1e-6, which was pure black.
+    out = np.where(wgt + wgt_s > 0, out, (im + shifted) / 2)
     Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).save(dest)
     return Path(dest)
 
