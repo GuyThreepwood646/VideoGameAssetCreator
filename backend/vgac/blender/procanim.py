@@ -1766,20 +1766,34 @@ def limb_lowest_parts(P, parts):
     return out
 
 
+def _below(name):
+    """A bone and every bone under it."""
+    s_ = set()
+    stack = [byname[name]]
+    while stack:
+        b = stack.pop()
+        s_.add(b.name)
+        stack.extend(b.children)
+    return s_
+
+
 def arm_parts():
     """{end bone: every bone from the arm's root down (upper arm, sleeve, forearm, hand)} for each arm chain."""
     out = {}
     for a in arm_info:
         ch = a.get("ik")
-        if not ch:
-            continue
-        s_ = set()
-        stack = [byname[ch["a"]]]
-        while stack:
-            b = stack.pop()
-            s_.add(b.name)
-            stack.extend(b.children)
-        out[ch["end_bone"] or ch["m"]] = s_
+        if ch:
+            out[ch["end_bone"] or ch["m"]] = _below(ch["a"])
+    return out
+
+
+def leg_parts():
+    """{end bone: every bone from the leg's root down (thigh, robe, shin, foot) for each leg chain}."""
+    out = {}
+    for li in leg_info:
+        ch = li.get("ik")
+        if ch:
+            out[ch["end_bone"] or ch["m"]] = _below(ch["a"])
     return out
 
 
@@ -1792,6 +1806,7 @@ def clip_death(P, t):
 
         drop = ground_fix(final)
         fix = {}
+        head_deg = 0.0
         if motion != "serpent" and n_legs < 6 and (arm_info or any(li.get("ik") for li in leg_info)):
             # WP-78: the torso comes down onto the ground first (head, neck, spine, hips), so the arms are aimed from
             # shoulders that are near the ground rather than from a body held up by its straight arms. The limbs then
@@ -1812,7 +1827,7 @@ def clip_death(P, t):
                 apply_fix(R, fix, 1.0)
                 lows = limb_lowest(R)
                 # WP-78: an arm's sleeve or upper arm may go under the ground too; the arm is lifted locally for it.
-                lows.update(limb_lowest_parts(R, arm_parts()))
+                lows.update(limb_lowest_parts(R, {**arm_parts(), **leg_parts()}))
                 Mw = fk(R)
                 done = True
                 for end_bone, z in lows.items():
@@ -1830,10 +1845,32 @@ def clip_death(P, t):
             apply_fix(R, fix, 1.0)
             extra = _rest_low[0] - torso_lowest(R)
             drop = drop_t + extra
-        _death.update(drop=drop, fix=fix)
+            # WP-78: the head is bent (neck, within 35 degrees) so its lowest point rests on the ground, not held up.
+            hset = set()
+            for hb in head_bones:
+                hset |= _below(hb)
+
+            def head_low(d_):
+                Q = Pose()
+                final(Q, drop)
+                apply_fix(Q, fix, 1.0)
+                head_pitch(Q, d_)
+                return limb_lowest_parts(Q, {"head": hset}).get("head", g) - g
+
+            best, best_cost = 0.0, None
+            for d_ in range(-35, 36, 2):
+                z = head_low(d_)
+                if z < -0.003:
+                    continue
+                if best_cost is None or abs(z) < best_cost:
+                    best, best_cost = float(d_), abs(z)
+            head_deg = best
+        _death.update(drop=drop, fix=fix, head=head_deg)
     _death_pose(P, t, _death["drop"])
     hands_pose(P, 0.0)
-    apply_fix(P, _death["fix"], gait.envelope(t, [(0.45, 0), (0.9, 1)]))
+    w = gait.envelope(t, [(0.45, 0), (0.9, 1)])
+    apply_fix(P, _death["fix"], w)
+    head_pitch(P, _death["head"] * w)
 
 
 def clip_flap(P, t):
