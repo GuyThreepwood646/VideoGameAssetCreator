@@ -1,27 +1,62 @@
 // Painting on the 3D preview (WP-22): the session that owns the picture layers of one loaded model, and the viewer tool
-// that turns pointer spots into brush dabs. Painting is for this page only: nothing is saved yet (WP-23 does that).
+// that turns pointer spots into brush dabs. Painting is for this page only until a save (WP-23).
+//
+// Three kinds of picture can be painted (WP-32): the colour picture, the shine picture (roughness, stored as roughness:
+// shine is 1 minus it) and the metal picture. The shine and metal pictures are the two channels of the model's
+// metallic-roughness picture, each read as a grey picture of its own.
 import * as THREE from 'three'
 import type { SurfaceHit, ViewerModel, ViewerTool } from '../viewerTool'
-import { paintDab, type Brush, type Dab, type DabTarget } from './paintDab'
-import { PaintLayer, type StrokeRecord } from './paintLayer'
+import { fillRegion, paintDab, smudgeDab, type Brush, type Dab, type DabTarget } from './paintDab'
+import { PaintLayer, type PaintTargetName, type StrokeRecord } from './paintLayer'
 
-export type PaintMode = 'paint' | 'erase' | 'pick'
+export type PaintMode = 'paint' | 'erase' | 'pick' | 'smudge' | 'fill'
+export type PaintTarget = PaintTargetName
 export type PaintSettings = {
   mode: PaintMode
+  target: PaintTarget // which picture the brush paints: the colour, the shine or the metal
   rgb: [number, number, number]
   radius: number // metres on the model
   hardness: number // 0 soft to 1 hard
-  strength: number // 0 to 1
+  strength: number // 0 to 1 (for smudge: how far the colour drags)
+  match: number // 0 to 1: how close a colour must be to the clicked one for Fill
+  shine: number // 0 matt to 1 shiny (WP-32)
+  metal: number // 0 not metal to 1 metal (WP-32)
   faceOnly: boolean
   mirror: boolean
 }
-export const DEFAULT_PAINT: PaintSettings = { mode: 'paint', rgb: [178, 58, 58], radius: 0.02, hardness: 0.6, strength: 1, faceOnly: false, mirror: false }
-// Brush sizes offered, in metres (the slider shows centimetres).
+export const DEFAULT_PAINT: PaintSettings = {
+  mode: 'paint',
+  target: 'colour',
+  rgb: [178, 58, 58],
+  radius: 0.02,
+  hardness: 0.6,
+  strength: 1,
+  match: 0.12,
+  shine: 0.5,
+  metal: 0,
+  faceOnly: false,
+  mirror: false,
+}
+
+// The value the brush lays down for the chosen picture: an sRGB colour, or a grey level for shine and metal.
+export function targetRgb(s: PaintSettings): [number, number, number] {
+  if (s.target === 'shine') {
+    const v = Math.round((1 - s.shine) * 255)
+    return [v, v, v]
+  }
+  if (s.target === 'metal') {
+    const v = Math.round(s.metal * 255)
+    return [v, v, v]
+  }
+  return [...s.rgb] as [number, number, number]
+}
+
 // What a stroke was set to, for the stroke log saved with the picture (WP-23). Sizes in centimetres.
 export function strokeRecordOf(s: PaintSettings): StrokeRecord {
   return {
-    mode: s.mode === 'erase' ? 'erase' : 'paint',
-    rgb: [...s.rgb] as [number, number, number],
+    mode: s.mode === 'erase' ? 'erase' : s.mode === 'smudge' ? 'smudge' : s.mode === 'fill' ? 'fill' : 'paint',
+    target: s.target,
+    rgb: targetRgb(s),
     size_cm: Math.round(s.radius * 1000) / 10,
     edge: Math.round(s.hardness * 100) / 100,
     strength: Math.round(s.strength * 100) / 100,
@@ -89,6 +124,37 @@ function flipRows(px: Uint8Array, w: number, h: number): Uint8Array {
   return out
 }
 
+// One channel of a metallic-roughness picture (1 = green, roughness; 2 = blue, metal) as a grey picture of its own.
+function channelLayer(texture: THREE.Texture, channel: 1 | 2): PaintLayer {
+  const pic = readPicture(texture)
+  const px = new Uint8Array(pic.pixels.length)
+  for (let o = 0; o < px.length; o += 4) {
+    const v = pic.pixels[o + channel]
+    px[o] = v
+    px[o + 1] = v
+    px[o + 2] = v
+    px[o + 3] = 255
+  }
+  const layer = new PaintLayer(pic.width, pic.height, px, true)
+  layer.texture.wrapS = texture.wrapS
+  layer.texture.wrapT = texture.wrapT
+  return layer
+}
+
+// Whether the model has a shine picture and a metal picture the editor can paint (on the first UV layout).
+export function paintableMaps(model: ViewerModel): { shine: boolean; metal: boolean } {
+  let shine = false
+  let metal = false
+  for (const mesh of model.meshes) {
+    const uv = mesh.geometry?.attributes.uv
+    const mat = firstMaterial(model.texturedMaterial(mesh))
+    if (!uv || !mat) continue
+    if (mat.roughnessMap && (mat.roughnessMap.channel ?? 0) === 0) shine = true
+    if (mat.metalnessMap && (mat.metalnessMap.channel ?? 0) === 0) metal = true
+  }
+  return { shine, metal }
+}
+
 // Checks that need no change to the model: the warnings the panel shows before painting starts.
 export function checkPaint(model: ViewerModel, look: string | null): PaintWarning[] {
   const out: PaintWarning[] = []
@@ -131,17 +197,45 @@ export function checkPaint(model: ViewerModel, look: string | null): PaintWarnin
   return out
 }
 
+// The last layer in the list that satisfies the test, or null.
+function lastWith(list: PaintLayer[], ok: (l: PaintLayer) => boolean): PaintLayer | null {
+  for (let i = list.length - 1; i >= 0; i--) if (ok(list[i])) return list[i]
+  return null
+}
+
+// The layers a save sends: the one colour picture, and the shine and metal pictures when the model has them.
+export type SaveMaps = { colour: PaintLayer; shine: PaintLayer | null; metal: PaintLayer | null }
+
 // The picture layers of one model: a blank picture for each textured part that has none, the model's own picture
-// otherwise. Creating a session changes the materials of the model (it gives blank parts a picture).
+// otherwise. Creating a session changes the materials of the model (it gives blank parts a picture, and swaps the
+// metallic-roughness picture for its two channels).
 export class PaintSession {
   readonly layers: PaintLayer[] = []
-  private readonly layerByMesh = new Map<THREE.Mesh, PaintLayer>()
+  private readonly colourLayers: PaintLayer[] = []
+  private readonly shineLayers: PaintLayer[] = []
+  private readonly metalLayers: PaintLayer[] = []
+  private readonly colourByMesh = new Map<THREE.Mesh, PaintLayer>()
+  private readonly shineByMesh = new Map<THREE.Mesh, PaintLayer>()
+  private readonly metalByMesh = new Map<THREE.Mesh, PaintLayer>()
   private readonly targets = new Map<PaintLayer, DabTarget[]>()
   private readonly mirrorX: number
-  private lastLayer: PaintLayer | null = null
+  // The order of the steps across the pictures (WP-32): one entry per step, naming the picture it changed. Undo and redo
+  // follow this order, so the step on the button is always the last thing done, whichever picture it was on.
+  private undoOrder: PaintLayer[] = []
+  private redoOrder: PaintLayer[] = []
 
   constructor(model: ViewerModel) {
     const layerOf = new Map<THREE.Texture, PaintLayer>()
+    const channelOf = new Map<string, PaintLayer>()
+    const add = (list: PaintLayer[], byMesh: Map<THREE.Mesh, PaintLayer>, layer: PaintLayer, mesh: THREE.Mesh) => {
+      if (!this.layers.includes(layer)) this.layers.push(layer)
+      if (!list.includes(layer)) list.push(layer)
+      byMesh.set(mesh, layer)
+      const target: DabTarget = { mesh, bvh: model.picker.bvhFor(mesh.geometry) }
+      const targets = this.targets.get(layer) ?? []
+      targets.push(target)
+      this.targets.set(layer, targets)
+    }
     for (const mesh of model.meshes) {
       const uv = mesh.geometry?.attributes.uv
       const mat = firstMaterial(model.texturedMaterial(mesh))
@@ -174,12 +268,30 @@ export class PaintSession {
         mat.needsUpdate = true
         layerOf.set(layer.texture, layer)
       }
-      if (!this.layers.includes(layer)) this.layers.push(layer)
-      this.layerByMesh.set(mesh, layer)
-      const target: DabTarget = { mesh, bvh: model.picker.bvhFor(mesh.geometry) }
-      const list = this.targets.get(layer) ?? []
-      list.push(target)
-      this.targets.set(layer, list)
+      add(this.colourLayers, this.colourByMesh, layer, mesh)
+      // Shine (green channel) and metal (blue channel) of the metallic-roughness picture (WP-32).
+      if (mat.roughnessMap && (mat.roughnessMap.channel ?? 0) === 0) {
+        const key = `${mat.roughnessMap.uuid}:1`
+        let shine = channelOf.get(key)
+        if (!shine) {
+          shine = channelLayer(mat.roughnessMap, 1)
+          channelOf.set(key, shine)
+        }
+        mat.roughnessMap = shine.texture
+        mat.needsUpdate = true
+        add(this.shineLayers, this.shineByMesh, shine, mesh)
+      }
+      if (mat.metalnessMap && (mat.metalnessMap.channel ?? 0) === 0) {
+        const key = `${mat.metalnessMap.uuid}:2`
+        let metal = channelOf.get(key)
+        if (!metal) {
+          metal = channelLayer(mat.metalnessMap, 2)
+          channelOf.set(key, metal)
+        }
+        mat.metalnessMap = metal.texture
+        mat.needsUpdate = true
+        add(this.metalLayers, this.metalByMesh, metal, mesh)
+      }
     }
     let minX = Infinity
     let maxX = -Infinity
@@ -203,14 +315,12 @@ export class PaintSession {
   get undoCount(): number {
     return this.layers.reduce((n, l) => n + l.undoCount, 0)
   }
-  // The step names for the next undo and the next redo (the layer that would change), or null.
+  // The step names for the next undo and the next redo, or null.
   get undoLabel(): string | null {
-    const l = this.lastLayer?.canUndo ? this.lastLayer : this.layers.find((x) => x.canUndo)
-    return l?.undoLabel ?? null
+    return lastWith(this.undoOrder, (l) => l.canUndo)?.undoLabel ?? null
   }
   get redoLabel(): string | null {
-    const l = this.lastLayer?.canRedo ? this.lastLayer : this.layers.find((x) => x.canRedo)
-    return l?.redoLabel ?? null
+    return lastWith(this.redoOrder, (l) => l.canRedo)?.redoLabel ?? null
   }
   // Changes with every new step, undo or redo; equal to the mark taken when the picture was saved means nothing is unsaved.
   get editMark(): string {
@@ -220,39 +330,57 @@ export class PaintSession {
     return this.layers.reduce((n, l) => n + l.undoBytesUsed, 0)
   }
 
-  // The one picture a save can send: the model's own picture (one layer). Null when the model has parts with pictures
-  // of their own or blank parts that the session added; those cannot be saved yet.
+  // The pictures a save can send: the model's one colour picture, with its shine and metal pictures when it has them.
+  // Null when the model has parts with colour pictures of their own (or several shine or metal pictures); those cannot be saved yet.
+  saveableMaps(): SaveMaps | null {
+    if (this.colourLayers.length !== 1 || this.shineLayers.length > 1 || this.metalLayers.length > 1) return null
+    return { colour: this.colourLayers[0], shine: this.shineLayers[0] ?? null, metal: this.metalLayers[0] ?? null }
+  }
+
+  // The colour picture a save sends, when the model is saveable (see saveableMaps).
   saveableLayer(): PaintLayer | null {
-    return this.layers.length === 1 ? this.layers[0] : null
+    return this.saveableMaps()?.colour ?? null
   }
 
   undo(renderer?: THREE.WebGLRenderer): boolean {
-    const layer = this.lastLayer?.canUndo ? this.lastLayer : this.layers.find((l) => l.canUndo)
-    if (!layer || !layer.undo()) return false
+    const layer = lastWith(this.undoOrder, (l) => l.canUndo)
+    if (!layer) return false
+    this.undoOrder.splice(this.undoOrder.lastIndexOf(layer), 1)
+    layer.undo()
     layer.upload(renderer)
-    this.lastLayer = layer
+    this.redoOrder.push(layer)
     return true
   }
 
   redo(renderer?: THREE.WebGLRenderer): boolean {
-    const layer = this.lastLayer?.canRedo ? this.lastLayer : this.layers.find((l) => l.canRedo)
-    if (!layer || !layer.redo()) return false
+    const layer = lastWith(this.redoOrder, (l) => l.canRedo)
+    if (!layer) return false
+    this.redoOrder.splice(this.redoOrder.lastIndexOf(layer), 1)
+    layer.redo()
     layer.upload(renderer)
-    this.lastLayer = layer
+    this.undoOrder.push(layer)
     return true
+  }
+
+  // Records a new step on a picture: it is undone before any earlier step, and a new step clears the redo steps.
+  private noteStep(layer: PaintLayer): void {
+    this.undoOrder.push(layer)
+    this.redoOrder = []
   }
 
   // Sets every picture back to the model's own. Undoable.
   resetAll(renderer?: THREE.WebGLRenderer): void {
     for (const layer of this.layers) {
+      const before = layer.undoCount
       layer.resetToOriginal()
+      if (layer.undoCount > before) this.noteStep(layer)
       layer.upload(renderer)
     }
   }
 
   // The average colour of the picture around a spot (a 5 by 5 block), as sRGB bytes.
   sampleColour(hit: SurfaceHit): [number, number, number] | null {
-    const layer = this.layerByMesh.get(hit.mesh)
+    const layer = this.colourByMesh.get(hit.mesh)
     if (!layer || !hit.uv) return null
     const cx = Math.floor(hit.uv.x * layer.width)
     const cy = Math.floor(hit.uv.y * layer.height)
@@ -280,7 +408,10 @@ export class PaintSession {
     let last: THREE.Vector3 | null = null
     // Clicked-face-only: the triangle the stroke began on (and its mirror image, for a mirrored stroke).
     let strokeFace: { mesh: THREE.Mesh; face: number } | null = null
-    const brushOf = (s: PaintSettings): Brush => ({ rgb: s.rgb, radius: s.radius, hardness: s.hardness, strength: s.strength, erase: s.mode === 'erase' })
+    // Smudge: the colour the stroke is carrying (null until its first dab).
+    const carry: { rgb: [number, number, number] | null } = { rgb: null }
+    const brushOf = (s: PaintSettings): Brush => ({ rgb: targetRgb(s), radius: s.radius, hardness: s.hardness, strength: s.strength, erase: s.mode === 'erase' })
+    const mapOf = (target: PaintTarget): Map<THREE.Mesh, PaintLayer> => (target === 'shine' ? this.shineByMesh : target === 'metal' ? this.metalByMesh : this.colourByMesh)
     // One dab at a spot. With faceOnly, only the stroke's triangle is painted (faceSpot), and its mirror image for the mirror side.
     const paintAt = (layer: PaintLayer, spot: Spot, s: PaintSettings, faceSpot: { mesh: THREE.Mesh; face: number } | null) => {
       const targets = this.targets.get(layer) ?? []
@@ -291,25 +422,27 @@ export class PaintSession {
         face: faceSpot?.face ?? spot.face,
         faceOnly: faceSpot !== null,
       }
-      paintDab(layer, targets, dab, brushOf(s))
+      const dabOnce = (d: Dab) => (s.mode === 'smudge' ? smudgeDab(layer, targets, d, brushOf(s), carry) : paintDab(layer, targets, d, brushOf(s)))
+      dabOnce(dab)
       if (s.mirror) {
         const mirror = this.mirrored(spot, layer)
         if (mirror && mirror.point.distanceTo(spot.point) > s.radius * 0.5) {
           const mirrorFace = faceSpot ? { mesh: mirror.mesh, face: mirror.face } : null
-          paintDab(layer, targets, { ...dab, point: mirror.point, normal: mirror.normal, hitMesh: mirror.mesh, face: mirror.face, faceOnly: mirrorFace !== null }, brushOf(s))
+          dabOnce({ ...dab, point: mirror.point, normal: mirror.normal, hitMesh: mirror.mesh, face: mirror.face, faceOnly: mirrorFace !== null })
         }
       }
     }
     const beginStroke = (hit: SurfaceHit, s: PaintSettings): PaintLayer | null => {
       if (active) return active
-      const layer = this.layerByMesh.get(hit.mesh) ?? null
+      const layer = mapOf(s.target).get(hit.mesh) ?? null
       if (!layer) {
-        hooks.notice('That part has no picture to paint on.')
+        hooks.notice(s.target === 'colour' ? 'That part has no picture to paint on.' : `That part has no ${s.target} picture to paint on.`)
         return null
       }
       layer.beginStroke(strokeRecordOf(s))
       active = layer
       strokeFace = { mesh: hit.mesh, face: hit.face }
+      carry.rgb = null
       return layer
     }
     const flush = () => {
@@ -322,7 +455,7 @@ export class PaintSession {
       last = null
       strokeFace = null
       if (layer.endStroke()) {
-        this.lastLayer = layer
+        this.noteStep(layer)
         hooks.changed()
       }
     }
@@ -333,9 +466,22 @@ export class PaintSession {
         if (!hit) return
         const s = getSettings()
         if (s.mode === 'pick') {
-          const layer = this.layerByMesh.get(hit.mesh)
+          if (s.target !== 'colour') {
+            hooks.notice('The eyedropper takes colours from the colour picture. Set What to paint to Colour first.')
+            return
+          }
           const rgb = this.sampleColour(hit)
-          if (layer && rgb) hooks.picked(rgb)
+          if (rgb) hooks.picked(rgb)
+          return
+        }
+        if (s.mode === 'fill') {
+          // One click is one fill and one undo step. The seed is the colour under the click.
+          const layer = beginStroke(hit, s)
+          if (!layer) return
+          const seed = this.colourAt(layer, hit)
+          if (seed) fillRegion(layer, { mesh: hit.mesh, face: hit.face, rgb: seed }, { rgb: targetRgb(s), tolerance: s.match, strength: s.strength })
+          flush()
+          finish()
           return
         }
         const layer = beginStroke(hit, s)
@@ -361,6 +507,15 @@ export class PaintSession {
       up: () => finish(),
       cancel: () => finish(),
     }
+  }
+
+  // The colour of the one picture texel under a surface hit (sRGB bytes), or null when the hit has no picture position.
+  private colourAt(layer: PaintLayer, hit: SurfaceHit): [number, number, number] | null {
+    if (!hit.uv) return null
+    const x = ((Math.floor(hit.uv.x * layer.width) % layer.width) + layer.width) % layer.width
+    const y = ((Math.floor(hit.uv.y * layer.height) % layer.height) + layer.height) % layer.height
+    const o = (y * layer.width + x) * 4
+    return [layer.pixels[o], layer.pixels[o + 1], layer.pixels[o + 2]]
   }
 
   // The nearest surface of this layer's parts to a world point.

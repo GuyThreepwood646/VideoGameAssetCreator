@@ -67,6 +67,14 @@ def _grow(mask: np.ndarray, px: int) -> np.ndarray:
     return out
 
 
+def _kept(island: np.ndarray, edit: np.ndarray) -> np.ndarray:
+    """Island texels a paint merge leaves at the parent's value: outside the edit and not on the island border next to
+    it (merge_picture fills that border, which the brush cannot reach)."""
+    holes = paintsave._close_holes(np.zeros(edit.shape + (1,), np.uint8), edit, island)[1]
+    edit = edit | holes
+    return island & ~edit & ~(paintsave._island_rim(island) & _grow(edit, paintsave.RIM_PX))
+
+
 def _island(tmp_path: Path) -> np.ndarray:
     return paintsave._picture_layout(_glb(tmp_path / "layout.glb", np.zeros((SIZE, SIZE, 3), np.uint8)), SIZE)
 
@@ -85,13 +93,55 @@ def test_merge_changes_only_the_mask_and_the_padding(tmp_path):
     pad = 4
     out, counts = paintsave.merge_picture(parent, painted, edit, island, pad_px=pad)
     assert (out[edit] == painted[edit]).all()
-    keep = island & ~edit
+    keep = _kept(island, edit)
+    rim = island & ~edit & ~keep
     assert np.array_equal(out[keep], parent[keep])
     # Only the padding reach around the islands and the paint may differ from the parent.
     reach = _grow(island | edit, pad)
     untouched = ~reach
     assert np.array_equal(out[untouched], parent[untouched])
-    assert counts["painted_texels"] == int(edit.sum()) and counts["painted_on_island"] == int(edit.sum())
+    assert counts["painted_texels"] == int((edit | rim).sum()) and counts["painted_on_island"] == int((edit | rim).sum())
+
+
+def test_merge_paints_the_island_border_the_brush_cannot_reach(tmp_path):
+    # The brush leaves the outermost island ring unpainted; a stroke over the whole island interior must still reach
+    # the border, and border texels far from the stroke keep the parent's colour.
+    island = _island(tmp_path)
+    rim = paintsave._island_rim(island)
+    assert rim.any() and (island & ~rim).any()
+    parent = np.full((SIZE, SIZE, 4), 40, np.uint8)
+    painted = parent.copy()
+    edit = island & ~rim
+    painted[edit] = [90, 180, 30, 255]
+    out, counts = paintsave.merge_picture(parent, painted, edit, island, pad_px=3)
+    assert (out[island] == [90, 180, 30, 255]).all()  # no unpainted seam left on the border
+    assert counts["rim_texels"] == int(rim.sum())
+    # A stroke on one interior texel paints only the border texels within RIM_PX of it.
+    edit1 = np.zeros_like(island)
+    ys, xs = np.where(island & ~rim)
+    edit1[ys[0], xs[0]] = True
+    painted1 = parent.copy()
+    painted1[edit1] = [200, 10, 10, 255]
+    out1, _ = paintsave.merge_picture(parent, painted1, edit1, island, pad_px=0)
+    far = rim & ~_grow(edit1, paintsave.RIM_PX)
+    assert far.any() and np.array_equal(out1[far], parent[far])
+
+
+def test_merge_closes_texels_the_brush_missed_inside_a_stroke(tmp_path):
+    # Single missed texels and a one-texel crack inside a painted patch take the painted value; texels at the patch's
+    # straight edge stay the parent's.
+    island = np.ones((SIZE, SIZE), bool)
+    parent = np.full((SIZE, SIZE, 4), 40, np.uint8)
+    edit = np.zeros((SIZE, SIZE), bool)
+    edit[10:30, 10:30] = True
+    edit[15, 15] = edit[20, 22] = False
+    edit[25, 12:28] = False  # a crack
+    painted = parent.copy()
+    painted[edit] = [90, 180, 30, 255]
+    out, counts = paintsave.merge_picture(parent, painted, edit, island, pad_px=0)
+    assert (out[10:30, 10:30] == [90, 180, 30, 255]).all()
+    assert counts["hole_texels"] == 2 + 16
+    assert (out[9, 10:30] == 40).all() and (out[10:30, 30] == 40).all()  # no growth past a straight edge
 
 
 def test_merge_pads_the_gutter_from_the_painted_edge(tmp_path):
@@ -221,10 +271,10 @@ def test_paint_job_makes_a_new_version_and_keeps_the_parent(version_files, tmp_p
     edit[rows[:10], cols[:10]] = True
     painted = base.copy()
     painted[edit] = [220, 30, 30, 255]
-    pic, mask, strokes = paintsave.decode_inputs(_png_b64(Image.fromarray(painted)),
-                                                 _png_b64(Image.fromarray((edit * 255).astype(np.uint8), "L")),
-                                                 [{"mode": "paint", "rgb": [220, 30, 30]}])
-    paintsave.write_inputs(sc.dir, pic, mask, strokes)
+    inputs = paintsave.decode_inputs(_png_b64(Image.fromarray(painted)),
+                                     _png_b64(Image.fromarray((edit * 255).astype(np.uint8), "L")),
+                                     [{"mode": "paint", "rgb": [220, 30, 30]}])
+    paintsave.write_inputs(sc.dir, inputs)
     asyncio.run(paintsave.paint(sc, {}))
 
     assert child.metrics["painted"] is True and child.metrics["painted_of"] == "parent"
@@ -233,7 +283,7 @@ def test_paint_job_makes_a_new_version_and_keeps_the_parent(version_files, tmp_p
     assert child.metrics["paint_strokes"] == 1
     new_base = np.array(Image.open(child.files["base_color"]).convert("RGBA"))
     assert (new_base[edit] == [220, 30, 30, 255]).all()
-    keep = island & ~edit
+    keep = _kept(island, edit)
     assert np.array_equal(new_base[keep], base[keep])
     assert Path(child.files["paint_mask"]).is_file() and Path(child.files["paint_strokes"]).is_file()
     assert (_base_colour(Path(child.files["glb"]))[..., :3][edit] == [220, 30, 30]).all()
@@ -249,9 +299,9 @@ def test_paint_job_refuses_an_empty_mask(version_files, tmp_path):
     child = _version("child")
     child.folder = tmp_path / "child"
     sc = _Sc(tmp_path / "child", parent, child)
-    pic, mask, strokes = paintsave.decode_inputs(_png_b64(Image.fromarray(base)),
-                                                 _png_b64(Image.fromarray(np.zeros((SIZE, SIZE), np.uint8), "L")), [])
-    paintsave.write_inputs(sc.dir, pic, mask, strokes)
+    inputs = paintsave.decode_inputs(_png_b64(Image.fromarray(base)),
+                                     _png_b64(Image.fromarray(np.zeros((SIZE, SIZE), np.uint8), "L")), [])
+    paintsave.write_inputs(sc.dir, inputs)
     with pytest.raises(ValueError, match="nothing was painted"):
         asyncio.run(paintsave.paint(sc, {}))
 
@@ -264,6 +314,101 @@ def test_decode_refuses_what_is_not_a_picture():
         paintsave.decode_inputs("%%%", good, [])
     with pytest.raises(ValueError, match="stroke log"):
         paintsave.decode_inputs(good, good, "nope")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="edit mask"):
+        paintsave.decode_inputs(None, None, [], shine_b64=good)
+    with pytest.raises(ValueError, match="nothing was sent"):
+        paintsave.decode_inputs(None, None, [])
+
+
+def _glb_mr(path: Path, base: np.ndarray, mr: np.ndarray) -> Path:
+    """A model whose metallic-roughness picture is mr (RGB: occlusion, roughness green, metal blue)."""
+    trimesh = pytest.importorskip("trimesh")
+    v = np.array([[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1],
+                  [2, 0, 0], [3, 0, 0], [3, 1, 0], [2, 1, 0]], float)
+    f = np.array([[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7]])
+    uv = np.array([[0.05, 0.95], [0.45, 0.95], [0.45, 0.55], [0.05, 0.55],
+                   [0.55, 0.45], [0.95, 0.45], [0.95, 0.05], [0.55, 0.05]])
+    mat = trimesh.visual.material.PBRMaterial(baseColorTexture=Image.fromarray(base),
+                                              metallicRoughnessTexture=Image.fromarray(mr))
+    trimesh.Trimesh(v, f, visual=trimesh.visual.TextureVisuals(uv=uv, material=mat), process=False).export(path)
+    return path
+
+
+def _mr_of(glb: Path) -> np.ndarray:
+    trimesh = pytest.importorskip("trimesh")
+    m = trimesh.load(str(glb), force="mesh")
+    return np.array(m.visual.material.metallicRoughnessTexture.convert("RGB"))
+
+
+def test_paint_job_writes_shine_and_metal_into_their_maps_and_the_model(version_files, tmp_path):
+    base = _picture()
+    mr = np.zeros((SIZE, SIZE, 3), np.uint8)
+    mr[..., 0] = 255
+    mr[..., 1] = 200  # roughness
+    mr[..., 2] = 0  # metal
+    folder = tmp_path / "parent"
+    folder.mkdir()
+    glb = _glb_mr(folder / "prep.glb", base[..., :3], mr)
+    Image.fromarray(base).save(folder / "base_color.png")
+    Image.fromarray(mr[..., 1], "L").save(folder / "roughness.png")
+    Image.fromarray(mr[..., 2], "L").save(folder / "metallic.png")
+    parent = _version("parent", metrics={"atlas_used": 0.3})
+    parent.folder = folder
+    parent.files = {"glb": str(glb), "base_color": str(folder / "base_color.png"),
+                    "roughness": str(folder / "roughness.png"), "metallic": str(folder / "metallic.png")}
+    island = _island(tmp_path)
+    child = _version("child")
+    child.folder = tmp_path / "child"
+    sc = _Sc(tmp_path / "child", parent, child)
+    edit = np.zeros((SIZE, SIZE), bool)
+    rows, cols = np.where(island)
+    edit[rows[:10], cols[:10]] = True
+    shine_px = np.zeros((SIZE, SIZE, 4), np.uint8)
+    shine_px[..., :3] = mr[..., 1][..., None]
+    shine_px[..., 3] = 255
+    shine_px[edit, :3] = 30
+    metal_px = np.zeros((SIZE, SIZE, 4), np.uint8)
+    metal_px[..., :3] = mr[..., 2][..., None]
+    metal_px[..., 3] = 255
+    metal_px[edit, :3] = 220
+    mask_b64 = _png_b64(Image.fromarray((edit * 255).astype(np.uint8), "L"))
+    inputs = paintsave.decode_inputs(None, None, [{"mode": "paint", "target": "shine"}],
+                                     shine_b64=_png_b64(Image.fromarray(shine_px)), shine_mask_b64=mask_b64,
+                                     metal_b64=_png_b64(Image.fromarray(metal_px)), metal_mask_b64=mask_b64)
+    paintsave.write_inputs(sc.dir, inputs)
+    asyncio.run(paintsave.paint(sc, {}))
+
+    rough = np.array(Image.open(child.files["roughness"]).convert("L"))
+    assert (rough[edit] == 30).all()
+    assert np.array_equal(rough[_kept(island, edit)], mr[..., 1][_kept(island, edit)])
+    metal = np.array(Image.open(child.files["metallic"]).convert("L"))
+    assert (metal[edit] == 220).all()
+    assert np.array_equal(metal[_kept(island, edit)], mr[..., 2][_kept(island, edit)])
+    # The model's own picture is the same: the green and blue channels changed, the red (occlusion) did not.
+    model_mr = _mr_of(Path(child.files["glb"]))
+    assert (model_mr[edit][:, 1] == 30).all() and (model_mr[edit][:, 2] == 220).all()
+    assert (model_mr[edit][:, 0] == 255).all()
+    assert np.array_equal(_base_colour(Path(child.files["glb"]))[..., :3], base[..., :3]), "no colour was sent"
+    assert child.metrics["paint_shine_texels"] == int(edit.sum()) and child.metrics["paint_metal_texels"] == int(edit.sum())
+    assert child.metrics["paint_texels"] == 0
+    assert parent.files["roughness"] == str(folder / "roughness.png"), "the parent keeps its own files"
+    assert Image.open(folder / "roughness.png").size == (SIZE, SIZE)
+
+
+def test_paint_job_with_only_a_shine_needs_a_shine_picture_on_the_parent(version_files, tmp_path):
+    base = _picture()
+    parent = _parent_on_disk(tmp_path, base)
+    child = _version("child")
+    child.folder = tmp_path / "child"
+    sc = _Sc(tmp_path / "child", parent, child)
+    edit = np.ones((SIZE, SIZE), bool)
+    px = np.zeros((SIZE, SIZE, 4), np.uint8)
+    px[..., 3] = 255
+    inputs = paintsave.decode_inputs(None, None, [], shine_b64=_png_b64(Image.fromarray(px)),
+                                     shine_mask_b64=_png_b64(Image.fromarray((edit * 255).astype(np.uint8), "L")))
+    paintsave.write_inputs(sc.dir, inputs)
+    with pytest.raises(ValueError, match="no shine picture"):
+        asyncio.run(paintsave.paint(sc, {}))
 
 
 # --- the rig: the same geometry gets the new picture without a new rig run -------------------------------------
@@ -710,3 +855,58 @@ def test_smooth_refuses_an_unpainted_parent(version_files, tmp_path):
     sc = _Sc(tmp_path / "child", parent, child)
     with pytest.raises(ValueError, match="only a painted clean-up"):
         asyncio.run(paintsave.smooth(sc, {"strength": "light"}))
+
+
+def _retexture_with_mr(tmp_path, monkeypatch, painted_shine: bool, painted_metal: bool):
+    """A retexture over a donor rig whose GLB has a metallic-roughness picture (green 200, blue 0), and a painted
+    clean-up whose shine and metal pictures are painted (or not) in the block at the centre."""
+    sc, new_rig, donor, base, painted_dir = _retexture_setup(tmp_path)
+    donor_mr = np.zeros((SIZE, SIZE, 3), np.uint8)
+    donor_mr[..., 0] = 255
+    donor_mr[..., 1] = 200
+    donor_mr[..., 2] = 0
+    _glb_mr(Path(donor.files["glb"]), base[..., :3], donor_mr)
+    painted = sc.parent
+    paint_roughness = np.full((SIZE, SIZE), 200, np.uint8)
+    paint_metal = np.zeros((SIZE, SIZE), np.uint8)
+    paint_roughness[20:40, 20:40] = 30
+    paint_metal[20:40, 20:40] = 220
+    rough_file = painted_dir / "roughness.png"
+    metal_file = painted_dir / "metallic.png"
+    Image.fromarray(paint_roughness, "L").save(rough_file)
+    Image.fromarray(paint_metal, "L").save(metal_file)
+    lineage = {"roughness": rough_file, "metallic": metal_file}
+    painted.metrics.update({"paint_shine_texels": 400 if painted_shine else None, "paint_metal_texels": 400 if painted_metal else None})
+    base_lineage = sc.lineage_file
+
+    def lineage_file(key, stages=None):
+        if key in lineage and (painted_shine if key == "roughness" else painted_metal):
+            return lineage[key]
+        return base_lineage(key, stages)
+
+    sc.lineage_file = lineage_file
+    monkeypatch.setattr(rig, "judge", lambda _sc: asyncio.sleep(0))
+    monkeypatch.setattr(rig, "link_textures", lambda s: None)
+    return sc, new_rig, donor, base
+
+
+def test_retexture_carries_painted_shine_and_metal_into_the_rig(version_files, tmp_path, monkeypatch):
+    sc, new_rig, donor, base = _retexture_with_mr(tmp_path, monkeypatch, painted_shine=True, painted_metal=True)
+    assert asyncio.run(rig.retexture(sc, "Mixamo", 4, {})) is True
+    mr = _mr_of(Path(new_rig.files["glb"]))
+    assert (mr[20:40, 20:40, 1] == 30).all(), "the painted shine is the rig's roughness"
+    assert (mr[20:40, 20:40, 2] == 220).all(), "the painted metal is the rig's metal"
+    assert (mr[..., 0] == 255).all(), "occlusion is left alone"
+    assert np.array_equal(mr[..., 1][:20], np.full((20, SIZE), 200, np.uint8)), "outside the paint the donor's values stay"
+    assert (_base_colour(Path(new_rig.files["glb"]))[..., 0] == 240).all(), "the painted colour picture is in the rig too"
+    assert new_rig.metrics["retextured_maps"] == ["metallic", "roughness"]
+    # The donor rig is untouched.
+    assert (_mr_of(Path(donor.files["glb"]))[..., 1] == 200).all()
+
+
+def test_retexture_with_colour_only_paint_rigs_as_before(version_files, tmp_path, monkeypatch):
+    sc, new_rig, donor, base = _retexture_with_mr(tmp_path, monkeypatch, painted_shine=False, painted_metal=False)
+    assert asyncio.run(rig.retexture(sc, "Mixamo", 4, {})) is True
+    mr = _mr_of(Path(new_rig.files["glb"]))
+    assert (mr[..., 1] == 200).all() and (mr[..., 2] == 0).all(), "the donor's maps are kept"
+    assert new_rig.metrics.get("retextured_maps") is None

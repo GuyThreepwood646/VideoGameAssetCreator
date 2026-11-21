@@ -72,9 +72,9 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
   const [saving, setSaving] = useState(false)
   const [saveNote, setSaveNote] = useState<string | null>(null)
   const savePaint = async () => {
-    const layer = paint.saveLayer()
-    if (!layer) return
-    const body = paintSaveBody(layer)
+    const maps = paint.saveMaps()
+    if (!maps) return
+    const body = paintSaveBody(maps)
     if (!body) {
       setSaveNote('Nothing is painted yet.')
       return

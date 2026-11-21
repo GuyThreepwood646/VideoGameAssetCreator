@@ -1047,7 +1047,7 @@ export const api = {
   upscale: (vid: string) => post<RunResult>(`/api/versions/${vid}/upscale`),
   adjust: (vid: string, params: Record<string, unknown>) => post<RunResult>(`/api/versions/${vid}/adjust`, { params }),
   // Touch up save (WP-23): a new clean-up version with the painted picture; the strokes are the paint log.
-  paint: (vid: string, body: { picture_png: string; mask_png: string; strokes: Record<string, unknown>[] }) => post<RunResult>(`/api/versions/${vid}/paint`, body),
+  paint: (vid: string, body: { picture_png?: string; mask_png?: string; strokes: Record<string, unknown>[]; shine_png?: string; shine_mask_png?: string; metal_png?: string; metal_mask_png?: string }) => post<RunResult>(`/api/versions/${vid}/paint`, body),
   // Smooth the paint (WP-24): a new clean-up version with the painted picture smoothed inside its mask.
   smooth: (vid: string, body: { strength: 'light' | 'strong' }) => post<RunResult>(`/api/versions/${vid}/smooth`, body),
   // Separate a fused arm (WP-26): the preview computes where each cut starts (no job, no version); the apply is a job.
