@@ -2198,7 +2198,8 @@ def _death_build():
     old_low = _lowest_over_fall(_death_old_render)
     fallback = gait.death_fallback_used(new_low, old_low)
     report["death_fallback"] = {"used": fallback, "new_lowest_m": round(new_low, 4), "old_lowest_m": round(old_low, 4),
-                                "rule": "new kept unless it sinks more than 0.01 m deeper than the old death over the fall"}
+                                "rule": "new kept unless it sinks more than 0.01 m deeper than the old death over the fall",
+                                "rung": "today" if fallback else ("torso_first" if _TF[0] else "standard")}
     print("DEATH_FALLBACK", report["death_fallback"], file=sys.stderr)
     if fallback:
         _death.clear()
@@ -2215,15 +2216,13 @@ def clip_death(P, t):
         # WP-78 goblin: a rig whose legs are splayed (no leg chain) that fails the rule gets one more try, the torso-first
         # death: the torso and head are tilted down first and the limbs settle against that pose.
         if _death.get("old") and biped and motion != "serpent" and any(not li.get("ik") for li in leg_info):
-            first = dict(report["death_fallback"])
+            first = dict(report["death_fallback"], rung="standard_failed")
             _TF[0] = True
             _death.clear()
             _death_build()
-            report["death_fallback"]["torso_first"] = True
             report["death_fallback"]["standard"] = first
             if _death.get("old"):
                 _TF[0] = False
-                report["death_fallback"]["torso_first"] = False
     if _death.get("old"):
         _death_old_render(P, t)
         return
