@@ -1797,6 +1797,41 @@ def leg_parts():
     return out
 
 
+def _death_render(P, t):
+    """The death pose at clip time t: fall, resting hand, settled limbs, torso tilt and head bend."""
+    _death_pose(P, t, _death["drop"])
+    hands_pose(P, 0.0)
+    w = gait.envelope(t, [(0.45, 0), (0.9, 1)])
+    apply_fix(P, _death["fix"], w)
+    spine_pitch(P, _death["tilt"] * w)
+    head_pitch(P, _death["head"] * w)
+
+
+def _lift_at(table, t):
+    x = min(1.0, max(0.0, t)) * (len(table) - 1)
+    i = int(x)
+    if i >= len(table) - 1:
+        return table[-1]
+    f = x - i
+    return table[i] * (1 - f) + table[i + 1] * f
+
+
+def _smooth_lift(defs, step=0.006):
+    """WP-78: the smallest smooth lift that keeps every fall sample clear of the ground: a window max, a short
+    average, then limits on the change between neighbouring samples (no jump over `step` metres per sample)."""
+    n = len(defs)
+    L = [max(defs[max(0, i - 2):i + 3]) for i in range(n)]
+    L = [sum(L[max(0, i - 1):i + 2]) / len(L[max(0, i - 1):i + 2]) for i in range(n)]
+    L = [max(L[i], defs[i]) for i in range(n)]
+    for _ in range(3):
+        for i in range(1, n):
+            L[i] = max(L[i], L[i - 1] - step)
+        for i in range(n - 2, -1, -1):
+            L[i] = max(L[i], L[i + 1] - step)
+        L = [max(L[i], defs[i]) for i in range(n)]
+    return L
+
+
 def clip_death(P, t):
     if not _death:
         def final(Q, drop=0.0):
@@ -1865,12 +1900,54 @@ def clip_death(P, t):
                 if best_cost is None or abs(z) < best_cost:
                     best, best_cost = float(d_), abs(z)
             head_deg = best
-        _death.update(drop=drop, fix=fix, head=head_deg)
-    _death_pose(P, t, _death["drop"])
-    hands_pose(P, 0.0)
-    w = gait.envelope(t, [(0.45, 0), (0.9, 1)])
-    apply_fix(P, _death["fix"], w)
-    head_pitch(P, _death["head"] * w)
+            # WP-78: one bounded torso-tilt try, only where the head-only pose still leaves the hips above 0.25 m. The
+            # spine tilts within 30 degrees and the head bends, the whole body stays on the ground (3 mm tolerance) and
+            # the hips go as low as they can.
+            tilt_deg = 0.0
+            hips_name = next(n for n in byname if n.split(":")[-1] == "Hips")
+
+            def tilt_eval(tl, hd_):
+                Q = Pose()
+                _death_pose(Q, 1.0, 0.0)
+                hands_pose(Q, 0.0)
+                finish_serpent(Q)
+                apply_fix(Q, fix, 1.0)
+                spine_pitch(Q, tl)
+                head_pitch(Q, hd_)
+                d_ = _rest_low[0] - torso_lowest(Q)
+                hz_ = fk(Q)[hips_name].translation.z + d_ - g
+                hd2 = limb_lowest_parts(Q, {"head": hset}).get("head", g) + d_ - g
+                full_ = lowest_z(Q) + d_ - g
+                return d_, hz_, hd2, full_
+
+            head_only = tilt_eval(0.0, head_deg)
+            if head_only[1] > 0.25:
+                best_t = None
+                for tl in range(-30, 31, 5):
+                    for hd_ in range(-35, 36, 5):
+                        d_, hz_, hd2, full_ = tilt_eval(float(tl), float(hd_))
+                        if full_ < -0.003 or not (-0.003 <= hd2 <= 0.05):
+                            continue
+                        if best_t is None or hz_ < best_t[1]:
+                            best_t = (d_, hz_, float(tl), float(hd_))
+                if best_t is not None and best_t[1] < head_only[1]:
+                    drop, tilt_deg, head_deg = best_t[0], best_t[2], best_t[3]
+        _death.update(drop=drop, fix=fix, head=head_deg, tilt=tilt_deg)
+        # WP-78: contact in the fall. Sample the whole clip, find how far any body point goes under the ground, and lift
+        # the body by the smooth amount that clears it (logged, so the largest lift is visible).
+        samples = 48
+        defs = []
+        for i in range(samples):
+            Pt = Pose()
+            _death_render(Pt, i / (samples - 1))
+            defs.append(max(0.0, _rest_low[0] - lowest_z(Pt)))
+        table = _smooth_lift(defs)
+        _death["lift"] = table
+        print("DEATH_LIFT max_deficit", round(max(defs), 4), "max_lift", round(max(table), 4), file=sys.stderr)
+    _death_render(P, t)
+    _lift = _death.get("lift")
+    if _lift:
+        P.move(up * _lift_at(_lift, t))
 
 
 def clip_flap(P, t):
