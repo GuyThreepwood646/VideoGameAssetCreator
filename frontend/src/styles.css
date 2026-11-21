@@ -4817,3 +4817,64 @@ button.preset-card:hover:not(:disabled) {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
+
+/* Asset cards (UX-20): a shimmer until the picture arrives. */
+.asset-thumb.thumb-loading {
+  background-image: linear-gradient(90deg, var(--panel-2), var(--panel), var(--panel-2));
+  background-size: 200% 100%;
+  animation: thumb-shimmer 1.2s linear infinite;
+}
+.asset-thumb.thumb-loading img {
+  opacity: 0;
+}
+@keyframes thumb-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .asset-thumb.thumb-loading {
+    animation: none;
+  }
+}
+.more-pop .more-check {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  white-space: nowrap;
+}
+
+/* Gallery tags (UX-21): plain muted words, so they do not look like the buttons beside them. */
+.gallery-tags {
+  gap: var(--s1) var(--s3);
+}
+.gallery-tags .tag {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+/* Viewer toolbar groups (UX-22): View, Motion and Camera, each with a small label, so the buttons read as sets. */
+.viewer-toolbar .vt-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  padding-right: var(--s3);
+  margin-right: var(--s1);
+  border-right: 1px solid var(--border);
+}
+.viewer-toolbar .vt-group:last-of-type {
+  border-right: 0;
+}
+.viewer-toolbar .vt-label {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* A note under a step's name in the rail ("Only for moving parts") sits on its own line under the label. */
+.rail-meta.rail-meta-note {
+  grid-column: 3 / -1;
+  white-space: normal;
+}

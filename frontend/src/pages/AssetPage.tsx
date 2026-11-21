@@ -445,7 +445,7 @@ export default function AssetPage() {
             // A step with a Stop or Resume button next to it needs no status word: the button says it.
             // Step 5 for a category with no skeleton engine only runs when the asset declares moving parts (WP-29).
             const movingPartsOnly = s === 'rig' && !reached && ref !== null && ref.categories.find((c) => c.id === asset.category)?.rig_engine === 'none' && asset.parts.length === 0
-            const meta = movingPartsOnly ? 'only for moving parts' : st === 'running' ? '' : stopped ? 'stopped' : st === 'error' ? 'failed' : kept ? 'kept' : st === 'done' ? 'choose one' : ''
+            const meta = movingPartsOnly ? 'Only for moving parts' : st === 'running' ? '' : stopped ? 'stopped' : st === 'error' ? 'failed' : kept ? 'kept' : st === 'done' ? 'choose one' : ''
             const help = stageInfo(s)
             return (
               <div key={s} className={cls + (stopped ? ' stopped' : '')}>
@@ -453,7 +453,7 @@ export default function AssetPage() {
                   <span className={'sdot sdot-' + st} />
                   <span className="rail-index">{i + 1}</span>
                   <span className="rail-label">{stagePlain(s, help)}</span>
-                  <span className="rail-meta">{meta}</span>
+                  <span className={'rail-meta' + (movingPartsOnly ? ' rail-meta-note' : '')}>{meta}</span>
                 </button>
                 <Info term={'stage.' + s} />
               </div>

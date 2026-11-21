@@ -163,10 +163,13 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
   const [name, setName] = useState(asset.name)
   const concept = selectedVersion(asset, 'concept')
   const thumb = libraryUrl(concept?.files.cutout ?? concept?.files.image)
+  // The checkerboard shows through a picture that has not arrived yet; a placeholder shimmer stands in until it does.
+  const [thumbLoaded, setThumbLoaded] = useState(false)
+  const doneSteps = STAGES.filter((x) => stageState(asset, x) === 'done').length
   return (
     <div className="asset-card-wrap">
       <Link to={`/assets/${asset.id}`} className="asset-card">
-        <div className="asset-thumb checker">{thumb ? <img src={thumb} alt="" /> : <span className="muted small">no picture yet</span>}</div>
+        <div className={'asset-thumb checker' + (thumb && !thumbLoaded ? ' thumb-loading' : '')}>{thumb ? <img src={thumb} alt="" onLoad={() => setThumbLoaded(true)} onError={() => setThumbLoaded(true)} /> : <span className="muted small">no picture yet</span>}</div>
         <div className="asset-name">{asset.name}</div>
         <div className="muted small">{categoryName}</div>
         {(() => {
@@ -175,7 +178,7 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
           const label = failedAt >= 0 ? `Needs a look: ${stagePlain(STAGES[failedAt])}` : sts.some((x) => x === 'running') ? 'Working' : sts.every((x) => x === 'done') ? 'Ready' : sts.every((x) => x === 'none') ? 'Not started' : 'In progress'
           return <div className={'small ' + (failedAt >= 0 ? 'bad-text' : 'muted')}>{label}</div>
         })()}
-        <div className="stage-dots" aria-label="stage progress">
+        <div className="stage-dots" role="img" aria-label={`${doneSteps} of ${STAGES.length} steps done`} title={`${doneSteps} of ${STAGES.length} steps done`}>
           {STAGES.map((s) => {
             const st = stageState(asset, s)
             return <span key={s} className={'sdot sdot-' + st} title={`${stagePlain(s)}: ${st === 'none' ? 'not started' : st === 'done' ? 'done' : st === 'running' ? 'working' : 'failed'}`} />
@@ -183,14 +186,6 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
         </div>
       </Link>
       <div className="asset-card-tools">
-        <label className="small tile-toggle" title="Show this asset's picture on the project's tile on the Projects page">
-          <input
-            type="checkbox"
-            checked={asset.show_on_project !== false}
-            onChange={(e) => void api.updateAsset(asset.id, { show_on_project: e.target.checked }).then(onChanged)}
-          />{' '}
-          Show on the project tile
-        </label>
         {badge && (
           <button type="button" className="chip chip-accent" aria-expanded={badge.open} onClick={badge.toggle} title="Show or hide the variants of this asset">
             {badge.text}
@@ -202,6 +197,15 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
             <button type="button" className="link small" onClick={() => setRenaming(true)}>
               Rename
             </button>
+          <label className="small tile-toggle more-check" title="Show this asset's picture on the project's tile on the Projects page">
+            <input
+              type="checkbox"
+              checked={asset.show_on_project !== false}
+              onChange={(e) => void api.updateAsset(asset.id, { show_on_project: e.target.checked }).then(onChanged)}
+            />{' '}
+            Show on the project tile
+          </label>
+
             {selectedVersion(asset, 'export')?.status === 'done' && (
               <button type="button" className="link small" onClick={(e) => {
                   e.currentTarget.closest('details')?.removeAttribute('open')
