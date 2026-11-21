@@ -4878,3 +4878,8 @@ button.preset-card:hover:not(:disabled) {
   grid-column: 3 / -1;
   white-space: normal;
 }
+
+/* A hint under a field wraps inside its column instead of running past the edge (UX-20). */
+.field-hint {
+  overflow-wrap: anywhere;
+}
