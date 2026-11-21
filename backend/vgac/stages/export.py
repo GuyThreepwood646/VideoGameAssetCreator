@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -111,8 +112,35 @@ def lod_list(lods: dict[str, int]) -> list[dict[str, Any]]:
     return out
 
 
+# Export folder and file names carry the asset name. A name is cut to this many characters (the full name stays in the
+# manifest's "name" field), so a long name cannot push the export files past Windows' 260-character limit. Two assets
+# never collide: the export name ends with the asset id's first 8 characters, and a cut folder name does too.
+EXPORT_NAME_MAX = 16
+
+
+def _cut(text: str) -> str:
+    return slug(text)[:EXPORT_NAME_MAX].rstrip("_") or "asset"
+
+
 def asset_export_name(sc: StageContext) -> str:
-    return f"{slug(sc.asset.name)}_{sc.asset.id[:8]}"
+    return f"{_cut(sc.asset.name)}_{sc.asset.id[:8]}"
+
+
+def check_export_room(version_dir: Path, export_name: str) -> None:
+    """Before an export writes: refuse, in plain words, when Blender could not open this asset's item file. Blender
+    (equip.py) opens items/<name>/<name>.glb under the version folder, and its Python cannot open a file of 260
+    characters or more (measured on this machine: 259 opens, 260 does not). The backend's own Python and ComfyUI's
+    Python open files of 271 characters, so only the files Blender reads are measured. Raises LibraryPathError."""
+    below = f"items/{export_name}/{export_name}.glb"
+    total = len(os.path.abspath(str(version_dir))) + 1 + len(below)
+    if total < library.LONG_PATH_LIMIT:
+        return
+    # library folder + separator + projects/<id>/assets/<id>/export/<id> + separator + below: 259 characters or fewer
+    rel = f"projects/{'x' * 36}/assets/{'x' * 36}/export/{'x' * 36}"
+    most = library.LONG_PATH_LIMIT - 3 - len(rel) - len(below)
+    raise library.LibraryPathError(
+        f"The library folder's path is too long for Blender, which cannot open the files of this asset's export: keep it under "
+        f"{most + 1} characters, for example F:\\Games\\VGAC library.")
 
 
 # --- Engine texture packs (G01, G02; docs/GREAT-ASSETS-PLAN.md 3.1) ---------------------------------------------------
@@ -1512,6 +1540,7 @@ async def judge(sc: StageContext) -> None:
 async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     # The material category never reaches here: stages.module_for routes its export to stages/material.py.
     name = asset_export_name(sc)
+    check_export_room(sc.dir, name)  # refused before any export file is written
     sc.set_params(export_name=name, unity=bool(params.get("unity", True)), clips_library=params.get("clips_library", "ual1"),
                   sprites=bool(params.get("sprites", False)), sprite_directions=int(params.get("sprite_directions") or 8),
                   sprite_size=int(params.get("sprite_size") or 128))
@@ -1558,9 +1587,19 @@ async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     sc.progress(1.0, "export done")
 
 
-def delivery_dir(export_root: Path, project_name: str, asset_name: str) -> Path:
-    """exports/<project>/<asset>, with both names reduced to [A-Za-z0-9_] so no name can leave the export root."""
-    dest = (export_root / slug(project_name) / slug(asset_name)).resolve()
+def _folder_name(text: str, ident: str) -> str:
+    """A folder name for a project or asset: the slug, cut to EXPORT_NAME_MAX; a cut name gets the id's first 8
+    characters so two cut names never share a folder."""
+    s = slug(text)
+    if len(s) <= EXPORT_NAME_MAX:
+        return s
+    return f"{s[:EXPORT_NAME_MAX].rstrip('_') or 'name'}_{ident[:8]}"
+
+
+def delivery_dir(export_root: Path, project_name: str, asset_name: str, project_id: str = "", asset_id: str = "") -> Path:
+    """exports/<project>/<asset>, with both names reduced to [A-Za-z0-9_] so no name can leave the export root, and cut
+    to EXPORT_NAME_MAX characters (with the id) when long. Names of EXPORT_NAME_MAX characters or fewer are unchanged."""
+    dest = (export_root / _folder_name(project_name, project_id) / _folder_name(asset_name, asset_id)).resolve()
     dest.relative_to(export_root.resolve())  # ValueError if a name ever escaped
     return dest
 
@@ -1574,7 +1613,7 @@ async def _deliver(sc: StageContext, name: str, params: dict[str, Any]) -> None:
     """Decision D12: always copy the deliverables to exports/<project>/<asset>/; also import into the project's own
     Unity project when one is set (never the sandbox's prefab, a fresh import there)."""
     export_root = (Path(sc.settings.export_path) if sc.settings.export_path else Path(sc.settings.library_path).parent / "exports").resolve()
-    dest = delivery_dir(export_root, sc.project.name, sc.asset.name)
+    dest = delivery_dir(export_root, sc.project.name, sc.asset.name, sc.project.id, sc.asset.id)
     dest.mkdir(parents=True, exist_ok=True)
     copied = []
     for key in DELIVER_KEYS:

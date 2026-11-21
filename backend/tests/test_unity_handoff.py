@@ -71,7 +71,7 @@ class _Ctx:
         self.files: dict = {}
         self.unity_calls: list = []
         self.version = SimpleNamespace(id="v123", files={}, metrics=self.metrics, params={})
-        self.project = SimpleNamespace(name="Proj", unity_project_path=str(proj))
+        self.project = SimpleNamespace(name="Proj", id="p1234abcd99", unity_project_path=str(proj))
         self.asset = SimpleNamespace(name="Chest", id="1234abcd99", category="prop_rigid")
         self.category = {"rig_engine": "skintoken_mixamo"}
         self.settings = SimpleNamespace(export_path=str(tmp / "exports"), library_path=str(tmp / "library"), unity_project=str(REPO / "unity-sandbox"),

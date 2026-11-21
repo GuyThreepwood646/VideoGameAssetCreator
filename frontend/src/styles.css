@@ -1401,6 +1401,19 @@ button.btn-lg {
 .step-settings .adjust-grid > * {
   min-width: 0;
 }
+/* The step settings take the width of the place they sit in (the Make it card and the New asset form, which can be
+   laid out as a row). Without this a section measured its longest unbroken line (2457 px on the rig step), and the
+   sections ran over each other. Zero intrinsic width, then stretch to the host; the labels wrap inside. */
+.step-settings {
+  width: 0;
+  min-width: 100%;
+}
+/* A long unbroken value (a rig template or file name, about 120 characters with no spaces) breaks inside its section
+   instead of running past the edge over the next section. */
+.step-settings-group {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .slider-row {
   display: flex;
   gap: var(--s2);
