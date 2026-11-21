@@ -17,12 +17,13 @@ turned, scaled and moved like the target) onto the final mesh with Cycles "selec
 When the target was symmetrized, its texture layout is first re-packed with the stacked mirrored halves kept together,
 so the space the removed half used is reclaimed and the whole atlas is used (repack_mirrored).
 """
-import json
 import os
 import time
 
 import bpy
 from mathutils import Vector
+
+import rebake_cage  # noqa: E402  (pure maths next to this script: the cage distance per category)
 
 # Map key -> (colour space of the image, bake kind). AO keeps its own resolution (the mesh stage bakes it at half size).
 MAPS = {
@@ -34,20 +35,12 @@ MAPS = {
 }
 
 
-# Bake settings. Trials override them with the VGAC_REBAKE_OPTS environment variable (a JSON object with any of these
-# keys); the pipeline uses the defaults.
+# Bake settings (no environment override: the pipeline's values only).
 OPTIONS = {"interpolation": "Linear", "samples": 4, "margin_type": "ADJACENT_FACES", "oversample": 1}
 
 
 def options():
-    opts = dict(OPTIONS)
-    raw = os.environ.get("VGAC_REBAKE_OPTS")
-    if raw:
-        try:
-            opts.update(json.loads(raw))
-        except ValueError:
-            print("REBAKE ignoring bad VGAC_REBAKE_OPTS")
-    return opts
+    return dict(OPTIONS)
 
 
 def copy_object(obj, name):
@@ -187,9 +180,10 @@ def _final_material(images):
     return mat
 
 
-def rebake(source, target, maps, out_dir, tex, padding_px, margin_px, repack=False, samples=None):
+def rebake(source, target, maps, out_dir, tex, padding_px, margin_px, repack=False, samples=None, category=None):
     """Bake every map in `maps` ({key: png path}) from `source` onto `target`, write <out_dir>/<key>.png, and give the
-    target a material using the new images. Returns a report dict."""
+    target a material using the new images. `category` (the asset's category id) sets the cage distance (rebake_cage).
+    Returns a report dict."""
     t0 = time.time()
     opts = options()
     if samples is not None:
@@ -226,7 +220,8 @@ def rebake(source, target, maps, out_dir, tex, padding_px, margin_px, repack=Fal
     bake = scene.render.bake
     bake.use_selected_to_active = True
     bake.use_cage = False
-    bake.cage_extrusion = 0.01 * diag
+    cage = rebake_cage.cage_extrusion_for(category, diag)
+    bake.cage_extrusion = cage
     bake.max_ray_distance = 0.02 * diag
     bake.margin = int(margin_px) * over
     try:
@@ -277,4 +272,4 @@ def rebake(source, target, maps, out_dir, tex, padding_px, margin_px, repack=Fal
     return {"rebaked": True, "rebake_seconds": round(time.time() - t0, 2), "rebake_map_seconds": timings,
             "rebake_maps": written, "repacked": bool(repacked),
             "rebake_margin_px": int(margin_px), "rebake_options": opts, "rebake_padding_px": int(padding_px),
-            "cage_extrusion_m": round(0.01 * diag, 5), "max_ray_distance_m": round(0.02 * diag, 5)}
+            "cage_extrusion_m": round(cage, 5), "max_ray_distance_m": round(0.02 * diag, 5)}

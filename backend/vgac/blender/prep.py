@@ -2,7 +2,7 @@
 
 Run: blender -b --python prep.py -- <in.glb> <out.glb> <asset_name> [--size 1.8] [--size-axis height|horizontal|longest]
      [--yaw 0] [--symmetric] [--pivot base|center|corner] [--smooth-angle 60] [--shading smooth|flat] [--budget N]
-     [--maps maps.json] [--tex 2048] [--padding 8] [--margin 16] [--rebake auto|always|never]
+     [--maps maps.json] [--tex 2048] [--padding 8] [--margin 16] [--rebake auto|always|never] [--category id]
      [--grid 1] [--grid-footprint auto|1x1|2x1|2x2|4x1|4x4] [--grid-height auto|0.5|1|3|4] [--tiling out.png]
      [--protect-head 0.13 --head-gain 2 [--hand-gain 2]]
      (--height H is the old form of --size H --size-axis height)
@@ -76,6 +76,7 @@ tex_size = int(_common.opt("--tex", 2048))
 padding_px = int(_common.opt("--padding", max(4, tex_size // 256)))
 margin_px = int(_common.opt("--margin", max(8, tex_size // 128)))
 rebake_mode = _common.opt("--rebake", "auto")
+asset_category = _common.opt("--category", "")
 maps = {}
 if maps_json and os.path.isfile(maps_json):
     with open(maps_json) as f:
@@ -330,7 +331,7 @@ else:
 bake_report = {"rebaked": False, "rebake_reason": None, "rebake_seconds": 0.0}
 if bake_source is not None and reasons:
     bake_report = rebake.rebake(bake_source, mesh, maps, os.path.dirname(dst), tex_size, padding_px, margin_px,
-                                repack=symmetric)
+                                repack=symmetric, category=asset_category)
     bake_report["rebake_reason"] = ", ".join(reasons)
 elif bake_source is not None:
     bpy.data.objects.remove(bake_source, do_unlink=True)
