@@ -29,15 +29,19 @@ export type Dab = {
   faceOnly: boolean // paint only that triangle
 }
 
-// Triangles facing more than about 78 degrees away from the brush are skipped.
-export const REJECT_DOT = 0.2
+// Surface facing the brush (dot of the surface normal and the brush normal): full strength from FACING_FULL, nothing
+// below FACING_NONE, smooth in between. It is judged per picture texel from the normal interpolated over the triangle,
+// never per triangle: a triangle-level skip would leave one triangle of a quad painted and its neighbour not, and the
+// shared diagonal would crack (WP-32 review).
+export const FACING_NONE = 0.1
+export const FACING_FULL = 0.3
 // Points further than this share of the radius from the brush's plane are skipped (the far side of a thin part).
 const SLAB = 0.5
 const EPS = 1e-6
 
-// Called for each picture texel inside a triangle, with the texel's index and its 3D point on the surface. Returns true
-// when the texel changed.
-type TexelVisit = (i: number, p: THREE.Vector3) => boolean
+// Called for each picture texel inside a triangle, with the texel's index, its 3D point on the surface and its unit
+// normal there. Returns true when the texel changed.
+type TexelVisit = (i: number, p: THREE.Vector3, n: THREE.Vector3) => boolean
 
 const _inv = new THREE.Matrix4()
 const _c = new THREE.Vector3()
@@ -50,6 +54,10 @@ const _e1 = new THREE.Vector3()
 const _e2 = new THREE.Vector3()
 const _p = new THREE.Vector3()
 const _q = new THREE.Vector3()
+const _nt = new THREE.Vector3()
+const _na = new THREE.Vector3()
+const _nb = new THREE.Vector3()
+const _nc = new THREE.Vector3()
 
 // The smooth edge: full strength inside hardness * radius, falling to nothing at the radius.
 export function falloff(t: number, hardness: number): number {
@@ -60,13 +68,22 @@ export function falloff(t: number, hardness: number): number {
   return 1 - k * k * (3 - 2 * k)
 }
 
-// How strongly the brush reaches a surface point: 0 outside the brush, the edge falloff inside it.
-function brushAlpha(p: THREE.Vector3, dab: Dab, brush: Brush): number {
+// How much a surface with this unit normal faces the brush: 0 turned away, 1 square on, smooth between.
+export function facingWeight(n: THREE.Vector3, brushNormal: THREE.Vector3): number {
+  const t = Math.min(1, Math.max(0, (n.dot(brushNormal) - FACING_NONE) / (FACING_FULL - FACING_NONE)))
+  return t * t * (3 - 2 * t)
+}
+
+// How strongly the brush reaches a surface point: 0 outside the brush, the edge falloff inside it, and nothing on a
+// surface turned away from the brush.
+function brushAlpha(p: THREE.Vector3, n: THREE.Vector3, dab: Dab, brush: Brush): number {
   _q.subVectors(p, dab.point)
   const d = _q.length()
   if (d >= brush.radius) return 0
   if (Math.abs(_q.dot(dab.normal)) > SLAB * brush.radius) return 0
-  return falloff(d / brush.radius, brush.hardness) * brush.strength
+  const facing = facingWeight(n, dab.normal)
+  if (facing <= 0) return 0
+  return falloff(d / brush.radius, brush.hardness) * brush.strength * facing
 }
 
 // Paints one dab onto the layer. The layer must be inside a stroke (beginStroke). Returns the number of pixels changed.
@@ -77,8 +94,8 @@ export function paintDab(layer: PaintLayer, targets: DabTarget[], dab: Dab, brus
   const px = layer.pixels
   const orig = layer.original
   const [r, g, b] = brush.rgb
-  return sweepDab(layer, targets, dab, brush, (i, p) => {
-    const alpha = brushAlpha(p, dab, brush)
+  return sweepDab(layer, targets, dab, brush, (i, p, n) => {
+    const alpha = brushAlpha(p, n, dab, brush)
     if (alpha <= 0) return false
     // The strongest brush value each texel has had in this stroke: overlapping dabs do not build past the strength.
     if (alpha <= mask[i]) return false
@@ -103,8 +120,8 @@ export function smudgeDab(layer: PaintLayer, targets: DabTarget[], dab: Dab, bru
   let sb = 0
   let sw = 0
   // Pass one: the colour under the brush now (nothing is changed).
-  sweepDab(layer, targets, dab, brush, (i, p) => {
-    const alpha = brushAlpha(p, dab, brush)
+  sweepDab(layer, targets, dab, brush, (i, p, n) => {
+    const alpha = brushAlpha(p, n, dab, brush)
     if (alpha <= 0) return false
     const o = i * 4
     sr += px[o] * alpha
@@ -118,8 +135,8 @@ export function smudgeDab(layer: PaintLayer, targets: DabTarget[], dab: Dab, bru
   carry.rgb = pickup ?? carry.rgb
   if (!drag) return 0
   // Pass two: move the texels under the brush toward the dragged colour.
-  return sweepDab(layer, targets, dab, brush, (i, p) => {
-    const alpha = brushAlpha(p, dab, brush)
+  return sweepDab(layer, targets, dab, brush, (i, p, n) => {
+    const alpha = brushAlpha(p, n, dab, brush)
     if (alpha <= 0) return false
     const o = i * 4
     for (let c = 0; c < 3; c++) {
@@ -142,7 +159,7 @@ function sweepDab(layer: PaintLayer, targets: DabTarget[], dab: Dab, brush: Brus
     const scale = _s.setFromMatrixScale(m)
     const localRadius = brush.radius / ((scale.x + scale.y + scale.z) / 3)
     const tris = dab.faceOnly ? (mesh === dab.hitMesh ? [dab.face] : []) : nearTriangles(t.bvh, _c, localRadius)
-    for (const f of tris) changed += rasterTriangle(layer, mesh, f, dab.normal, visit)
+    for (const f of tris) changed += rasterTriangle(layer, mesh, f, visit)
   }
   return changed
 }
@@ -160,9 +177,10 @@ function nearTriangles(bvh: MeshBVH, c: THREE.Vector3, radius: number): number[]
   return out
 }
 
-// Visits the picture texels inside triangle f of the mesh. A facing vector, when given, skips a triangle that turns away
-// from it (the back-surface rejection). Changed texels are reported to the layer so the GPU gets only that rectangle.
-function rasterTriangle(layer: PaintLayer, mesh: THREE.Mesh, f: number, facing: THREE.Vector3 | null, visit: TexelVisit): number {
+// Visits the picture texels inside triangle f of the mesh, each with its 3D point and normal (interpolated from the
+// corners). No triangle is skipped for facing: that is decided per texel, so triangles that share an edge agree on it.
+// Changed texels are reported to the layer so the GPU gets only that rectangle.
+function rasterTriangle(layer: PaintLayer, mesh: THREE.Mesh, f: number, visit: TexelVisit): number {
   const geo = mesh.geometry
   const pos = geo.attributes.position as THREE.BufferAttribute
   const uv = geo.attributes.uv as THREE.BufferAttribute | undefined
@@ -180,7 +198,17 @@ function rasterTriangle(layer: PaintLayer, mesh: THREE.Mesh, f: number, facing: 
   _n.crossVectors(_e1, _e2)
   if (_n.lengthSq() === 0) return 0
   _n.normalize()
-  if (facing && _n.dot(facing) < REJECT_DOT) return 0
+  // Normals at the three corners: the mesh's own, else the face's.
+  const nrm = geo.attributes.normal as THREE.BufferAttribute | undefined
+  if (nrm) {
+    _na.fromBufferAttribute(nrm, ia).transformDirection(m)
+    _nb.fromBufferAttribute(nrm, ib).transformDirection(m)
+    _nc.fromBufferAttribute(nrm, ic).transformDirection(m)
+  } else {
+    _na.copy(_n)
+    _nb.copy(_n)
+    _nc.copy(_n)
+  }
 
   const W = layer.width
   const H = layer.height
@@ -221,7 +249,13 @@ function rasterTriangle(layer: PaintLayer, mesh: THREE.Mesh, f: number, facing: 
       // Texels outside 0 to 1 repeat the picture.
       const wx = ((x % W) + W) % W
       const wy = ((y % H) + H) % H
-      if (!visit(wy * W + wx, _p)) continue
+      _nt.set(
+        _na.x * l1 + _nb.x * l2 + _nc.x * l3,
+        _na.y * l1 + _nb.y * l2 + _nc.y * l3,
+        _na.z * l1 + _nb.z * l2 + _nc.z * l3,
+      )
+      if (_nt.lengthSq() > 0) _nt.normalize()
+      if (!visit(wy * W + wx, _p, _nt)) continue
       changed++
       if (wx < minX) minX = wx
       if (wy < minY) minY = wy
@@ -297,7 +331,7 @@ export function fillRegion(layer: PaintLayer, seed: FillSeed, fill: Fill): numbe
   let changed = 0
   while (queue.length) {
     const f = queue.pop()!
-    changed += rasterTriangle(layer, seed.mesh, f, null, (i) => {
+    changed += rasterTriangle(layer, seed.mesh, f, (i) => {
       if (done[i]) return false
       const o = i * 4
       if (!near(o)) return false
