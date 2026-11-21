@@ -15,8 +15,8 @@ from typing import Any
 
 from .. import library, quality
 from ..db import _iso, utcnow
-from ..graphs.material import (crop_margin, derive_maps, make_seamless, seam_error, t2i_graph, upscale_graph, upscale_plan,
-                               wrap_pad)
+from ..graphs.material import (UPSCALE_OUT, crop_margin, derive_maps, is_wood, make_seamless, seam_error, t2i_graph,
+                               upscale_graph, upscale_plan, wrap_pad)
 from ..imaging import image_size
 from .base import StageContext, random_seed, slug
 
@@ -61,7 +61,10 @@ async def mesh_run(sc: StageContext, params: dict[str, Any]) -> None:
     base = await asyncio.to_thread(make_seamless, src, sc.dir / "base_color.png", power=power)
     # WP-58: wood only, per bakeoff/wp58/trialC/VERDICT.md (2026-11-21); every other surface keeps today's tile.
     plan = upscale_plan(sc.asset.prompt, sc.asset.style_preset, sc.budget["texture"])
-    if plan is not None:
+    if plan is None and is_wood(sc.asset.prompt, sc.asset.style_preset) and int(sc.budget["texture"]) < UPSCALE_OUT:
+        sc.set_metrics(upscaler="skipped", upscaler_note=f"the upscaler is used only at {UPSCALE_OUT} px; this texture budget is "
+                                                         f"{sc.budget['texture']} px, so today's tile is kept")
+    elif plan is not None:
         if await upscale_model_ready(sc.client(), plan["model"]):
             base = await _upscale_wood(sc, base, plan)
             sc.set_metrics(upscaler="wood", upscale_size=plan["size"])

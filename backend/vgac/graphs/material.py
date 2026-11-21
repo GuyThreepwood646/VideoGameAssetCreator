@@ -104,11 +104,11 @@ def is_wood(prompt: str | None, style_preset: str | None) -> bool:
 
 
 def upscale_plan(prompt: str | None, style_preset: str | None, texture_budget: int = UPSCALE_OUT) -> dict[str, Any] | None:
-    """The upscaler plan for a material, or None (today's path). The output is UPSCALE_OUT px, or the texture budget
-    when that is smaller (the trial measured detail at 2048 and seams at 1024)."""
-    if not is_wood(prompt, style_preset):
+    """The upscaler plan for a material, or None (today's path). Used only for wood and only at the tested size: a
+    texture budget below UPSCALE_OUT (2048) keeps today's tile (the trial measured detail at 2048, seams at 1024)."""
+    if not is_wood(prompt, style_preset) or int(texture_budget) < UPSCALE_OUT:
         return None
-    return {"model": UPSCALE_MODEL, "pad": UPSCALE_PAD, "scale": UPSCALE_SCALE, "size": min(UPSCALE_OUT, int(texture_budget))}
+    return {"model": UPSCALE_MODEL, "pad": UPSCALE_PAD, "scale": UPSCALE_SCALE, "size": UPSCALE_OUT}
 
 
 def wrap_pad(arr: np.ndarray, pad: int = UPSCALE_PAD) -> np.ndarray:
