@@ -26,7 +26,7 @@ SEED_SIZE = 4000  # safety net: a region never has more vertices than this
 MIN_PIECE_TIDY = 12  # tidy: pieces smaller than this are dropped
 HOLE_ROUNDS = 3  # rounds of hole filling after the growth (see fill_holes)
 CREASE_DOT = 0.87  # seam duplicates join only when their normals agree within about 30 degrees
-SECTOR_COS = 0.87  # a valley splits a vertex into sectors only when its two faces turn by about 30 degrees or more (trial)
+SECTOR_COS = 0.87  # a valley splits a vertex into sectors only when its two faces turn by about 30 degrees or more (measured in bakeoff/wp69/ridgefix)
 SEAM = 8  # rings of the seam (measured on The Heir: no tear, body no worse)
 SPINE_WORDS = ("spine", "chest")
 
