@@ -280,6 +280,18 @@ def init_db() -> None:
     Base.metadata.create_all(engine)
     _ensure_columns(engine)
     migrate_looks(engine)
+    unkeep_stopped_and_failed(engine)
+
+
+def unkeep_stopped_and_failed(engine) -> int:
+    """A stopped or failed version is not kept (WP-02). Rows stopped before that change still say kept, which showed
+    "stopped" and "kept" on one version and made step 1 and step 2 disagree about what to do next (UX-06). Idempotent.
+    Returns how many rows changed."""
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        res = conn.execute(text("UPDATE version SET selected = 0 WHERE selected = 1 AND "
+                                "((status = 'rejected' AND error = :stopped) OR status = 'error')"), {"stopped": STOPPED_ERROR})
+        return int(res.rowcount or 0)
 
 
 _ADDED_COLUMNS = {"project": {"unity_project_path": "TEXT"}, "asset": {"base_asset_id": "VARCHAR(36)", "variant_change": "TEXT", "concept_model": "VARCHAR(50)", "autopilot_json": "TEXT",
@@ -421,7 +433,7 @@ def version_to_dict(v: Version) -> dict[str, Any]:
         "job_id": v.job_id,
         "error": v.error,
         "created_at": _iso(v.created_at),
-        "selected": bool(v.selected),
+        "selected": bool(v.selected) and not (is_stopped(v) or v.status == "error"),
     }
 
 
@@ -457,7 +469,7 @@ def asset_to_dict(a: Asset, with_stages: bool = True) -> dict[str, Any]:
     if with_stages:
         for v in sorted(a.versions, key=lambda x: (x.created_at, x.id)):
             out["stages"].setdefault(v.stage, []).append(version_to_dict(v))
-            if v.selected:
+            if v.selected and not (is_stopped(v) or v.status == "error"):
                 out["selected"][v.stage] = v.id
     return out
 
