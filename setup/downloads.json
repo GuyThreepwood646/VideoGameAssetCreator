@@ -324,7 +324,7 @@
    "licence": "CC0-1.0",
    "extra": true,
    "required": false,
-   "note": "Needed only for the wood material upscaler (backend/vgac/graphs/material.py); without it wood keeps the 1024 tile. Licence proof: the release page at the page link says License: CC0, and OpenModelDB lists CC0-1.0 with commercial use allowed (bakeoff/wp58/models/pbrify_v4/LICENCE-NOTE.md). The host repository reports NOASSERTION and has no LICENSE file, so the release notes and OpenModelDB are the proof. Size and SHA-256 are those of the file the app was tested with, checked against the release download on 2026-11-21."
+   "note": "Needed only for the wood material upscaler (backend/vgac/graphs/material.py); without it wood is drawn at the texture size, exactly as before. Licence proof: the release page at the page link says License: CC0, and OpenModelDB lists CC0-1.0 with commercial use allowed (bakeoff/wp58/models/pbrify_v4/LICENCE-NOTE.md). The host repository reports NOASSERTION and has no LICENSE file, so the release notes and OpenModelDB are the proof. Size and SHA-256 are those of the file the app was tested with, checked against the release download on 2026-11-21."
   },
   "anima": {
    "url": "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-turbo-v1.1.safetensors",

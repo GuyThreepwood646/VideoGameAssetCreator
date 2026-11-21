@@ -167,3 +167,22 @@ def test_an_uploaded_1024_wood_picture_is_skipped():
 
 def test_a_1024_z_image_draw_may_be_upscaled():
     assert upscale_skip_note(None, (1024, 1024)) is None
+
+
+def test_wood_is_drawn_at_1024_only_when_the_card_has_the_upscaler():
+    from vgac.stages.material import concept_draw_size
+    with_model = _FakeClient(_info([UPSCALE_MODEL]))
+    assert asyncio.run(concept_draw_size(with_model, "old oak planks", "realistic_pbr", 2048)) == 1024
+
+
+def test_wood_without_the_upscaler_is_drawn_at_the_budget_as_before():
+    # The model is an optional extra: a card without it must not ship a 1024 wood tile at a 2048 budget.
+    from vgac.stages.material import concept_draw_size
+    assert asyncio.run(concept_draw_size(_FakeClient(_info(["4xLSDIR.pth"])), "old oak planks", "realistic_pbr", 2048)) == 2048
+    assert asyncio.run(concept_draw_size(_FakeClient(fail=True), "old oak planks", "realistic_pbr", 2048)) == 2048
+
+
+def test_other_materials_never_ask_the_card():
+    from vgac.stages.material import concept_draw_size
+    # fail=True would answer "not ready"; stone never asks, so it stays at the budget either way
+    assert asyncio.run(concept_draw_size(_FakeClient(fail=True), "red brick wall", "realistic_pbr", 2048)) == 2048

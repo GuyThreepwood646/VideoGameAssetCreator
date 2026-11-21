@@ -35,8 +35,10 @@ def _prompt(sc: StageContext, params: dict[str, Any]) -> str:
 
 async def concept_run(sc: StageContext, params: dict[str, Any]) -> None:
     seed = int(params.get("seed") or random_seed())
-    # WP-58: a wood material at 2048 is drawn at the trial's 1024 and upscaled in the mesh stage (graphs/material.py draw_size).
-    size = int(params.get("width") or draw_size(sc.asset.prompt, sc.asset.style_preset, sc.budget["texture"] or 1024))
+    # WP-58: a wood material at 2048 is drawn at the trial's 1024 and upscaled in the mesh stage (graphs/material.py draw_size),
+    # but only when the card has the upscale model; without it the draw stays at the budget, so wood keeps today's tile.
+    size = int(params.get("width") or await concept_draw_size(sc.client(), sc.asset.prompt, sc.asset.style_preset,
+                                                              int(sc.budget["texture"] or 1024)))
     prompt = _prompt(sc, params)
     sc.set_params(model="zturbo", seed=seed, width=size, height=size, drawn_size=size, prompt=prompt)
     sc.use_model("zturbo")
@@ -107,6 +109,16 @@ def upscale_skip_note(source: str | None, size: tuple[int, int]) -> str | None:
         return (f"the picture is {size[0]} px, not the {TRIAL_DRAW} px draw the upscaler was tested on; "
                 "kept today's tile")
     return None
+
+
+async def concept_draw_size(client: Any, prompt: str | None, style_preset: str | None, budget: int) -> int:
+    """The concept draw size: the trial's 1024 for wood the upscaler will take to the budget, when the card has the upscale
+    model; otherwise the budget itself, so a card without the model draws wood exactly as before WP-58."""
+    size = draw_size(prompt, style_preset, budget)
+    plan = upscale_plan(prompt, style_preset, budget)
+    if plan is not None and size < budget and not await upscale_model_ready(client, plan["model"]):
+        return budget
+    return size
 
 
 async def upscale_model_ready(client: Any, model: str) -> bool:
