@@ -146,7 +146,7 @@ public static partial class T
     {
         if (args.Length == 2 && args[0] == "--spawn-and-wait") return SpawnAndWait(args[1]);
         if (args.Length >= 2 && args[0] == "-m" && args[1] == "uvicorn") { Thread.Sleep(40000); return 0; }   // stands in for the backend's Python in tests
-        if (args.Length == 2 && args[0] == "--report-handle") return ReportHandle(args[1]);
+        if (args.Length == 3 && args[0] == "--report-handle") return ReportHandle(args[1], args[2]);
         if (args.Length == 3 && args[0] == "--make-fake-project") return MakeFakeProject(args[1], args[2]);
         try
         {
