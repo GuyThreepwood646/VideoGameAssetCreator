@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from vgac.graphs.material import (UPSCALE_MODEL, UPSCALE_OUT, crop_margin, is_wood, upscale_graph, upscale_plan, wrap_pad)
-from vgac.stages.material import upscale_model_ready
+from vgac.stages.material import upscale_model_ready, upscale_skip_note
 
 # The prompts the trial called wood, and the ones it called other categories (bakeoff/wp58/trialC, 10 prompts).
 TRIAL_WOOD = ["oak planks with straight grain and a worn finish", "pine boards with a few small knots and a light varnish"]
@@ -150,3 +150,20 @@ def test_wood_at_other_budgets_keeps_the_budget_size():
     assert draw_size("old oak planks", "realistic_pbr", 1024) == 1024
     assert draw_size("old oak planks", "realistic_pbr", 4096) == 4096
     assert draw_size("old oak planks", "painted", 2048) == 2048
+
+
+def test_a_2048_wood_picture_at_a_2048_budget_is_skipped():
+    # A concept made before this change, or a redraw at 2048: the upscaler would make 8192 px, so today's tile is kept.
+    assert upscale_plan("old oak planks", "realistic_pbr", texture_budget=2048) is not None
+    note = upscale_skip_note(None, (2048, 2048))
+    assert note is not None and "2048 px" in note and "1024 px draw" in note
+
+
+def test_an_uploaded_1024_wood_picture_is_skipped():
+    # Uploads are not Z-Image draws, so the upscaler (tested only on draws) does not run on them.
+    assert upscale_skip_note("upload", (1024, 1024)) is not None
+    assert upscale_skip_note("upload_edit", (1024, 1024)) is not None
+
+
+def test_a_1024_z_image_draw_may_be_upscaled():
+    assert upscale_skip_note(None, (1024, 1024)) is None

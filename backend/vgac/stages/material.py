@@ -15,7 +15,7 @@ from typing import Any
 
 from .. import library, quality
 from ..db import _iso, utcnow
-from ..graphs.material import (UPSCALE_OUT, crop_margin, derive_maps, draw_size, is_wood, make_seamless, seam_error, t2i_graph,
+from ..graphs.material import (TRIAL_DRAW, UPSCALE_OUT, crop_margin, derive_maps, draw_size, is_wood, make_seamless, seam_error, t2i_graph,
                                upscale_graph, upscale_plan, wrap_pad)
 from ..imaging import image_size
 from .base import StageContext, random_seed, slug
@@ -66,7 +66,10 @@ async def mesh_run(sc: StageContext, params: dict[str, Any]) -> None:
         sc.set_metrics(upscaler="skipped", upscaler_note=f"the upscaler is used only at a {UPSCALE_OUT} px texture budget; this "
                                                          f"budget is {sc.budget['texture']} px, so today's tile is kept")
     elif plan is not None:
-        if await upscale_model_ready(sc.client(), plan["model"]):
+        note = upscale_skip_note(_concept_source(sc), image_size(src))
+        if note is not None:
+            sc.set_metrics(upscaler="skipped", upscaler_note=note)
+        elif await upscale_model_ready(sc.client(), plan["model"]):
             base = await _upscale_wood(sc, base, plan)
             sc.set_metrics(upscaler="wood", upscale_size=plan["size"])
         else:
@@ -85,6 +88,25 @@ async def mesh_run(sc: StageContext, params: dict[str, Any]) -> None:
     err = await asyncio.to_thread(seam_error, base)
     sc.set_metrics(seam_error=round(err, 5), size=list(image_size(base)), textured=True)
     await judge(sc)
+
+
+def _concept_source(sc: StageContext) -> str | None:
+    """How the concept picture was made: "upload" or "upload_edit" for a photo, else None (a Z-Image draw)."""
+    for v in sc.iter_lineage():
+        if v.stage == "concept":
+            return (v.params or {}).get("source")
+    return None
+
+
+def upscale_skip_note(source: str | None, size: tuple[int, int]) -> str | None:
+    """WP-58: why the wood upscaler is skipped for this picture, or None when it may run. The upscaler was tested only on
+    the 1024 Z-Image draw: an uploaded photo, or a picture of another size, keeps today's tile."""
+    if source in ("upload", "upload_edit"):
+        return "the picture is an uploaded photo, and the upscaler was tested only on Z-Image draws; kept today's tile"
+    if tuple(size) != (TRIAL_DRAW, TRIAL_DRAW):
+        return (f"the picture is {size[0]} px, not the {TRIAL_DRAW} px draw the upscaler was tested on; "
+                "kept today's tile")
+    return None
 
 
 async def upscale_model_ready(client: Any, model: str) -> bool:
