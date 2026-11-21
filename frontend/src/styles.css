@@ -4681,6 +4681,19 @@ button.preset-card:hover:not(:disabled) {
   flex-wrap: wrap;
   margin: 0.25rem 0;
 }
+/* Moving parts (WP-29): a hinge or slide part's settings sit on one wrapping line, each label apart. */
+.declared-point-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.25rem;
+  align-items: center;
+  margin: 0.25rem 0 0.5rem;
+}
+.declared-point-settings label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
 
 .touch-up-row {
   display: flex;

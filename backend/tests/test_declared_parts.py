@@ -89,7 +89,10 @@ def api(settings):
             mesh = Version(asset_id=a.id, stage="mesh", status="done")
             db.add_all([rig, mesh])
             db.flush()
-            ids = {"asset": a.id, "rig": rig.id, "mesh": mesh.id}
+            again = Version(asset_id=a.id, stage="rig", status="done", parent_version_id=rig.id)
+            db.add(again)
+            db.flush()
+            ids = {"asset": a.id, "rig": rig.id, "mesh": mesh.id, "again": again.id}
             db.commit()
         yield client, ids
 
@@ -118,6 +121,17 @@ def test_get_and_put_a_rig_versions_placed_parts(api):
                    json={"parts": [{"name": "cape", "kind": "sway", "location": [0.0, 0.85, 0.12]}]})
     assert r.status_code == 200, r.text
     assert r.json()["parts"][0]["location"] == [0.0, 0.85, 0.12]
+    assert client.get(f"/api/versions/{ids['rig']}/parts").json()["parts"][0]["location"] == [0.0, 0.85, 0.12]
+
+
+def test_a_rig_made_again_shows_the_points_it_was_made_from_until_it_has_its_own(api):
+    """The rig step reads the points of the rig it was made from (stages/rig.py stiff_parts_path), so the page shows those."""
+    client, ids = api
+    assert client.get(f"/api/versions/{ids['again']}/parts").json()["parts"][0]["location"] is None
+    client.put(f"/api/versions/{ids['rig']}/parts", json={"parts": [{"name": "cape", "kind": "sway", "location": [0.0, 0.85, 0.12]}]})
+    assert client.get(f"/api/versions/{ids['again']}/parts").json()["parts"][0]["location"] == [0.0, 0.85, 0.12]
+    client.put(f"/api/versions/{ids['again']}/parts", json={"parts": [{"name": "cape", "kind": "sway", "location": [0.0, 0.9, 0.1]}]})
+    assert client.get(f"/api/versions/{ids['again']}/parts").json()["parts"][0]["location"] == [0.0, 0.9, 0.1]
     assert client.get(f"/api/versions/{ids['rig']}/parts").json()["parts"][0]["location"] == [0.0, 0.85, 0.12]
 
 

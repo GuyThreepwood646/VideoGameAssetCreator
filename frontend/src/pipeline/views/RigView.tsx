@@ -1,16 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api, libraryUrl, type ItemSuggestionState, type SuggestionAnswer, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { Disclosure } from '../../components/ui'
 import { joinAnd, libraryMissingLine, movesLine, movesPlain, movesSourceLine } from '../../help'
 import { MovesPanel } from '../MovesPanel'
 import Viewer, { hitShapesOf, type BoneSegment, type BonesSpace, type ClipInfo, type HitboxDoc } from '../../Viewer'
-import { pointTool } from '../../declaredPoints'
+import { isMultiPoint, pointTool } from '../../declaredPoints'
 import type { ViewerModel } from '../../viewerTool'
 import { DeclaredPointsPanel, SuggestionBlock, useDeclaredPoints } from './DeclaredPoints'
 import { askLabel, canAsk, isRunning, pendingSuggestion, suggestionPoints } from '../../suggestion'
 import { useRef } from 'react'
 import { growStiffRegion, regionTriangles } from '../../stiffRegion'
+import { growMovingPiece } from '../../movingRegion'
 import type { RegionHighlight } from '../../regionOverlay'
 import * as THREE from 'three'
 
@@ -163,13 +164,13 @@ export function RigView({ version }: { version: Version }) {
   const { setPoint, addStiffPoint, pending } = dp
   const [viewerModel, setViewerModel] = useState<ViewerModel | null>(null)
   const [markName, setMarkName] = useState<string | null>(null)
-  // A stiff part takes one point per click and stays in placing mode; a sway part takes its one point and leaves it.
+  // A stiff or moving part takes one point per click and stays in placing mode; a sway part takes its one point and leaves it.
   const markKind = dp.parts?.find((p) => p.name === markName)?.kind ?? null
   const markTool = useMemo(
     () =>
       markName && viewerModel
         ? pointTool((p) => {
-            if (markKind === 'stiff') addStiffPoint(markName, p)
+            if (markKind && isMultiPoint(markKind)) addStiffPoint(markName, p)
             else {
               setPoint(markName, p)
               setMarkName(null)
@@ -179,11 +180,18 @@ export function RigView({ version }: { version: Version }) {
     [markName, markKind, viewerModel, setPoint, addStiffPoint],
   )
   // The stiff regions (WP-69) grown from every stiff point, saved or still pending, drawn over the model before keeping.
-  const stiffPoints = useMemo(
-    () => [...(dp.parts ?? []).filter((p) => p.kind === 'stiff').flatMap((p) => p.locations ?? []), ...Object.values(pending).flat()],
+  const pointsOf = useCallback(
+    (kinds: string[]) => (dp.parts ?? []).filter((p) => kinds.includes(p.kind)).flatMap((p) => [...(p.locations ?? []), ...(pending[p.name] ?? [])]),
     [dp.parts, pending],
   )
-  const regionHighlight = useMemo(() => growHighlight(viewerModel, stiffPoints), [viewerModel, stiffPoints])
+  const stiffPoints = useMemo(() => pointsOf(['stiff']), [pointsOf])
+  // A hinged or sliding part's piece (WP-29, movingRegion.ts), grown the way the rig step's finder grows it. Wheels are
+  // found from their round shape when the rig is made again, so they are not drawn here.
+  const movingGroups = useMemo(
+    () => (dp.parts ?? []).filter((p) => p.kind === 'hinge' || p.kind === 'slide').map((p) => [...(p.locations ?? []), ...(pending[p.name] ?? [])]).filter((g) => g.length > 0),
+    [dp.parts, pending],
+  )
+  const regionHighlight = useMemo(() => growHighlight(viewerModel, stiffPoints, movingGroups), [viewerModel, stiffPoints, movingGroups])
   const clipInfo = useMemo(() => (Array.isArray(clipData?.clips) ? clipData.clips.filter((c) => c && typeof c.name === 'string') : null), [clipData])
 
   return (
@@ -301,8 +309,8 @@ export function RigView({ version }: { version: Version }) {
 
 // The region the stiff points cover on the model: the union of each point's grown piece (stiffRegion.ts), as the
 // triangles to draw. Positions are the mesh's own rest coordinates, the same frame the points are stored in.
-function growHighlight(model: ViewerModel | null, points: number[][]): RegionHighlight | null {
-  if (!model || points.length === 0) return null
+function growHighlight(model: ViewerModel | null, points: number[][], movingGroups: number[][][] = []): RegionHighlight | null {
+  if (!model || (points.length === 0 && movingGroups.length === 0)) return null
   let mesh: THREE.Mesh | null = null
   for (const m of model.meshes) {
     const n = m.geometry?.getAttribute('position')?.count ?? 0
@@ -317,6 +325,10 @@ function growHighlight(model: ViewerModel | null, points: number[][]): RegionHig
   for (const p of points) {
     if (p.length !== 3) continue
     const m = growStiffRegion(flat, index, [p[0], p[1], p[2]])
+    for (let i = 0; i < mask.length; i++) if (m[i]) mask[i] = 1
+  }
+  for (const g of movingGroups) {
+    const m = growMovingPiece(flat, index, g.filter((p) => p.length === 3).map((p) => [p[0], p[1], p[2]] as [number, number, number]))
     for (let i = 0; i < mask.length; i++) if (m[i]) mask[i] = 1
   }
   const triangles = regionTriangles(index, mask)

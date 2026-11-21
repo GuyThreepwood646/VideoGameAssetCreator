@@ -52,9 +52,22 @@ def _version(db: Session, vid: str) -> tuple[Version, Asset]:
     return v, a
 
 
+def _placed_path(v: Version) -> Any:
+    """The parts file this version's points come from: its own, else (a rig made again from another rig) the nearest
+    rig it was made from that has one: the file the rig step read (stages/rig.py stiff_parts_path)."""
+    seen: set[str] = set()
+    cur: Version | None = v
+    while cur is not None and cur.id not in seen and cur.stage == "rig":
+        seen.add(cur.id)
+        path = library.version_file(cur, "parts", get_settings())
+        if path is not None:
+            return path
+        cur = cur.parent
+    return None
+
+
 def _answer(v: Version, a: Asset) -> dict[str, Any]:
-    path = library.version_file(v, "parts", get_settings())
-    rows = declared_parts.read_placed(path)
+    rows = declared_parts.read_placed(_placed_path(v))
     return {"version_id": v.id, "category": a.category, **declared_parts.view(a.parts, rows, v.stage == "rig")}
 
 
