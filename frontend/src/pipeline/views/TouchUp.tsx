@@ -65,16 +65,16 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
           {(paint.maps.shine || paint.maps.metal) && (
             <div className="touch-up-row">
               <span className="segmented" role="radiogroup" aria-label="What to paint">
-                <button type="button" role="radio" aria-checked={s.target === 'colour'} className={s.target === 'colour' ? 'active' : ''} onClick={() => paint.setSettings({ target: 'colour' })}>
+                <button type="button" role="radio" aria-checked={s.target === 'colour'} className={'seg' + (s.target === 'colour' ? ' seg-on' : '')} onClick={() => paint.setSettings({ target: 'colour' })}>
                   Colour
                 </button>
                 {paint.maps.shine && (
-                  <button type="button" role="radio" aria-checked={s.target === 'shine'} className={s.target === 'shine' ? 'active' : ''} onClick={() => paint.setSettings({ target: 'shine' })}>
+                  <button type="button" role="radio" aria-checked={s.target === 'shine'} className={'seg' + (s.target === 'shine' ? ' seg-on' : '')} onClick={() => paint.setSettings({ target: 'shine' })}>
                     Shine
                   </button>
                 )}
                 {paint.maps.metal && (
-                  <button type="button" role="radio" aria-checked={s.target === 'metal'} className={s.target === 'metal' ? 'active' : ''} onClick={() => paint.setSettings({ target: 'metal' })}>
+                  <button type="button" role="radio" aria-checked={s.target === 'metal'} className={'seg' + (s.target === 'metal' ? ' seg-on' : '')} onClick={() => paint.setSettings({ target: 'metal' })}>
                     Metal
                   </button>
                 )}
@@ -98,7 +98,7 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
           <div className="touch-up-row">
             <span className="segmented" role="radiogroup" aria-label="What the brush does">
               {MODES.map((m) => (
-                <button key={m.id} type="button" role="radio" aria-checked={s.mode === m.id} className={s.mode === m.id ? 'active' : ''} onClick={() => paint.setSettings({ mode: m.id })}>
+                <button key={m.id} type="button" role="radio" aria-checked={s.mode === m.id} className={'seg' + (s.mode === m.id ? ' seg-on' : '')} onClick={() => paint.setSettings({ mode: m.id })}>
                   {m.label}
                 </button>
               ))}
@@ -210,7 +210,7 @@ export function SmoothPaint({ versionId, smoothed, onDone }: { versionId: string
       <div className="touch-up-row">
         <span className="segmented" role="radiogroup" aria-label="How much to smooth">
           {SMOOTH_CHOICES.map((c) => (
-            <button key={c.id} type="button" role="radio" aria-checked={strength === c.id} className={strength === c.id ? 'active' : ''} onClick={() => setStrength(c.id)}>
+            <button key={c.id} type="button" role="radio" aria-checked={strength === c.id} className={'seg' + (strength === c.id ? ' seg-on' : '')} onClick={() => setStrength(c.id)}>
               {c.label}
             </button>
           ))}
