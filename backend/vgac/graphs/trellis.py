@@ -23,10 +23,8 @@ UNWRAP_PADDING_MAX = 16  # UnwrapMesh's input limit
 
 
 def convert_graph(image_name: str, prefix: str, target_faces: int = 20000, tex: int = 2048, upsample: int = 1024, seed: int = 42,
-                  remesh: bool = True, padding: int = 1, tex_steps: int = 24, texture_seed: int | None = None) -> dict[str, Any]:
-    """texture_seed is the texture sampler's own seed; None keeps today's seed + 1. Changing only it reruns the texture
-    stage and the bake, while ComfyUI reuses the cached shape stages (the texture-only retry, texcolour.py)."""
-    tseed = seed + 1 if texture_seed is None else int(texture_seed)
+                  remesh: bool = True, padding: int = 1, tex_steps: int = 24) -> dict[str, Any]:
+    tseed = seed + 1
     g: dict[str, Any] = {
         "img": {"class_type": "LoadImage", "inputs": {"image": image_name}},
         "inv": {"class_type": "InvertMask", "inputs": {"mask": ["img", 1]}},

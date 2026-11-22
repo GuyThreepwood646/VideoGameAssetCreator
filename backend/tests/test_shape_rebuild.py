@@ -27,14 +27,16 @@ def gate(tmp_path, monkeypatch):
     monkeypatch.setattr(mesh_stage, "stage_recipe", lambda sc: {"mesh": {"normal_map": True}, "surface": {"texture_filter": "smooth"}})
     monkeypatch.setattr(mesh_stage, "_input_image", lambda sc, view: pic)
     monkeypatch.setattr(mesh_stage.reference, "recipe_record", lambda *a, **k: {})
-    state = {"folded": [0.001], "seeds": [], "measured": []}
+    # colour: seed -> whether that build's base colour passes (default passes).
+    state = {"folded": [0.001], "seeds": [], "measured": [], "colour": {}}
 
     async def fake_build(sc, name, n, seed, *a, **k):
         state["seeds"].append(seed)
         (sc.dir / "model.glb").write_text(f"glb {seed}")
         (sc.dir / "base_color.png").write_text(f"base {seed}")
+        ok = state["colour"].get(seed, True)
         return {"seed": seed, "elapsed": 200.0, "maps": {"base_color": sc.dir / "base_color.png"}, "other": [], "metrics": {},
-                "match": {"ratio": 0.9, "ok": True, "picture_luma": 180, "texture_luma": 162}}
+                "match": {"ratio": 0.9 if ok else 0.2, "ok": ok, "picture_luma": 180, "texture_luma": 162 if ok else 36}}
 
     async def fake_health(sc, glb, tag):
         state["measured"].append(Path(glb).read_text())
@@ -63,7 +65,7 @@ def test_gate_passes_first_time_no_rebuild(gate):
     assert state["seeds"] == [50]
     rec = sc.version.metrics["shape_rebuild"]
     assert rec["extra_builds"] == 0 and rec["kept_try"] == 1 and rec["kept_passed"] is True
-    assert rec["tries"] == [{"seed": 50, "folded": 0.004, "passed": True, "elapsed": 200.0}]
+    assert rec["tries"] == [{"seed": 50, "folded": 0.004, "passed": True, "elapsed": 200.0, "colour": {"ratio": 0.9, "ok": True}}]
     assert sc.version.params["seed"] == 50 and sc.version.params["first_seed"] is None
     assert (sc.dir / "model.glb").read_text() == "glb 50"
 
@@ -121,6 +123,19 @@ def test_tie_break_is_lowest_folded_then_lowest_seed():
     assert meshgeom.pick_best([{"seed": 5, "folded": 0.1}, {"seed": 5, "folded": 0.1}]) == 0
 
 
+def test_gate_keeps_a_whole_dark_build_over_a_torn_bright_one(gate):
+    state, run = gate
+    second = texcolour.try_seed(50, 1)
+    state["folded"] = [0.12, 0.002]  # the first build is torn (colour bright), the second whole (colour dark)
+    state["colour"] = {second: False}
+    sc = run({"seed": 50})
+    rec = sc.version.metrics["shape_rebuild"]
+    assert rec["kept_try"] == 2 and rec["extra_builds"] == 1
+    assert rec["tries"][1]["colour"] == {"ratio": 0.2, "ok": False}
+    assert rec["tries"][0]["colour"] == {"ratio": 0.9, "ok": True}
+    assert (sc.dir / "model.glb").read_text() == f"glb {second}" and sc.version.params["first_seed"] == 50
+
+
 def test_other_routes_and_unmeasured_builds_are_not_rebuilt(gate, monkeypatch):
     state, run = gate
     state["folded"] = [0.5]
@@ -133,6 +148,33 @@ def test_other_routes_and_unmeasured_builds_are_not_rebuilt(gate, monkeypatch):
     monkeypatch.setattr(mesh_stage, "_health", no_report)
     sc = run({"seed": 50})
     assert len(state["seeds"]) == 1 and sc.version.metrics["shape_rebuild"]["kept_passed"] is None
+
+
+def test_pick_prefers_a_build_whose_colour_passes_over_a_lower_folded_share():
+    tries = [{"seed": 50, "folded": 0.12, "colour": {"ok": True}}, {"seed": 60, "folded": 0.02, "colour": {"ok": False}},
+             {"seed": 70, "folded": 0.09, "colour": {"ok": True}}]
+    assert meshgeom.pick_best(tries) == 2  # lowest folded among the colour passes; the dark 0.02 build loses
+
+
+def test_pick_among_colour_passes_is_lowest_folded_then_lowest_seed():
+    tries = [{"seed": 900, "folded": 0.07, "colour": {"ok": True}}, {"seed": 300, "folded": 0.07, "colour": {"ok": True}},
+             {"seed": 100, "folded": 0.07, "colour": {"ok": False}}]
+    assert meshgeom.pick_best(tries) == 1  # the lowest seed among the passes, not the dark build with the lowest seed
+
+
+def test_pick_group_boundaries_whole_dark_beats_torn_bright_and_both_pass_beats_both():
+    torn_bright = {"seed": 50, "folded": 0.12, "passed": False, "colour": {"ok": True}}   # group 3: colour only
+    whole_dark = {"seed": 60, "folded": 0.04, "passed": True, "colour": {"ok": False}}   # group 2: geometry only
+    both = {"seed": 70, "folded": 0.09, "passed": True, "colour": {"ok": True}}          # group 1: both pass
+    assert meshgeom.pick_best([torn_bright, whole_dark]) == 1  # a whole dark build beats a torn bright one
+    assert meshgeom.pick_best([torn_bright, whole_dark, both]) == 2  # a both-pass build beats both of those
+
+
+def test_pick_when_no_build_passes_colour_keeps_the_old_order():
+    tries = [{"seed": 50, "folded": 0.2, "colour": {"ok": False}}, {"seed": 60, "folded": 0.1, "colour": {"ok": False}}]
+    assert meshgeom.pick_best(tries) == 1  # lowest folded, as before
+    tries = [{"seed": 50, "folded": 0.2, "colour": None}, {"seed": 60, "folded": 0.1, "colour": {"ok": False}}]
+    assert meshgeom.pick_best(tries) == 0  # an unmeasured colour counts as passing, so it is the only pool
 
 
 def test_a_failed_model_never_stops_the_autopilot():
