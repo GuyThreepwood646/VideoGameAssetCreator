@@ -4,6 +4,7 @@ import type { AssetSummary, Category } from '../src/api'
 import { oneSentence, plainJargon, splitTechnical, stageTech, tryAgainLabel } from '../src/help'
 import { groupAdvanced } from '../src/pipeline/FineTune'
 import { groupCategories, mostUsedCategory } from '../src/pages/ProjectPage'
+import { groupAsks } from '../src/pipeline/views/BodyMarks'
 
 test('every step has an industry term, and the backend one wins', () => {
   assert.equal(stageTech('prep'), 'Retopology, UV unwrap, texture bake')
@@ -51,4 +52,10 @@ test('stacked error wrappers are dropped so one sentence shows', () => {
   const stacked = "The marks could not be shown: The marks could not be found: Move the library folder to a shorter path, under 90 characters: the path is too long for Windows."
   assert.equal(oneSentence(stacked), 'Move the library folder to a shorter path, under 90 characters: the path is too long for Windows.')
   assert.equal(oneSentence('Plain message.'), 'Plain message.')
+})
+
+test('marks with one reason read as one line naming them', () => {
+  const same = ['left elbow', 'right elbow', 'left knee'].map((name) => ({ name, words: 'x' }))
+  assert.deepEqual(groupAsks(same).map((g) => g.text), ['The app guessed 3 marks: left elbow, right elbow, left knee. Check them.'])
+  assert.equal(groupAsks([{ name: 'chin', words: 'Placed by guess.' }]).length, 1)
 })

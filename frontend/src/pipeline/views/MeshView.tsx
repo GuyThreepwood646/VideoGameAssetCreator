@@ -12,6 +12,7 @@ import { paintSaveBody } from '../../paint/savePaint'
 import type { ViewerModel } from '../../viewerTool'
 import { HairPicker, kindWords } from '../HairPicker'
 import { SmoothPaint, TouchUp } from './TouchUp'
+import { FaceSheet } from '../../components/FaceSheet'
 import { ShapeLogNote } from './ShapeTab'
 import type { FixAction } from '../../help'
 
@@ -256,7 +257,7 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
               <Info term="term.face_detail" />
             </div>
             <a href={faceSheet} target="_blank" rel="noreferrer" className="tiling-thumb" title="Open the full picture">
-              <img src={faceSheet} alt="The face from the picture, the 3D face before, and the 3D face after" />
+              <FaceSheet src={faceSheet} alt="The face from the picture, the 3D face before, and the 3D face after" />
             </a>
             <div className="small muted">The picture, the 3D face before, and after it was painted from the picture.</div>
             {faceMetrics?.face_texels_after ? (

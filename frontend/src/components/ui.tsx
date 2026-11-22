@@ -418,10 +418,11 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): { data: T | 
 export function timeAgo(iso: string | null | undefined): string {
   if (!iso) return ''
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
-  if (s < 60) return `${Math.round(s)}s ago`
-  if (s < 3600) return `${Math.round(s / 60)}m ago`
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`
-  return `${Math.round(s / 86400)}d ago`
+  const ago = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'} ago`
+  if (s < 60) return ago(Math.round(s), 'second')
+  if (s < 3600) return ago(Math.round(s / 60), 'minute')
+  if (s < 86400) return ago(Math.round(s / 3600), 'hour')
+  return ago(Math.round(s / 86400), 'day')
 }
 
 export function duration(a: string | null | undefined, b: string | null | undefined): string {

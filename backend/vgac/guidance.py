@@ -42,7 +42,7 @@ STAGE_GUIDE: dict[str, dict[str, Any]] = {
     },
     "rig": {
         "plain_verb": "Make it move", "estimate_seconds": 90,
-        "help": {"meaning": "Puts a skeleton inside the model, joins the surface to it, then makes a walk and a stand-still move to test it.",
+        "help": {"meaning": "Puts a skeleton inside the model, joins the surface to it, and makes the full set of moves for it.",
                  "why": "Without a skeleton the model cannot animate.",
                  "technical": "Auto-rigging (SkinToken), skin weights, procedural idle and walk clips"},
     },
@@ -227,7 +227,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "face_closeup": {"simple": False, "help": {"meaning": "Close-up source (a larger picture of the face): when the face in the picture is small, the image model draws a close-up of the same head and the face is painted from it.",
                                                "why": "A small painted face has too few pixels to fill the texture. The close-up is used only if it is still the same face; otherwise the painting is used.",
                                                "technical": "Qwen-Image-Edit close-up at 1024 (drawn once more in the look's own words if the first drifts from the painting); each eye and the mouth found again by block matching at the painting's resolution and moved back if a little off; checked by likeness, eye, skin and hair colour, and skin texture (a photograph-like close-up is not used)"}},
-    "hair_detail": {"simple": True, "help": {"meaning": "Hair detail (strands and shading painted on): the hair gets strands and clumps along the way it falls, darker roots and under-layers, lighter tips and, for painted looks, a soft highlight band.",
+    "hair_detail": {"simple": True, "help": {"meaning": "Gives the hair strands and clumps along the way it falls, darker roots and under-layers, lighter tips and, for painted looks, a soft highlight band.",
                                              "why": "The 3D builder makes hair as one flat-coloured shape; this makes it read as hair. Nothing is added to the shape. It stands back when hair cannot be told from skin or clothes.",
                                              "technical": "Hair mask by a colour vote over the model and the turnaround pictures; flow from oriented line filters or down from the crown; line integral convolution in 3D; strand height in the normal map; more texels for the hair in the face's relayout"}},
     "hair_strength": {"simple": False, "help": {"meaning": "How strongly the hair detail is painted: 1 is full, 0 changes nothing.",

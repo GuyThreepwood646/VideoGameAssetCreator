@@ -272,6 +272,24 @@ function handNotes(data: Marks, views: MarkView[]): string[] {
   return out
 }
 
+type Ask = { view?: string; joint?: string | null; name?: string | null; words: string }
+
+// Marks that all carry the same reason (three or more) read as one line naming them: "The app guessed 12 marks: left elbow, ... Check them."
+export function groupAsks(asks: Ask[]): { key: string; text: string }[] {
+  const byWords = new Map<string, Ask[]>()
+  for (const a of asks) byWords.set(a.words, [...(byWords.get(a.words) ?? []), a])
+  const out: { key: string; text: string }[] = []
+  for (const [words, list] of byWords) {
+    if (list.length >= 3) {
+      const names = [...new Set(list.map((a) => String(a.name ?? a.joint ?? 'a mark')))]
+      out.push({ key: 'group-' + words, text: `The app guessed ${names.length} marks: ${names.join(', ')}. Check them.` })
+    } else {
+      list.forEach((a, i) => out.push({ key: `${a.view}-${a.joint ?? i}-${words}`, text: a.name ? `${a.name.charAt(0).toUpperCase() + a.name.slice(1)}: ${a.words.charAt(0).toLowerCase() + a.words.slice(1)}` : a.words }))
+    }
+  }
+  return out
+}
+
 export function BodyMarksPanel({ versionId, locked }: { versionId: string; locked?: boolean }) {
   const [data, setData] = useState<Marks | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -406,13 +424,11 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
                       The {s.name} in the {SIDE_NAMES[s.view].toLowerCase()} picture: you moved it before this picture was drawn again.
                     </li>
                   ))}
-                  {asks.map((a, i) => (
-                    <li key={`${a.view}-${a.joint ?? i}`}>
-                      {a.name ? <>{a.name.charAt(0).toUpperCase() + a.name.slice(1)}: {a.words.charAt(0).toLowerCase() + a.words.slice(1)}</> : a.words}
-                    </li>
+                  {groupAsks(asks).map((g) => (
+                    <li key={g.key}>{g.text}</li>
                   ))}
                 </ul>
-                {!data.stop && <div className="muted">This is a note: the automatic run does not stop for it, because nothing uses the marks yet.</div>}
+                {!data.stop && <div className="muted">This is only a note: Autopilot does not stop for it, because nothing uses the marks yet.</div>}
               </>
             )}
           </div>

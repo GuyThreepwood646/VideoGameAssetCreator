@@ -70,7 +70,7 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
     <section className="moves-panel">
       <div className="row-between">
         <div className="field-label">
-          Moves ({data.moves.length}): from the move library, your own files and built in
+          Moves ({data.moves.length}): from the move library, your own files and made by the app
           <Info term="term.add_move" />
         </div>
         {data.can_add && kept && (

@@ -24,8 +24,8 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    title: 'Painting the picture',
-    intro: 'The first step paints a picture with an image model; LoRAs push it toward a look.',
+    title: 'Drawing the picture',
+    intro: 'The first step draws a picture with an image model; LoRAs push it toward a look.',
     items: [
       { id: 'model', term: 'term.model' },
       { id: 'addons', term: 'term.addons' },

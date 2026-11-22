@@ -5056,3 +5056,33 @@ textarea::placeholder {
   height: 1px;
   max-height: none;
 }
+
+/* The face before-and-after sheet with readable captions (FaceSheet). */
+.face-sheet {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+}
+.tiling-thumb .face-sheet img {
+  max-width: none;
+}
+.face-sheet-cap {
+  position: absolute;
+  font-size: var(--fs-xs);
+  line-height: 1.2;
+  color: #f0f2f5;
+  white-space: nowrap;
+  overflow: hidden;
+  background: #202020;
+}
+.face-sheet-band {
+  display: flex;
+  align-items: center;
+  padding-left: 6px;
+  box-sizing: border-box;
+}
+.face-sheet-chip {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(32, 32, 32, 0.85);
+}
