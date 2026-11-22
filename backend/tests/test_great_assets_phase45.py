@@ -262,10 +262,10 @@ def test_surface_checks_sentences_and_fixes():
         bake_match=0.45, texture_padding_px=1, atlas_used=0.28, light_score=0.3, pbr={"albedo_out": 0.18, "albedo_black": 0.04, "albedo_white": 0.02, "metal_mixed": 0.61}),
         {"symmetric": True})}
     assert not any(c["passed"] for c in bad.values())
-    assert bad["bake_matches"]["fix"] == {"stage": "prep", "params": {"rebake": True}, "label": "Repaint the surface"}
+    assert bad["bake_matches"]["fix"] == {"stage": "prep", "params": {"rebake": True}, "label": "Paint the surface again"}
     assert bad["texture_padding"]["fix"] == {"stage": "mesh", "params": {"padding": 8}, "label": "Add more space"}
     assert bad["texture_padding"]["help"] == "Texture pieces (UV islands) have only 1 px of space (UV padding), so thin dark seams may show at a distance."
-    assert bad["atlas_used"]["fix"]["params"] == {"symmetric": False} and bad["atlas_used"]["fix"]["label"] == "Repaint the surface"
+    assert bad["atlas_used"]["fix"]["params"] == {"symmetric": False} and bad["atlas_used"]["fix"]["label"] == "Paint the surface again"
     assert bad["baked_light"]["fix"] == {"stage": "prep", "params": {"delight": "remove"}, "label": "Remove painted-on shadows"}
     assert bad["albedo_range"]["help"].startswith("6% of the colours are pure black or pure white")
     assert bad["metal_mixed"]["fix"] == {"stage": "prep", "params": {"pbr_fix": True}, "label": "Make metal clearly metal"}

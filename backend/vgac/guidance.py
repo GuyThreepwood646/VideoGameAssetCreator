@@ -96,7 +96,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                                               "technical": "Pixal3DMultiViewConditioning fov; empty wires MoGe-2's horizontal field of view of the framed front crop (MoGeGeometryToFOV)"}},
     "input_view": {"simple": False, "help": {"meaning": "Which picture the builder starts from.", "why": "A three-quarter view usually gives better depth than a flat front. Left alone, a person is built from the three-quarter view, or from the other three-quarter view when the first one lost the pose of the arms and legs in your picture; a view you pick yourself is always used.", "technical": "Conditioning image selection; input_view_origin records whether the view was chosen by hand"},
                    "options": {"concept": "The first picture", "front": "Front view", "quarter": "Three-quarter view", "quarter2": "Three-quarter view (other side)"}},
-    "target_faces": {"simple": True, "help": {"meaning": "Triangle count (detail level): how many triangles the model may have.", "why": "Phones need few, PCs allow more; the platform target sets a good default.", "technical": "Target triangle count (decimation budget)"}},
+    "target_faces": {"simple": True, "help": {"meaning": "Detail level (triangle count): how many triangles the model may have.", "why": "Phones need few, PCs allow more; the platform target sets a good default.", "technical": "Target triangle count (decimation budget)"}},
     "texture_size": {"simple": True, "help": {"meaning": "Sharpness of the painted surface.", "why": "Bigger textures look crisper close up but cost memory; your style and platform set a default.", "technical": "Texture atlas resolution"},
                      "options": {"256": "256 px (smallest, retro looks)", "512": "512 px", "1024": "1024 px", "2048": "2048 px", "4096": "4096 px (largest)"}},
     "upsample": {"simple": False, "help": {"meaning": "Finer colour and shape: builds the model on a finer grid, so colour detail such as faces, eyes and markings, and small shapes, can come out sharper.", "why": "It redoes the whole colour pass, so colours can also shift and results vary: try it as a second version and keep the better one. About 2 to 3 times slower, and very slow for large, bulky objects.", "technical": "TRELLIS.2 upsample resolution"},
@@ -185,7 +185,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                                                  "technical": "Root CapsuleCollider (direction Y or Z) or BoxCollider"},
                        "options": {"auto": "Automatic (by category)", "upright": "Standing capsule (works with Unity's Character Controller)",
                                    "along": "Lying capsule along the body", "box": "Box", "none": "None"}},
-    "lods": {"simple": True, "help": {"meaning": "LOD (detail levels): smaller copies for far away; each fraction is one copy.", "why": "The game swaps to simpler copies at distance to stay fast.", "technical": "LOD ratios"}},
+    "lods": {"simple": True, "help": {"meaning": "Detail levels (LOD): smaller copies for far away; each fraction is one copy.", "why": "The game swaps to simpler copies at distance to stay fast.", "technical": "LOD ratios"}},
     "collider": {"simple": True, "help": {"meaning": "Invisible simple shapes the game uses to know where the asset is solid.",
                                           "why": "Without them things pass straight through it; the right shapes keep doorways open and seats usable.",
                                           "technical": "Primitive, convex hull (255-triangle cap), CoACD convex decomposition, or mesh collider (static only)"},
@@ -219,7 +219,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "face_strength": {"simple": False, "help": {"meaning": "How much of the painted face goes onto the model.",
                                                 "why": "Lower it if the painted face looks pasted on; 1 uses all of it.",
                                                 "technical": "Projection weight multiplier, 0 to 1"}},
-    "face_density": {"simple": False, "help": {"meaning": "Face texel density (face sharpness): how many texture pixels the face gets. Standard is an eighth of the texture's width; High is about 512 across the face, or as many as the picture has detail for.",
+    "face_density": {"simple": False, "help": {"meaning": "Face sharpness (texel density): how many texture pixels the face gets. Standard is an eighth of the texture's width; High is about 512 across the face, or as many as the picture has detail for.",
                                                "why": "More texels make the eyes and mouth crisp up close. Where the texture budget is 4096, High ships the colour texture at 4096; at 2048 and 1024 the face takes a larger share and the rest of the body gives up at most 12 percent of its sharpness.",
                                                "technical": "Face UV island scale and repack (max loss 12 percent), base colour at 4096 on 4096 budgets"},
                      "options": {"auto": "Automatic (by platform and picture)", "standard": "Standard", "high": "High"}},
@@ -570,7 +570,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         # case gets the new-draw button from fixnotes.EXTRA_FIXES.
         "fix": lambda c: ({"stage": "mesh", "params": {"seed": None, "remesh": True}}
                           if _var(c, "route") == "buildings" and _var(c, "rebuild") is False else None),
-        "fix_label": "Build it again with Remesh on",
+        "fix_label": "Build the 3D model again with Remesh on",
     },
     "degenerate_faces": {
         "severity": "warn",
@@ -640,7 +640,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": "{value:n} detail levels were made.",
         "fail": "{value:n} detail levels were made; {limit:n} expected. The detail-level chain is missing a step.",
         "fix": lambda c: {"stage": "export", "params": {}},
-        "fix_label": "Rebuild the detail levels",
+        "fix_label": "Make the detail levels again",
     },
     "collider_present": {
         "severity": "block",
@@ -798,7 +798,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": "Unity recognised the skeleton as a person, so all {value} shared animations work.",
         "fail": "Unity could not read the skeleton as a person, so the shared animations are missing; it still has its own moves.",
         "fix": lambda c: {"stage": "rig", "params": {"template": "mixamo"}},
-        "fix_label": "Fit the standard skeleton again",
+        "fix_label": "Rig the standard skeleton again",
     },
     "materials_connected": {
         "severity": "warn",
@@ -806,21 +806,21 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                          if _var(c, "no_bumps") else "Unity uses all the surface textures: colour, bumps, shadows, metal and shine."),
         "fail": "Unity is missing the {missing} texture, so the surface will look {effect}.",
         "fix": lambda c: {"stage": "export", "params": {}},
-        "fix_label": "Rebuild for Unity",
+        "fix_label": "Make the files again",
     },
     "textures_full_size": {
         "severity": "warn",
         "ok": "Unity imports every texture at its full size (the largest is {file_px} px).",
         "fail": "Unity imports the {texture} texture at {import_px} px, smaller than the file's {file_px} px, so it looks softer in the game.",
         "fix": lambda c: {"stage": "export", "params": {}},
-        "fix_label": "Rebuild for Unity",
+        "fix_label": "Make the files again",
     },
     "clips_loop": {
         "severity": "block",
         "ok": "Idle and walk loop smoothly.",
         "fail": "The {value} animation does not loop, so it would stop after one cycle.",
         "fix": lambda c: {"stage": "export", "params": {}},
-        "fix_label": "Rebuild for Unity",
+        "fix_label": "Make the files again",
     },
     "clips_face_forward": {
         # Unity hand-off (VgacImport Version 16): the body's heading while each move the controller plays runs,
@@ -834,14 +834,14 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                            + (", and {others} more moves are turned too" if _var(c, "others") else "")
                            + ", so in a game the character would face the wrong way while it plays."),
         "fix": lambda c: {"stage": "export", "params": {}},
-        "fix_label": "Rebuild for Unity",
+        "fix_label": "Make the files again",
     },
     "placement_exact": {
         "severity": "warn",
         "ok": "Hit boxes and attachment points sit exactly where they were fitted.",
         "fail": "Hit boxes or attachment points landed {cm} cm away from where they were fitted, so hits and held items would look off.",
         "fix": lambda c: {"stage": "export", "params": {}},
-        "fix_label": "Rebuild for Unity",
+        "fix_label": "Make the files again",
     },
     "grip_found": {
         "severity": "warn",
@@ -876,14 +876,14 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": "An animation controller switches between idle, walk and run by speed.",
         "fail": "No animation controller was built, so you would have to set one up in Unity.",
         "fix": lambda c: {"stage": "export", "params": {}},
-        "fix_label": "Rebuild for Unity",
+        "fix_label": "Make the files again",
     },
     "rig_restore": {
         "severity": "warn",
         "ok": "The rigged model kept its textures and its size.",
         "fail": "The rigged model lost its textures or its size while the skeleton was fitted.",
         "fix": lambda c: {"stage": "rig", "params": {}},
-        "fix_label": "Fit the skeleton again",
+        "fix_label": "Rig the skeleton again",
     },
     "seam_error": {
         "severity": "warn",
@@ -919,7 +919,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": "The surface detail was painted onto the final model.",
         "fail": "The surface detail was painted for an earlier copy of the model, so shading may look wavy.",
         "fix": lambda c: {"stage": "prep", "params": {"rebake": True}},
-        "fix_label": "Repaint the surface",
+        "fix_label": "Paint the surface again",
     },
     # The 3D step's normal map with its green channel the right way up (vgac/normalfix.py), checked at the 3D step on
     # its own map and at the clean-up step on the map it baked from. The Fix rebuilds the step that measured it.
@@ -944,9 +944,9 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": lambda c: ("The base colour (the colour texture) came out much darker than the picture: {value:pct} of its brightness, "
                            "it needs {limit:pct}. "
                            + ("It was built {tries:n} times and this is the closest. " if _var(c, "rebuilt") else "")
-                           + "Build it again, or use a picture with some soft light and shadow on the character."),
+                           + "Build the 3D model again, or use a picture with some soft light and shadow on the character."),
         "fix": lambda c: {"stage": "mesh", "params": {"seed": None}},
-        "fix_label": "Build it again",
+        "fix_label": "Build the 3D model again",
     },
     # Report-only (vgac/texfidelity.py): the model drawn flat from the picture's side against the picture. Severity warn,
     # so they show on the card and never block a run. No fix yet: sharper colour needs the picture projected onto the
@@ -977,7 +977,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": "The model uses {value:pct} of its texture (UV space usage).",
         "fail": "The model uses only {value:pct} of its texture (UV space usage), so it looks less sharp than it could.",
         "fix": _atlas_fix,
-        "fix_label": "Repaint the surface",
+        "fix_label": "Paint the surface again",
     },
     # The face detail pass (stages/face_detail.py), checked in prep. It measures sharpness and how well the model's
     # face carries the fitted picture's features; it does not claim the face is the same person.
@@ -1021,7 +1021,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": "Your face LoRA was used for the close-up.",
         "fail": "Your face LoRA was not used: the graphics engine did not answer. Run the clean-up again to try again.",
         "fix": lambda c: {"stage": "prep", "params": {"face_closeup": True}},
-        "fix_label": lambda c: "Run the clean-up again",
+        "fix_label": lambda c: "Clean up again",
     },
     # The hair detail pass (stages/hair_detail.py), checked in prep. When the hair cannot be told from skin or clothes
     # the pass stands back and the check passes with the reason; it fails softly when something went wrong or when the

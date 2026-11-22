@@ -1958,7 +1958,7 @@ def fingers_check(bone_names: list[str] | None, segments: list[dict[str, Any]] |
         todo = ("Making the 3D model again with \"Open the hands first (hands only)\" turned on, or making the side views again with \"Pose for 3D first\" "
                 "turned on, gives the hands separate fingers; then rig again.")
         fix = {"stage": "mesh", "params": {"hand_edit": True}}
-        label = "Make the 3D model again with open hands"
+        label = "Build the 3D model again with open hands"
     else:
         cause = ("The skeleton step did not place every finger bone, although the model's hand may have enough shape for it. "
                  "Where the fingers are pressed together or small in the model, the skeleton step leaves them out. ")

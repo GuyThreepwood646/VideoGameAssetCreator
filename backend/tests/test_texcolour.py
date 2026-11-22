@@ -118,8 +118,8 @@ def test_all_three_dark_keeps_the_closest_and_fails():
     assert best == 1 and calls["aside"] == [0, 1] and calls["back"] == [1]
     c = texcolour.check(texcolour.record(best, tries))
     assert c["ok"] is False and c["severity"] == "block" and c["value"] == 0.48
-    assert "built 3 times" in c["help"] and "Build it again" in c["help"]
-    assert c["fix"] == {"stage": "mesh", "params": {"seed": None}, "label": "Build it again"}
+    assert "built 3 times" in c["help"] and "Build the 3D model again" in c["help"]
+    assert c["fix"] == {"stage": "mesh", "params": {"seed": None}, "label": "Build the 3D model again"}
 
 
 def test_nothing_to_compare_builds_once():
@@ -320,4 +320,4 @@ def test_albedo_range_kept_look_excused_only_while_as_bright_as_the_picture():
 
 def test_check_guide_entry_reads_plainly():
     g = guidance.CHECK_GUIDE[texcolour.CHECK_ID]
-    assert g["severity"] == "block" and g["fix_label"] == "Build it again"
+    assert g["severity"] == "block" and g["fix_label"] == "Build the 3D model again"
