@@ -119,38 +119,6 @@ def try_seed(first: int, n: int) -> int:
     return (int(first) + n * SEED_STEP) % SEED_MAX or 1
 
 
-# --- The retry plan: texture-only tries first, then full rebuilds ----------------------------------------------------
-#
-# A dark base colour is often the texture sampler's doing, not the shape's. The first TEXTURE_TRIES retries keep the
-# shape seed and change only the texture seed (graphs/trellis.py texture_seed), which keeps the shape exactly and
-# reuses ComfyUI's cached shape stages, so they are about three times faster. Any retry after them is a full rebuild
-# with a new shape seed, as before. Trialled on three recorded dark pictures on card B (WP-11): the texture-only try
-# restored brightness on P3 where the full rebuild did not, tied on P2, and was worse on P1 where both failed; P1 falls
-# through to the full rebuild. The best try is still kept by best_try.
-
-TEXTURE_TRIES = 1
-
-
-def texture_try_seed(first: int, n: int) -> int:
-    """The texture sampler's seed of build n in a texture-only retry (build 0 is first + 1, as in convert_graph)."""
-    return try_seed(first, n) + 1
-
-
-def try_kind(n: int, texture_tries: int = TEXTURE_TRIES) -> str:
-    """'first', 'texture_only' or 'full' for build n."""
-    return "first" if n == 0 else ("texture_only" if n <= texture_tries else "full")
-
-
-def try_plan(first: int, n: int, texture_tries: int = TEXTURE_TRIES) -> tuple[int, int | None]:
-    """(shape seed, texture seed or None for convert_graph's default) of build n. Texture-only builds keep the first
-    shape seed; full builds count from 1 among themselves, so with texture_tries=0 this is the old sequence."""
-    if n == 0:
-        return int(first), None
-    if n <= texture_tries:
-        return int(first), texture_try_seed(first, n)
-    return try_seed(first, n - texture_tries), None
-
-
 def best_try(tries: list[dict[str, Any]]) -> int:
     """The build to keep: the first that passes, else the one closest to the picture (the highest ratio, all of them
     being under the limit); a build that could not be measured counts as passing."""
@@ -164,21 +132,17 @@ def best_try(tries: list[dict[str, Any]]) -> int:
 async def build_with_rerolls(first_seed: int, measured: bool, build_once: Callable[[int, int], Awaitable[dict[str, Any]]],
                              keep_aside: Callable[[int], Any], bring_back: Callable[[int], Any],
                              on_retry: Callable[[int, dict[str, Any]], Any] | None = None,
-                             max_tries: int = MAX_TRIES, texture_tries: int = TEXTURE_TRIES) -> tuple[int, list[dict[str, Any]]]:
-    """Build, and while the base colour comes out too dark against the picture, build again: first texture_tries
-    retries with the same shape seed (texture only), then full rebuilds with the next seeds (try_plan).
-    build_once(seed, n) makes build n in place and returns {seed, match, ...}; the texture seed of build n is
-    try_plan(first_seed, n, texture_tries)[1], which the caller passes to convert_graph. keep_aside(n) moves build n's
-    files out of the way before the next; bring_back(n) puts a kept-aside build back in place. measured False (no picture
-    to compare) builds once. Returns (index kept, every build's result, each tagged with its kind)."""
+                             max_tries: int = MAX_TRIES) -> tuple[int, list[dict[str, Any]]]:
+    """Build, and while the base colour comes out too dark against the picture, build again with the next seed
+    (try_seed), up to max_tries builds. build_once(seed, n) makes build n in place and returns {seed, match, ...}.
+    keep_aside(n) moves build n's files out of the way before the next; bring_back(n) puts a kept-aside build back in
+    place. measured False (no picture to compare) builds once. Returns (index kept, every build's result)."""
     tries: list[dict[str, Any]] = []
     for n in range(max(1, max_tries)):
         if n and on_retry is not None:
             on_retry(n, tries[-1])
-        t = await build_once(try_plan(first_seed, n, texture_tries)[0], n)
-        t["kind"] = try_kind(n, texture_tries)
-        tries.append(t)
-        m = t.get("match")
+        tries.append(await build_once(try_seed(first_seed, n), n))
+        m = tries[-1].get("match")
         if not measured or m is None or m.get("ok"):
             break
         if n + 1 < max_tries:
