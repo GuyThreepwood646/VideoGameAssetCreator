@@ -4,6 +4,7 @@ folder setting warns (never refuses) when the folder path is long. Nothing here 
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -75,10 +76,25 @@ def test_unc_path_is_checked(no_blender):
         tools.check_blender_paths([unc])
 
 
-def test_deepest_fixed_file_length_is_the_clean_up_face_picture():
-    # projects/<36>/assets/<36>/prep/<36>/face/painted_head_closeup_2_drawn.png, relative to the library folder
-    assert library.DEEPEST_FIXED_LENGTH == len("projects/") + 36 + len("/assets/") + 36 + len("/prep/") + 36 + len("/face/painted_head_closeup_2_drawn.png")
-    assert library.DEEPEST_FIXED_LENGTH == 169
+def test_deepest_fixed_file_length_is_the_held_item_glb_under_export():
+    # projects/<36>/assets/<36>/export/<36>/items/<name>/<name>.glb with the longest export name (25 characters), relative
+    # to the library folder. The clean-up face picture (169) and the export LOD (173) are shallower.
+    assert library.DEEPEST_FIXED_LENGTH == len("projects/") + 36 + len("/assets/") + 36 + len("/export/") + 36 + len("/items/") + 25 + 1 + 25 + len(".glb")
+    assert library.DEEPEST_FIXED_LENGTH == 195
+    assert library.max_library_folder_length() == 63
+
+
+def test_deepest_real_path_at_the_folder_limit_stays_under_260():
+    # The deepest file the app writes under a library folder, built from the real export name (the longest: 200 characters
+    # cut to 16, plus the id's 8) and 36-character ids: the held item GLB Blender opens, under export/<id>/items/<name>/.
+    from vgac.stages import export
+    name = export.asset_export_name(SimpleNamespace(asset=SimpleNamespace(name="N" * 200, id=str(uuid.uuid4()))))
+    rel = f"projects/{'p' * 36}/assets/{'a' * 36}/export/{'v' * 36}/items/{name}/{name}.glb"
+    n = library.max_library_folder_length()
+    folder = "X:\\" + "a" * (n - 3)
+    assert len(folder) == n
+    deepest = folder + "\\" + rel.replace("/", "\\")
+    assert len(deepest) < library.LONG_PATH_LIMIT  # Blender refuses 260 characters or more
 
 
 def test_library_folder_at_the_limit_passes_one_more_is_refused():
@@ -89,6 +105,18 @@ def test_library_folder_at_the_limit_passes_one_more_is_refused():
     assert f"under {n + 1} characters" in message
     assert "for example F:\\Games\\VGAC library:" in message
     assert "too long for Windows" in message
+
+
+def test_folder_limit_is_the_export_check_boundary_for_the_longest_name():
+    # The export check (stages/export.py) refuses the held item GLB at the same folder length the setting refuses.
+    from vgac.stages import export
+    name = export.asset_export_name(SimpleNamespace(asset=SimpleNamespace(name="N" * 200, id=str(uuid.uuid4()))))
+    n = library.max_library_folder_length()
+    rel = Path(*f"projects/{'p' * 36}/assets/{'a' * 36}/export/{'v' * 36}".split("/"))
+    folder = Path("X:\\" + "a" * (n - 3))
+    export.check_export_room(folder / rel, name)  # at the limit: passes
+    with pytest.raises(library.LibraryPathError):
+        export.check_export_room(Path("X:\\" + "a" * (n - 2)) / rel, name)  # one more: refused
 
 
 def test_plain_example_folder_passes_the_library_check():

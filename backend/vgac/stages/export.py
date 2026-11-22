@@ -115,7 +115,7 @@ def lod_list(lods: dict[str, int]) -> list[dict[str, Any]]:
 # Export folder and file names carry the asset name. A name is cut to this many characters (the full name stays in the
 # manifest's "name" field), so a long name cannot push the export files past Windows' 260-character limit. Two assets
 # never collide: the export name ends with the asset id's first 8 characters, and a cut folder name does too.
-EXPORT_NAME_MAX = 16
+EXPORT_NAME_MAX = library.EXPORT_NAME_MAX  # one source: the library's folder limit is computed from the longest name
 
 
 def _cut(text: str) -> str:

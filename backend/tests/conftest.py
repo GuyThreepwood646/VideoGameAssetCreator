@@ -18,7 +18,7 @@ if str(BACKEND) not in sys.path:
 BAKEOFF = BACKEND.parent / "bakeoff"
 
 
-# The app refuses a library folder path over 89 characters (library.library_path_problem), so a test library cannot sit
+# The app refuses a library folder path over library.max_library_folder_length() characters (library_path_problem), so a test library cannot sit
 # in pytest's own temporary folders (C:\Users\...\pytest-of-...\...), which are longer. The owner's rule is that all
 # work stays on F: inside the project, so a test library goes in the project's bakeoff/t folder, in a short folder of
 # its own, removed after the test. The project is the main checkout (the git common folder's parent), so a worktree
@@ -44,9 +44,11 @@ LIBRARY_SCRATCH = (_project_root() / "bakeoff" / "t").resolve()
 def _short_library_root() -> Path:
     from vgac import library
 
-    root = LIBRARY_SCRATCH / ("vgac-" + uuid.uuid4().hex[:8])
+    # A short name: the library folder is this folder + name + \library, and it must fit the library limit (63 characters
+    # below the project's bakeoff/t, which is 43 characters on the main checkout).
+    root = LIBRARY_SCRATCH / ("v" + uuid.uuid4().hex[:6])
     if library.library_path_problem(str(root / "library")) is not None:
-        pytest.skip("the project folder is too deep for a test library (its library folder would be over 89 characters); "
+        pytest.skip("the project folder is too deep for a test library (its library folder would be over the library limit); "
                     "move the project to a shorter folder")
     return root
 
