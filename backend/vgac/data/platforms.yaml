@@ -1,16 +1,25 @@
+# lod_screen_heights: the Unity LODGroup switch height per level (LOD0..LOD3), as a fraction of the screen height the
+# object fills. Level n is drawn while the object fills at least that much of the screen, so a higher value switches to
+# the lighter copy sooner. Rule: a phone shows the model with fewer pixels, so each cheaper level is used sooner; a
+# large high-resolution screen shows the model with more pixels, so detail stays longer. pc_mid keeps the values the
+# importer used before the per-platform lists (0.6, 0.3, 0.12, 0.03). These are chosen by that rule, not taken from an
+# engine doc. Four entries cover the most levels a category uses (LOD0 plus three ratios).
 platforms:
   - id: mobile_low
     label: Mobile low
     triangles_character: 5000
     triangles_prop: 1000
     texture: 1024
+    lod_screen_heights: [0.7, 0.4, 0.2, 0.08]
   - id: pc_mid
     label: PC mid
     triangles_character: 20000
     triangles_prop: 5000
     texture: 2048
+    lod_screen_heights: [0.6, 0.3, 0.12, 0.03]
   - id: high
     label: High
     triangles_character: 60000
     triangles_prop: 20000
     texture: 4096
+    lod_screen_heights: [0.45, 0.2, 0.08, 0.02]

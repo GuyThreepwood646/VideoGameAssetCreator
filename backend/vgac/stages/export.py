@@ -66,8 +66,6 @@ PACK_LAYOUTS = {
 _PACK_DEFAULTS = {"metallic": 0, "roughness": 128, "ao": 255}
 
 
-LOD_SCREEN_HEIGHTS = [0.6, 0.3, 0.12, 0.03]
-
 # G17 (plan 3.8 A5): the Unity importer generates lightmap UVs (UV1) for these categories; environment pieces also get
 # the static flags Contribute GI and Batching Static. The settings are the ones VgacImport.cs uses (the plan gives
 # none; these are Unity's defaults with the margin calculated from the lightmap resolution, which avoids bleeding).
@@ -102,13 +100,17 @@ def parse_lods(value: Any) -> list[float] | None:
     return out
 
 
-def lod_list(lods: dict[str, int]) -> list[dict[str, Any]]:
+def lod_list(lods: dict[str, int], platform_id: str) -> list[dict[str, Any]]:
+    """The manifest's LOD levels with the platform's switch height for each (platforms.yaml lod_screen_heights)."""
+    heights = reference.lod_screen_heights(platform_id)
     out = []
     for i in range(len(lods)):
         key = f"LOD{i}"
         if key not in lods:
             continue
-        out.append({"level": i, "triangles": lods[key], "screen_height": LOD_SCREEN_HEIGHTS[i] if i < len(LOD_SCREEN_HEIGHTS) else 0.01})
+        if i >= len(heights):
+            raise ValueError(f"{platform_id} has switch heights for {len(heights)} levels; this asset has LOD{i}")
+        out.append({"level": i, "triangles": lods[key], "screen_height": heights[i]})
     return out
 
 
@@ -799,7 +801,7 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
     _write_colliders(sc, col_plan, report)
     _write_sockets(sc, name, report)
     _write_take_frames(sc, report)
-    sc.set_metrics(lods=lod_list(report.get("lods") or {}), collider_verts=report.get("collider_verts"), bones=report.get("bones"), clips=report.get("clips") or [],
+    sc.set_metrics(lods=lod_list(report.get("lods") or {}, sc.platform), collider_verts=report.get("collider_verts"), bones=report.get("bones"), clips=report.get("clips") or [],
                    non_manifold_edges=report.get("non_manifold_edges"), boundary_edges=report.get("boundary_edges"), dims=report.get("dims_m"),
                    collider_count=report.get("collider_count", 0), collider_shape=col_plan.get("chosen"),
                    collider_kinds=sorted({p.get("kind") for p in report.get("collider_parts") or []}),
@@ -862,6 +864,8 @@ def _unity_args(sc: StageContext, params: dict[str, Any], name: str) -> tuple[di
     if scale is not None:
         args["-vgacSpeedScale"] = f"{scale:.3f}"
     args.update(engine_args(sc))
+    # Switch heights for the LODGroup the importer builds when the names do not make one (Version 25): this platform's.
+    args["-vgacLodHeights"] = ",".join(f"{h:g}" for h in reference.lod_screen_heights(sc.platform))
     warnings: list[str] = []
     # Hit boxes (G34): the rig stage's hitboxes.json, copied next to the FBX by _pack; the body shape for moving is
     # the export knob movement_shape (auto takes the file's movement.default).
@@ -1187,7 +1191,7 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
         "collider_vertices": (pack_report or {}).get("collider_verts"),
         "collision": _collision_manifest(sc, pack_report, unity_report),
         "lighting": _lighting_manifest(sc, unity_report),
-        "lods": lod_list((pack_report or {}).get("lods") or {}),
+        "lods": lod_list((pack_report or {}).get("lods") or {}, sc.platform),
         "textures": textures,
         "hair_material": _hair_manifest(sc, unity_report),
         "springs": springs_mod.manifest_block(springs_mod.read_doc(sc.file("springs")), unity_report),

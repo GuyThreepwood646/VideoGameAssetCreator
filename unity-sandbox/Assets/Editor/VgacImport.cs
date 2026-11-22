@@ -9,7 +9,7 @@
 //      [-vgacCategory <category>] [-vgacColliders <colliders.json>]
 //      [-vgacNormalMap on|off]
 //      [-vgacSockets <sockets.json>] [-vgacAttachments <attachments.json>] [-vgacHair on] [-vgacHairShader vgac|lit]
-//      [-vgacSprings <springs.json>] [-vgacHairCutout on] [-vgacHairTwoSided on]
+//      [-vgacSprings <springs.json>] [-vgacHairCutout on] [-vgacHairTwoSided on] [-vgacLodHeights 0.6,0.3,0.12,0.03]
 // Expects in <dir>: <name>.fbx (meshes named <name>_LOD0..n, optional collision meshes <name>_collider_00.._nn or
 // <name>_collider_mesh (older files: <name>_collider), optional armature), textures
 // base_color.png, normal.png, metallic.png, roughness.png, ao.png and T_<name>_MetallicSmoothness.png (any subset).
@@ -101,6 +101,10 @@
 // its smoothness is cut to HairLitSmoothness (0.35, the share of the map's smoothness VGAC/Hair keeps for its round highlight);
 // before, it sat at full smoothness and read as plastic. Built-in projects are unchanged.
 //
+// Version 25: LODGroup switch heights per platform. -vgacLodHeights carries the platform's list (platforms.yaml
+// lod_screen_heights, LOD0..LOD3) and the script-built LODGroup uses it; the fixed 0.6/0.3/0.12/0.03 list is gone. Without
+// the argument no LODGroup is built by script (a warning says so), since there is no height to give it.
+//
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
 using System;
@@ -116,7 +120,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "24";
+    public const string Version = "25";
     public const string HairShaderName = "VGAC/Hair";
     public const string HairCutoutShaderName = "VGAC/HairCutout";
 
@@ -335,6 +339,7 @@ public static class VgacImport
         public bool hairCutout;                // -vgacHairCutout on: alpha cutout hair (Version 17)
         public bool hairTwoSided;              // -vgacHairTwoSided on: two-sided hair (Version 17)
         public float speedScale = 1f, scale = 1f;
+        public float[] lodHeights = new float[0];  // Version 25: switch heights for LOD0..n (-vgacLodHeights)
         public string requestId = "";
 
         // argv: "-vgacName", "X", "-vgacHumanoid", ... (the batch call's own arguments). baseDir, when given, is where
@@ -370,6 +375,7 @@ public static class VgacImport
                 springs = F("-vgacSprings"),
                 scale = ParseFloat(A("-vgacScale"), 1f),
                 speedScale = ParseFloat(A("-vgacSpeedScale"), 1f),
+                lodHeights = ParseFloats(A("-vgacLodHeights")),
                 normalMap = (A("-vgacNormalMap") ?? "on").ToLowerInvariant() != "off",
                 hair = (A("-vgacHair") ?? "off").ToLowerInvariant() == "on",
                 hairShader = (A("-vgacHairShader") ?? "vgac").ToLowerInvariant() == "lit" ? "lit" : "vgac",
@@ -559,13 +565,14 @@ public static class VgacImport
             // LODGroup: Unity creates it from _LODn names; verify, else build one.
             var lodGroup = instance.GetComponentInChildren<LODGroup>();
             var lodRenderers = renderers.Where(r => r.name.Contains("_LOD") && !IsColliderName(r.name)).OrderBy(r => r.name).ToList();
-            if (lodGroup == null && lodRenderers.Count > 0)
+            if (lodGroup == null && lodRenderers.Count > 0 && a.lodHeights.Length < lodRenderers.Count)
+                report.warnings.Add("no LODGroup: -vgacLodHeights gives no height for every LOD level");
+            else if (lodGroup == null && lodRenderers.Count > 0)
             {
                 lodGroup = instance.AddComponent<LODGroup>();
                 var lods = new LOD[lodRenderers.Count];
-                float[] heights = { 0.6f, 0.3f, 0.12f, 0.03f };
                 for (int i = 0; i < lodRenderers.Count; i++)
-                    lods[i] = new LOD(i < heights.Length ? heights[i] : 0.01f, new[] { lodRenderers[i] });
+                    lods[i] = new LOD(a.lodHeights[i], new[] { lodRenderers[i] });
                 lodGroup.SetLODs(lods);
                 lodGroup.RecalculateBounds();
                 report.warnings.Add("LODGroup built by script, not by importer naming");
@@ -1098,6 +1105,15 @@ public static class VgacImport
         }
         AssetDatabase.SaveAssets();
         return ctrl;
+    }
+
+    static float[] ParseFloats(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return new float[0];
+        var parts = s.Split(',');
+        var outp = new float[parts.Length];
+        for (int i = 0; i < parts.Length; i++) outp[i] = ParseFloat(parts[i].Trim(), 0f);
+        return outp;
     }
 
     static float ParseFloat(string s, float fallback) =>
