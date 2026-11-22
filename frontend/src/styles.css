@@ -4937,3 +4937,10 @@ button.preset-card:hover:not(:disabled) {
     box-shadow: none;
   }
 }
+
+/* WP-95: the version card's verdict wraps inside the card instead of clipping at its edge */
+.candidate .traffic-line {
+  white-space: normal;
+  line-height: 1.25;
+  text-align: left;
+}

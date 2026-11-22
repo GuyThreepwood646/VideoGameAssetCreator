@@ -27,12 +27,12 @@ export function CheckLine({ check, ctx, prefix, onFix, busy, why }: { check: Che
   const [open, setOpen] = useState(false)
   const { ref } = useRefData()
   const text = checkSentence(check, ctx)
-  const line = oneLine(text)
+  const line = check.headline ?? oneLine(text)
   const fix = onFix ? checkFix(check) : null
   const note = checkFixNote(check)
   const tier = check.tier ?? 'look'
   const near = check.near_miss
-  const more = line !== text || !!note || check.value !== undefined || !!why
+  const more = true
   return (
     <li className={'tier-check' + (open ? ' open' : '')}>
       <div className="tier-check-row">

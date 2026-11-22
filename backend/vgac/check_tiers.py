@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .check_headlines import headline_for
+
 NEAR_MISS = 0.05
 
 TIERS: list[dict[str, str]] = [
@@ -48,8 +50,8 @@ _ADVICE = """
 hy3d_raw_triangles degenerate_faces collider_triangles collider_count even_lighting soft_light face_lora hair_material
 hair_material_shipped hair_triangles head_build springs springs_shipped added_moves body_marks side_agree pose_held_build
 pose_for_3d pose_guard hand_guard redraw_guard compose_match detail_size arms_away bald_picture second_quarter straight_on
-face_drawn items_apart hair_matches_sides hair_anisotropy mirror_iou height_ratio hist_dist coverage pose_held
-pictures_sharpened shield_block sword_block movement_shape
+face_drawn items_apart hair_matches_sides mirror_iou height_ratio hist_dist coverage pose_held
+pictures_sharpened movement_shape
 """
 
 TABLE: dict[str, str] = {}
@@ -128,6 +130,9 @@ def annotate_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
                 continue
             d = dict(c)
             d["tier"] = tier_of(c)
+            hl = None if (c.get("vars") or {}).get("measured") is False else headline_for(str(c.get("id") or c.get("name") or ""))
+            if hl:
+                d["headline"] = hl
             if is_near_miss(c):
                 d["near_miss"] = True
             out.append(d)

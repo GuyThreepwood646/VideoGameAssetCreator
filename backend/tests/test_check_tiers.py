@@ -74,3 +74,22 @@ def test_a_served_version_carries_the_tier_on_failed_checks():
                                     {"name": "bones", "id": "bones", "passed": True, "value": 1, "limit": 1}]})
     assert m["checks"][0]["tier"] == "likely"
     assert "tier" not in m["checks"][1]
+
+
+def test_every_check_has_a_plain_headline_without_numbers():
+    from vgac.check_headlines import headline_for
+    universe = set(guidance.CHECK_GUIDE) | set(STORED_IDS) | _emitted_ids() | set(EXAMPLES)
+    missing = sorted(i for i in universe if headline_for(i) is None)
+    assert missing == [], f"Add a headline for these check ids in vgac/check_headlines.py: {missing}"
+    for i in universe:
+        h = headline_for(i)
+        assert 15 <= len(h) <= 85 and (i.startswith("lod") or not any(ch.isdigit() for ch in h.replace("3D", ""))) and not h.endswith("."), (i, h)
+
+
+def test_headline_is_served_on_failed_checks_but_not_when_unmeasured():
+    from vgac.check_headlines import headline_for
+    m = annotate_metrics({"checks": [{"id": "neck_join", "passed": False, "value": 0, "limit": 2},
+                                     {"id": "uv_set", "passed": False, "value": "not measured", "limit": None, "vars": {"measured": False}}]})
+    assert m["checks"][0]["headline"] == "The seam between face and body paint may show at the neck"
+    assert "headline" not in m["checks"][1]
+    assert headline_for("lod2_ratio") == "Detail level 2 has the wrong number of triangles"

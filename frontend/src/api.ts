@@ -209,6 +209,8 @@ export type Check = {
   // How much a failed check matters (backend check_tiers.py, the one table); only on a failed check. near_miss: a measured value within 5 percent of its limit, always advice.
   tier?: CheckTier
   near_miss?: boolean
+  // The plain one-line headline of the check kind (backend check_headlines.py); the numbers are under Why.
+  headline?: string
   // Extra values the sentence was filled from (axis_word, missing, effect, ...).
   vars?: Record<string, unknown>
 }
