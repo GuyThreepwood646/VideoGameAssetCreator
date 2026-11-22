@@ -793,8 +793,7 @@ async def measure_geometry(sc: StageContext, glb: Path) -> None:
         out = sc.dir / GREY_DIR
         await sc.blender("mesh_health.py", [glb, out, 384], log_name="mesh_health.log", timeout=sc.settings.blender_timeout_seconds)
         report = json.loads((out / "health.json").read_text())
-        local = await asyncio.to_thread(meshgeom.local_fold_of, out / "edge_folds.npz")
-        sc.set_metrics(geometry=meshgeom.summary(sc.asset.category, report, local))
+        sc.set_metrics(geometry=meshgeom.summary(sc.asset.category, report))
         paths = [out / f"grey_{y}.png" for y in report.get("yaws", GREY_LABELS)]
         sheet = await asyncio.to_thread(contact_sheet, paths, sc.dir / "grey_sheet.png", cell=384, columns=4,
                                         labels=[GREY_LABELS.get(y, str(y)) + ", no texture" for y in report.get("yaws", GREY_LABELS)])
@@ -959,9 +958,6 @@ async def judge(sc: StageContext) -> None:
     gc = meshgeom.check(sc.asset.category, sc.version.metrics.get("geometry"), (sc.version.params or {}).get("remesh"), extra_builds)
     if gc:
         checks.append(gc)
-    lc = meshgeom.local_fold_check(sc.asset.category, sc.version.metrics.get("geometry"))
-    if lc:
-        checks.append(lc)
     sc.set_metrics(**quality.summarise(checks))
 
 

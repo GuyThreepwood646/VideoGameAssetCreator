@@ -4,7 +4,7 @@ Run:  blender -b --python mesh_health.py -- <in.glb> <out_dir> [size=384]
 Joins the seam duplicates glTF makes at texture seams (vertices closer than 1e-5 of the model's largest side), then
 measures the surface: open edges (one face), bad joins (three or more faces on an edge), the share of edges folded back
 on themselves, the share of sliver triangles, the number of separate pieces and the largest piece's share of the
-surface area. Writes <out_dir>/edge_folds.npz (midpoints and fold flags of the two-face edges, for the local fold measure) and <out_dir>/health.json and grey_<yaw>.png for yaw 0, 90, 180, 270 (Workbench, one grey colour, studio
+surface area. Writes <out_dir>/health.json and grey_<yaw>.png for yaw 0, 90, 180, 270 (Workbench, one grey colour, studio
 light, so a texture cannot hide damage). Distances are measured on the model scaled to a largest side of 1.
 """
 import json
@@ -56,7 +56,6 @@ bm.faces.ensure_lookup_table()
 edges = len(bm.edges)
 open_edges = bad_joins = 0
 folded = [0] * len(FOLD_DOTS)
-two_mid, two_fold = [], []  # two-face edges: midpoint and folded (120 degrees) flag, for the local fold measure (meshgeom.local_fold)
 for e in bm.edges:
     n = len(e.link_faces)
     if n == 1:
@@ -69,9 +68,6 @@ for e in bm.edges:
         for i, t in enumerate(FOLD_DOTS):
             if d < t:
                 folded[i] += 1
-        mid = (e.verts[0].co + e.verts[1].co) / 2
-        two_mid.append((mid.x, mid.y, mid.z))
-        two_fold.append(d < FOLD_DOTS[1])
 
 tris = slivers = 0
 area_total = 0.0
@@ -112,11 +108,6 @@ report = {
     "largest_piece_area": round(piece_areas[0] / area_total, 5) if piece_areas and area_total else 0.0,
 }
 bm.free()
-try:
-    import numpy as np
-    np.savez_compressed(os.path.join(out_dir, "edge_folds.npz"), mid=np.asarray(two_mid, dtype=np.float32), folded=np.asarray(two_fold, dtype=bool))
-except Exception as exc:  # noqa: BLE001  (the local fold measure is skipped; the rest of the report stands)
-    print("EDGE_FOLDS_SKIPPED", exc)
 
 # Grey render on the original objects, texture off.
 scene = bpy.context.scene

@@ -577,14 +577,6 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                           if _var(c, "route") == "buildings" and _var(c, "rebuild") is False else None),
         "fix_label": "Build the 3D model again with Remesh on",
     },
-    # WP-83: a fold packed into one small spot that the whole-model share hides (warning only; see meshgeom.LOCAL_LIMIT).
-    "local_fold": {
-        "severity": "warn",
-        "ok": "No small area of the surface is folded back on itself.",
-        "fail": "One small area of the 3D model is folded back on itself: {value:pct} of the edges within a hand's breadth of one spot "
-                "(more than {limit:pct} can look like crumpled paper there). The rest of the model may be fine, so look at the grey "
-                "views under the model.",
-    },
     "degenerate_faces": {
         "severity": "warn",
         "ok": "No triangles are squashed flat.",

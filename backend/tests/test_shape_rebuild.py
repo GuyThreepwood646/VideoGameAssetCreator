@@ -1,11 +1,10 @@
 """WP-83 (decision D23): a torn 3D model never stops a build. On buildings the 3D step builds again with the next seeds (at
 most two more), keeps the best (lowest folded share, then lowest seed) and, when the best still fails, shows model_whole as
-likely to show. Also the local fold measure on a planted mesh."""
+likely to show."""
 
 import asyncio
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from vgac import check_tiers, meshgeom, steptime, texcolour
@@ -146,48 +145,3 @@ def test_buildings_limit_is_the_six_percent_rerun_2_limit():
     assert meshgeom.LIMITS["buildings"]["folded"] == 0.06
     assert meshgeom.passes("environment", _report(0.0474)) is True  # the highest judged-usable build of rerun 2
     assert meshgeom.passes("environment", _report(0.113)) is False  # the lowest judged-damaged one
-
-
-# --- the local fold measure on planted meshes -----------------------------------------------------------------------
-
-def _surface_points() -> np.ndarray:
-    """Edge midpoints spread evenly over the surface of a unit cube (150000 points: about 200 edges within the 0.05 radius, like a real building)."""
-    rng = np.random.default_rng(1)
-    p = rng.random((150000, 3))
-    face = rng.integers(0, 3, 150000)
-    p[np.arange(150000), face] = rng.integers(0, 2, 150000)
-    return p - 0.5
-
-
-def test_planted_cluster_trips_and_scattered_folds_do_not():
-    mid = _surface_points()
-    rng = np.random.default_rng(7)
-    scattered = rng.random(len(mid)) < 0.02          # 2 percent folded everywhere, like a mildly noisy model
-    spot = meshgeom.local_fold(mid, scattered)
-    assert spot is None or spot["share"] <= meshgeom.LOCAL_LIMIT
-    near = np.flatnonzero(((mid - mid[0]) ** 2).sum(axis=1) <= 0.03 ** 2)
-    clustered = scattered.copy()
-    clustered[near] = True                            # every edge within 0.03 of one spot is folded
-    spot = meshgeom.local_fold(mid, clustered)
-    assert spot is not None and spot["share"] > 0.3 and spot["folded"] >= meshgeom.LOCAL_MIN_FOLDED
-    assert clustered.mean() < 0.06                    # the whole-model share stays small, which is why the whole check misses it
-    assert meshgeom.local_fold_check("environment", {"route": "buildings", "local_fold": spot})["passed"] is False
-    assert meshgeom.local_fold_check("environment", {"route": "buildings", "local_fold": {}})["passed"] is True
-    assert meshgeom.local_fold_check("environment", {"route": "buildings"}) is None  # not measured
-
-
-def test_tiny_spots_and_nothing_folded_give_no_spot():
-    mid = _surface_points()
-    assert meshgeom.local_fold(mid, np.zeros(len(mid), bool)) is None
-    few = np.zeros(len(mid), bool)
-    few[:5] = True
-    assert meshgeom.local_fold(mid, few) is None  # fewer than LOCAL_MIN_FOLDED in any ball
-
-
-def test_local_fold_reads_the_blender_file(tmp_path):
-    mid = _surface_points()
-    folded = np.zeros(len(mid), bool)
-    folded[np.flatnonzero(((mid - mid[0]) ** 2).sum(axis=1) <= 0.03 ** 2)] = True
-    np.savez_compressed(tmp_path / "edge_folds.npz", mid=mid.astype(np.float32), folded=folded)
-    assert meshgeom.local_fold_of(tmp_path / "edge_folds.npz")["share"] > 0.3
-    assert meshgeom.local_fold_of(tmp_path / "missing.npz") is None

@@ -131,10 +131,6 @@ NOTES.update({
 NOTES["outline_kept"] = ("by_hand", "Look at the model from the side and from above in the viewer. If a thin part or a hole is gone, build the 3D model again, "
                          "or choose a platform with a larger triangle budget so Clean up keeps more of it; if it looks right, accept it.")
 
-# WP-83 local fold check: a new draw may fix it, the app never builds again for it (it only warns).
-NOTES["local_fold"] = ("by_hand", "Look at the grey views under the model. If the crumpled area is in sight, build the 3D model again; "
-                       "if it is out of sight, accept it.")
-
 # Checks that are not in CHECK_GUIDE and carry their own fix when the app has one (rig.py fingers_check, limbjoins).
 OWN_FIX = {"fingers", "limb_joins"}
 

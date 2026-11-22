@@ -16,7 +16,7 @@ A failed check never stops an automatic build (decision D23). On a route in REBU
 next seeds (at most REBUILD_MAX more builds), keeps the best (pick_best: lowest folded share, then lowest seed) and, when
 the best still fails, goes on with it and shows the check as "likely to show in the game". Buildings are the first route:
 on the WP-44 rerun 2 the 6 percent folded limit had no false block and one miss on 37 blind or checked buildings
-(a local fold, which local_fold below measures). The other routes have good examples only, so they are not rebuilt yet.
+(a local fold the whole-model share cannot see; a local measure was tried and could not be calibrated, so none ships). The other routes have good examples only, so they are not rebuilt yet.
 """
 from __future__ import annotations
 
@@ -49,15 +49,6 @@ LIMITS: dict[str, dict[str, float | None]] = {
 # Routes whose shape gate rebuilds the model on a fail (D23), and how many extra builds at most (builds take about 4 minutes).
 REBUILD_ROUTES: frozenset[str] = frozenset({"buildings"})
 REBUILD_MAX = 2
-
-# The local fold measure (WP-83): the largest share of folded edges among the two-face edges within LOCAL_RADIUS (model scaled
-# to a largest side of 1) of one folded edge, counting only spots with at least LOCAL_MIN_FOLDED folded edges and LOCAL_MIN_EDGES
-# edges. Limit and counts were set before measuring (bakeoff/wp83/PREREG.md); warning only. Measured on the 46 rerun-2 meshes it
-# does NOT separate: the planted-fold build scored 0.060 while 12 of 20 judged-usable builds scored 0.12 to 0.20, so it is advice only.
-LOCAL_RADIUS = 0.05
-LOCAL_MIN_FOLDED = 15
-LOCAL_MIN_EDGES = 100
-LOCAL_LIMIT = 0.06
 
 PROBLEM_WORDS = {
     "folded": "surface folded back on itself along {share} of its edges (up to {limit} is normal)",
@@ -96,7 +87,7 @@ def problems(route: str, report: dict[str, Any]) -> list[str]:
     return out
 
 
-def summary(category: str | None, report: dict[str, Any] | None, local: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def summary(category: str | None, report: dict[str, Any] | None) -> dict[str, Any] | None:
     """What is kept in the version metrics (metrics.geometry): the raw counts, the shares, the route and the verdict."""
     if not report:
         return None
@@ -106,8 +97,6 @@ def summary(category: str | None, report: dict[str, Any] | None, local: dict[str
            "folded_edge_share": (report.get("folded") or {}).get("120"), "route": route}
     if route:
         out["problems"] = problems(route, report)
-    if local is not None:
-        out["local_fold"] = local
     return out
 
 
@@ -145,58 +134,3 @@ def pick_best(builds: list[dict[str, Any]]) -> int:
         f = builds[i].get("folded")
         return (float("inf") if f is None else float(f), int(builds[i].get("seed") or 0), i)
     return min(range(len(builds)), key=key)
-
-
-def local_fold(mid: Any, folded: Any, radius: float = LOCAL_RADIUS, min_folded: int = LOCAL_MIN_FOLDED,
-               min_edges: int = LOCAL_MIN_EDGES) -> dict[str, Any] | None:
-    """The worst spot: mid (N x 3 midpoints of the two-face edges, model scaled to a largest side of 1) and folded (N flags).
-    Returns {share, folded, edges, centre} of the folded edge whose ball of `radius` has the highest folded share among the balls
-    with at least min_folded folded edges and min_edges edges, or None when no ball qualifies (also none folded)."""
-    import numpy as np
-
-    pts = np.asarray(mid, dtype=np.float64).reshape(-1, 3)
-    flag = np.asarray(folded, dtype=bool).reshape(-1)
-    if len(pts) != len(flag) or not flag.any():
-        return None
-    cells = np.floor(pts / radius).astype(np.int64)
-    grid: dict[tuple[int, int, int], list[int]] = {}
-    for i, c in enumerate(map(tuple, cells.tolist())):
-        grid.setdefault(c, []).append(i)
-    grid_arr = {c: np.asarray(v, dtype=np.int64) for c, v in grid.items()}
-    offsets = [(dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)]
-    r2, best = radius * radius, None
-    for i in np.flatnonzero(flag):
-        cx, cy, cz = cells[i]
-        near = [grid_arr[k] for k in ((cx + dx, cy + dy, cz + dz) for dx, dy, dz in offsets) if k in grid_arr]
-        idx = np.concatenate(near)
-        inside = idx[((pts[idx] - pts[i]) ** 2).sum(axis=1) <= r2]
-        n_edges, n_fold = len(inside), int(flag[inside].sum())
-        if n_fold < min_folded or n_edges < min_edges:
-            continue
-        share = n_fold / n_edges
-        if best is None or share > best["share"]:
-            best = {"share": round(share, 4), "folded": n_fold, "edges": n_edges, "centre": [round(float(x), 3) for x in pts[i]]}
-    return best
-
-
-def local_fold_of(npz_path: Any) -> dict[str, Any] | None:
-    """local_fold on the edge_folds.npz mesh_health.py writes: {} when no spot qualifies (nothing folded in one place), None when the
-    file is missing or unreadable (not measured)."""
-    try:
-        import numpy as np
-
-        with np.load(npz_path) as z:
-            return local_fold(z["mid"], z["folded"]) or {}
-    except Exception:  # noqa: BLE001  (not measured)
-        return None
-
-
-def local_fold_check(category: str | None, geometry: dict[str, Any] | None) -> dict[str, Any] | None:
-    """The local_fold check (warn): None when there is no measure or the category has no 3D model. A model with no spot that
-    qualifies passes with value 0. Never stops a build."""
-    if not geometry or not geometry.get("route") or "local_fold" not in geometry:
-        return None
-    spot = geometry.get("local_fold") or {}
-    share = float(spot.get("share") or 0.0)
-    return quality.check("local_fold", share <= LOCAL_LIMIT, round(share, 4), LOCAL_LIMIT,
-                         vars={"folded": spot.get("folded"), "edges": spot.get("edges"), "radius": LOCAL_RADIUS})

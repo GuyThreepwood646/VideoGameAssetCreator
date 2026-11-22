@@ -74,10 +74,7 @@ for _i in ("outline_kept",):
     TABLE[_i] = "look"
 
 # WP-83: a failed model_whole only reaches the page after the app rebuilt the model (buildings) and kept the best, so it is
-# likely to show (tier likely, above). local_fold is a warning whose limit could not be separated on the rerun-2 builds (see
-# meshgeom.LOCAL_LIMIT): advice, never likely.
-assert "local_fold" not in TABLE
-TABLE["local_fold"] = "advice"
+# likely to show (tier likely, above).
 
 # Ids that carry a number or a name (quality.py, guidance._pattern_guide): first match wins.
 PATTERNS: list[tuple[str, str]] = [
