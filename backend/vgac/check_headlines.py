@@ -89,7 +89,7 @@ HEADLINES: dict[str, str] = {
     "collider_count": "There are more collision shapes than usual",
     "even_lighting": "One side of the photo is brighter than the other",
     "soft_light": "The picture has hard light with strong shadows",
-    "face_lora": "Your face LoRA was not used",
+    "face_lora": "Your own face add-on (LoRA) was not used",
     "hair_material": "The hair's own material was not made",
     "hair_material_shipped": "The hair's own material is not in the shipped files",
     "hair_triangles": "The library hairstyle pushes the model over the triangle limit",
@@ -126,7 +126,7 @@ HEADLINES: dict[str, str] = {
 PATTERNS: list[tuple[str, str]] = [
     (r"^lod(\d+)_ratio$", "Detail level {n} has the wrong number of triangles"),
     (r"^texture_[a-z0-9_]+_budget$", "A texture is bigger than the platform allows"),
-    (r"^texture_[a-z0-9_]+_pow2$", "A texture is not a power-of-two size"),
+    (r"^texture_[a-z0-9_]+_pow2$", "A texture is an odd size that some game engines handle poorly"),
     (r"^texture_[a-z0-9_]+_square$", "A texture is not square"),
     (r"^hitbox_.+$", "A hit box is off"),
 ]
