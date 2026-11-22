@@ -74,6 +74,7 @@ class _Ctx:
         self.project = SimpleNamespace(name="Proj", id="p1234abcd99", unity_project_path=str(proj))
         self.asset = SimpleNamespace(name="Chest", id="1234abcd99", category="prop_rigid")
         self.category = {"rig_engine": "skintoken_mixamo"}
+        self.platform = "pc_mid"
         self.settings = SimpleNamespace(export_path=str(tmp / "exports"), library_path=str(tmp / "library"), unity_project=str(REPO / "unity-sandbox"),
                                         unity_exe=str(unity_exe) if unity_exe else None, clips_libraries={"ual1": str(clips_lib)} if clips_lib else {})
         self._rig = SimpleNamespace(metrics={"bones": 50}, params={})
