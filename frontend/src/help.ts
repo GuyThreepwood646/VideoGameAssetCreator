@@ -18,7 +18,7 @@ export function splitTechnical(technical: string): { industry: string | null; fi
   const t = technical.replace(/\s*\((?:GET|POST|PUT|DELETE|PATCH) [^)]*\)/g, '').trim()
   if (/^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/.test(t) || /^[a-z]+\.[a-z_.]+$/.test(t)) return { industry: null, file: t }
   const m = /^([^()]+?) \(([^()]*)\)$/.exec(t)
-  if (m && /(_|\.yaml|\.json|metrics\.|data\/)/.test(m[2])) return { industry: m[1], file: m[2] }
+  if (m && /(_|\.yaml|\.json|metrics\.|data\/)/.test(m[2])) return { industry: m[1], file: m[2] }
   return { industry: t, file: null }
 }
 

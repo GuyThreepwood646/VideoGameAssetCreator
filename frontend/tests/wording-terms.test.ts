@@ -37,6 +37,7 @@ test('advanced settings are grouped, and an unknown one goes under Other', () =>
 test('the industry term is split from the field name', () => {
   assert.deepEqual(splitTechnical('variant (base_asset_id)'), { industry: 'variant', file: 'base_asset_id' })
   assert.deepEqual(splitTechnical('checkpoint (data/models.yaml)'), { industry: 'checkpoint', file: 'data/models.yaml' })
+  assert.deepEqual(splitTechnical('feedback (metrics.feedback)'), { industry: 'feedback', file: 'metrics.feedback' })
   assert.deepEqual(splitTechnical('style_lock'), { industry: null, file: 'style_lock' })
   assert.deepEqual(splitTechnical('Latent width'), { industry: 'Latent width', file: null })
 })

@@ -4989,3 +4989,16 @@ button.preset-card:hover:not(:disabled) {
   flex-direction: column;
   gap: var(--s2);
 }
+.texture-thumb .small {
+  text-align: center;
+  max-width: 110px;
+}
+.texture-thumb .tech-term {
+  display: block;
+  margin-left: 0;
+}
+.seg-on .tech-term,
+[aria-pressed='true'] .tech-term,
+.primary .tech-term {
+  color: inherit;
+}
