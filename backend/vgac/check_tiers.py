@@ -33,7 +33,7 @@ DEFAULT_TIER = "look"
 _LIKELY = """
 size_m facing_tests clips_face_forward skin_not_metal materials_connected normal_map_upright baked_light uv_set
 bones single_root weight_coverage legs_moved wings_found clips controller_ready library_missing unity_import
-collider_present tiles_cleanly limb_joins
+collider_present limb_joins
 """
 _LOOK = """
 triangle_budget manifold watertight model_whole silhouette_iou seam_error openings_clear grid_fit placement_exact
@@ -42,7 +42,7 @@ texture_colour_matches_picture bake_matches picture_projection neck_join look_ap
 hair_matches_picture hair_fit hair_skin_through hair_bound hair_off_eyes max_influences weights_normalised fingers
 clips_loop library_clips rig_restore moving_parts unity_humanoid_avatar collider_vertices lod_count
 hitbox_cover hitbox_overreach hitbox_fit grip_found item_clear_of_body item_above_ground one_subject in_frame big_enough
-same_side facing joins height_m
+same_side facing joins height_m tiles_cleanly
 """
 _ADVICE = """
 hy3d_raw_triangles degenerate_faces collider_triangles collider_count even_lighting soft_light face_lora hair_material
@@ -70,8 +70,9 @@ PATTERNS: list[tuple[str, str]] = [
 
 # Why each tier was given, for the review of this table (also printed by tests on failure).
 WHY = {
-    "likely": "seen in play, or the engine cannot use the asset as intended (scale, facing, missing UVs, bones, weights, clips, collision, tiling gaps, lit-in light, inverted normals, a failed Unity import)",
+    "likely": "seen in play, or the engine cannot use the asset as intended (scale, facing, missing UVs, bones, weights, clips, collision, lit-in light, inverted normals, a failed Unity import)",
     "look": "visible up close or at distance (UV padding bleeds from mip 3 at phone distances; LODs are what people see far away), costs performance (triangles, collider size), or an engine may treat it differently",
+    "tiles_cleanly": "worth a look, not likely: the seam measure misreads some good tiles (10 of 30 fails were false on a fresh set); a better measure is a logged follow-up",
     "advice": "about how it was made or a setting; unlikely to be seen (power-of-two size, hair material, redraw guards, pose notes, picture-stage advice)",
 }
 

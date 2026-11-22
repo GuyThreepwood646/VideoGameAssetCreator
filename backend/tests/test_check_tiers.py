@@ -65,6 +65,7 @@ def test_served_table_and_version_payload():
     j = r.json()
     assert [t["id"] for t in j["tiers"]] == ["likely", "look", "advice"]
     assert j["table"]["size_m"] == "likely"
+    assert j["table"]["tiles_cleanly"] == "look"
 
 
 def test_a_served_version_carries_the_tier_on_failed_checks():
