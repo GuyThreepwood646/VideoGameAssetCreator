@@ -430,7 +430,9 @@ for _stage, _part, _keys in (("turnaround", "files", ["quarter2", "quarter2_cuto
                              ("mesh", "metrics", ["texture_fidelity"]), ("prep", "params", ["source_project_mode"]),
                              ("prep", "metrics", ["srcproject_applied", "srcproject_reason", "srcproject_upscale", "texture_fidelity"]),
                              # Shape loss (WP-16, 2026-11-19): how far the budget reduction moved the surface, a metric only.
-                             ("prep", "metrics", ["shape_loss"])):
+                             ("prep", "metrics", ["shape_loss"]),
+                             # Per-step time log (WP-91): metrics.timing on every run through the dispatcher.
+                             ("turnaround", "metrics", ["timing"]), ("mesh", "metrics", ["timing"]), ("prep", "metrics", ["timing"])):
     GOLDEN_OFF[_stage][_part] = sorted(GOLDEN_OFF[_stage][_part] + _keys)
 # Today's checks that stand back when the model is bald on purpose.
 GONE_ON = {"prep": {"checks": {"hair_matches_picture"}}}

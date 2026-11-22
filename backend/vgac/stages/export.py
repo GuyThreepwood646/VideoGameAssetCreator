@@ -44,7 +44,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import colliders, guidance, hairmat, items, library, quality, reference, sockets
+from .. import colliders, guidance, hairmat, items, library, quality, reference, sockets, steptime
 from .. import springs as springs_mod
 from ..beauty import render_beauty, showcase_sky
 from ..db import _iso, utcnow
@@ -1590,18 +1590,18 @@ async def _export(sc: StageContext, params: dict[str, Any]) -> None:
                   sprite_size=int(params.get("sprite_size") or 128))
     if items.is_held_item(sc):
         await items.pivot_item(sc)  # the item's own files get their pivot at the grip
-    pack_report = await _pack(sc, params, name)
+    pack_report = await steptime.run(sc, "pack", _pack(sc, params, name))
     if not items.is_held_item(sc):
-        await items.equip(sc, name)  # attachments.json, the item files and <name>_equipped.glb
-    unity_report = await _unity(sc, params, name)
+        await steptime.run(sc, "equip", items.equip(sc, name))  # attachments.json, the item files and <name>_equipped.glb
+    unity_report = await steptime.run(sc, "unity", _unity(sc, params, name))
     if unity_report and unity_report.get("ok"):
         howto = unity_howto(unity_report.get("prefab", ""), unity_report.get("controller"))
         line = socket_howto(unity_report.get("sockets") or [], unity_report.get("humanoidValid") is True)
         equipped = items.unity_line(unity_report, name)
         sc.set_metrics(unity_howto=howto + ([line] if line else []) + ([equipped] if equipped else []))
-    await _sprites(sc, params)
-    await render_beauty(sc)  # the finish card's picture in realistic light (beauty.py)
-    await judge(sc)
+    await steptime.run(sc, "sprites", _sprites(sc, params))
+    await steptime.run(sc, "beauty", render_beauty(sc))  # the finish card's picture in realistic light (beauty.py)
+    await steptime.run(sc, "judge", judge(sc))
     finish = getattr(guidance, "finish_lines", None)  # plan 2.4, guidance lane
     if callable(finish):
         sc.set_metrics(finish_lines=finish(sc.asset.category, sc.version.metrics))
@@ -1626,7 +1626,7 @@ async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     mp = sc.dir / "manifest.json"
     mp.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     sc.register("manifest", mp)
-    await _deliver(sc, name, params)
+    await steptime.run(sc, "deliver", _deliver(sc, name, params))
     items.keep_if_equipping(sc)  # a rebuild with the items on is kept
     sc.progress(1.0, "export done")
 

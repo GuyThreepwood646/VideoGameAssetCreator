@@ -34,7 +34,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from .. import declared_parts, guidance, headtris, imaging, library, limbjoins, quality
+from .. import declared_parts, guidance, headtris, imaging, library, limbjoins, quality, steptime
 from ..comfy import ComfyClient, ComfyError
 from ..graphs.skintoken import TEMPLATES, rig_graph
 from ..imaging import contact_sheet
@@ -545,7 +545,8 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     mesh_name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_rig_in.glb")
     graph = rig_graph(mesh_name, sc.prefix("rig"), target_faces, template=template, group_per_vertex=gpv, bottom_center_origin=bco)
     try:
-        entry = await sc.comfy(graph, poll=5.0, message="SkinToken rig", base=0.05, span=0.5)
+        with steptime.part(sc, "skintoken"):   # includes any wait for the card
+            entry = await sc.comfy(graph, poll=5.0, message="SkinToken rig", base=0.05, span=0.5)
     except ComfyError as e:
         if e.is_assertion() or any("skin" in m.lower() and "empty" in m.lower() for m in e.exception_messages):
             await _skip(sc, "SkinToken returned an empty skinning prediction (rigid object)", src)
@@ -563,8 +564,9 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         # The Mixamo template's names are wrong on real rigs; rig_fix renames humanoid bones by geometry.
         fix_report = sc.dir / "rig_fix.json"
         skeleton = "humanoid" if template == TEMPLATES["mixamo"] else "other"
-        await sc.blender("rig_fix.py", [raw_glb, rig_glb, "--reference", src, "--report", fix_report, "--skeleton", skeleton],
-                         log_name="rig_fix.log", timeout=sc.settings.blender_timeout_seconds)
+        with steptime.part(sc, "rig_fix"):
+            await sc.blender("rig_fix.py", [raw_glb, rig_glb, "--reference", src, "--report", fix_report, "--skeleton", skeleton],
+                             log_name="rig_fix.log", timeout=sc.settings.blender_timeout_seconds)
         if fix_report.is_file():
             rep = json.loads(fix_report.read_text(encoding="utf-8")) or {}
             ref, names = rep.get("reference") or {}, rep.get("bone_names") or {}
@@ -584,25 +586,25 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         rig_glb = raw_glb
     cut = None
     if template == TEMPLATES["mixamo"]:
-        await _joins(sc, rig_glb, params)
-        await _leg_skin(sc, rig_glb, params)
-        await _limb_joins(sc, rig_glb)
-        cut = await _separate_joined(sc, src, rig_glb)  # then the shoulder skin pass, after any cut
-        await _fingers(sc, rig_glb, params)
-        await _finger_rigid(sc, rig_glb, params)
-        await _palm_down(sc, rig_glb, params)
-        await _sleeve_skin(sc, rig_glb)
-        await _worn_region(sc, rig_glb, params)
+        await steptime.run(sc, "joins", _joins(sc, rig_glb, params))
+        await steptime.run(sc, "leg_skin", _leg_skin(sc, rig_glb, params))
+        await steptime.run(sc, "limb_joins", _limb_joins(sc, rig_glb))
+        cut = await steptime.run(sc, "separate_joined", _separate_joined(sc, src, rig_glb))  # then the shoulder skin pass, after any cut
+        await steptime.run(sc, "fingers", _fingers(sc, rig_glb, params))
+        await steptime.run(sc, "finger_rigid", _finger_rigid(sc, rig_glb, params))
+        await steptime.run(sc, "palm_down", _palm_down(sc, rig_glb, params))
+        await steptime.run(sc, "sleeve_skin", _sleeve_skin(sc, rig_glb))
+        await steptime.run(sc, "worn_region", _worn_region(sc, rig_glb, params))
     sc.register("glb", rig_glb)
     link_textures(sc)
     await _cut_pictures(sc, cut)
     sc.set_metrics(rigid=False, elapsed_seconds=entry.get("elapsed_seconds"), faces_rigged=int(faces_text[0]) if faces_text and str(faces_text[0]).isdigit() else None,
                    template=template)
-    await _inspect(sc, rig_glb, bend_test)
-    await fit_hitboxes(sc, rig_glb, hp)
-    await _animate(sc, rig_glb, params)
-    await _skin_stretch(sc)
-    await judge(sc)
+    await steptime.run(sc, "inspect", _inspect(sc, rig_glb, bend_test))
+    await steptime.run(sc, "hitboxes", fit_hitboxes(sc, rig_glb, hp))
+    await steptime.run(sc, "animate", _animate(sc, rig_glb, params))
+    await steptime.run(sc, "skin_stretch", _skin_stretch(sc))
+    await steptime.run(sc, "judge", judge(sc))
 
 
 def _locate_output(sc: StageContext, paths: list[str]) -> Path:
