@@ -5,10 +5,11 @@
 import { Link } from 'react-router'
 import { api, libraryUrl, previousStage, selectedVersion, STAGES, stoppedVersions, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
 import { Info } from '../components/Info'
-import { Disclosure, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
+import { Disclosure, ResumeButton, StopButton, type FixRequest } from '../components/ui'
 import { conceptCountLabel } from '../guide'
-import { attentionItems } from './finish'
-import { fmtDuration, humanError, looksGood, MODEL_IMPORT_SECONDS, plainJargon, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
+import { attentionItems, verdictLine } from './finish'
+import { TieredChecks } from './TieredChecks'
+import { failingTier, fmtDuration, humanError, looksGood, MODEL_IMPORT_SECONDS, plainJargon, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
 import { mergeStepParams } from './stepSettings'
 import { AutopilotCard, FinishCard, isAutopilotActive, isFinished, MakeItAction, type AutopilotActions } from './AutopilotPanel'
 
@@ -73,7 +74,10 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
   const versions = versionsOf(asset, stage)
   const idx = selected ? versions.indexOf(selected) + 1 : 0
   const good = selected ? looksGood(selected.metrics) : null
-  const kept = `You kept version ${idx}${good === true ? '. This step passed its checks' : good === false ? '. A check on this step needs a look' : ''}.`
+  // The banner follows the same tier as the version card: likely, worth a look or advice.
+  const tier = good === false ? failingTier(selected?.metrics ?? {}) : null
+  const bad = tier === 'likely' ? '. A check on this step is likely to show in the game' : tier === 'look' ? '. A check on this step is worth a look' : tier === 'advice' ? '. This step has advice only' : '. A check on this step needs a look'
+  const kept = `You kept version ${idx}${good === true ? '. This step passed its checks' : good === false ? bad : ''}.`
   // The same list the finish card shows, so the count here and there agree.
   const items = attentionItems(asset)
   const warns = items.length
@@ -89,18 +93,10 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
         <div className="guide-happened">{kept}</div>
         <div className="guide-now muted">The whole asset is finished. A change here makes a new version; the finished files stay until you rebuild the steps after it.</div>
         {warns > 0 && (
-          <div className="finish-bar-warn small">
-            <TrafficDot state="warn" />
-            {warns === 1 ? '1 check on the finished asset needs a look:' : `${warns} checks on the finished asset need a look:`}
-            <ul className="finish-bar-list">
-              {items.map((a, i) => (
-                <li key={a.stage + a.id + i}>
-                  <span className="muted">Step {STAGES.indexOf(a.stage) + 1}, {stagePlain(a.stage, null)}: </span>
-                  {a.text} {a.stage !== stage && <Link to={`/assets/${asset.id}/${a.stage}`}>Go there</Link>}
-                </li>
-              ))}
-            </ul>
-          </div>
+          <Disclosure label={`${warns} on the whole asset`} className="finish-bar-warn small">
+            <div className="muted small">{verdictLine(items)}</div>
+            <TieredChecks asset={asset} items={items} stage={stage} />
+          </Disclosure>
         )}
       </div>
       <div className="guide-action finish-bar-actions">
@@ -335,7 +331,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       }
       const idx = selected ? versions.indexOf(selected) + 1 : 0
       const good = selected ? looksGood(selected.metrics) : null
-      happened = `You kept version ${idx}${good === true ? ' and it passed every check' : good === false ? ', though a check needs attention' : ''}.`
+      happened = `You kept version ${idx}${good === true ? ' and it passed every check' : good === false ? ({ likely: ', though a check is likely to show in the game', look: ', though a check is worth a look', advice: ', with some advice' }[failingTier(selected?.metrics ?? {}) ?? 'look']) : ''}.`
       const nextVersions = versionsOf(asset, next!)
       const nextInfo = info(next!)
       if (nextVersions.length) {

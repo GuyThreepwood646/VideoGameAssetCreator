@@ -4,7 +4,7 @@
 // (three or more lines; a flying creature gets a fourth). Older exports have neither, so the same lines are built here from what the export, prep and rig
 // versions do report: the size check, the Unity report's assigned textures, clips and controller, the collider and
 // the files. A line whose facts are missing is left out rather than guessed.
-import { creditText, selectedVersion, STAGES, type Asset, type Check, type FinishLine, type LibraryHairMetrics, type StageId, type Version } from '../api'
+import { creditText, selectedVersion, STAGES, type Asset, type Check, type CheckTier, type FinishLine, type LibraryHairMetrics, type StageId, type Version } from '../api'
 import { checkFix, checkPassed, checkSentence, joinAnd, measuredSize, metres, movesPlain, sizeAxisOf, type FixAction } from '../help'
 
 export type UnityClip = { name: string; loop?: boolean }
@@ -65,7 +65,7 @@ export function failingCheckCount(asset: Asset): number {
   return attentionItems(asset).length
 }
 
-export type AttentionItem = { stage: StageId; check: Check; id: string; text: string; rank: number }
+export type AttentionItem = { stage: StageId; check: Check; id: string; text: string; rank: number; tier: CheckTier }
 
 // What changes the finished character comes first: which way it faces, the face, materials, paint, the rig; then the rest.
 const ATTENTION_ORDER: RegExp[] = [
@@ -82,17 +82,54 @@ export function attentionRank(id: string): number {
 }
 
 // Every failed check on the version kept for each step. A failure on a version that is not the kept one does not count.
+// A check that two steps both report (a clean-up check repeated by the hand-off, say) is one item, with the value from the
+// latest step that reports it: if that step passes it, the item is gone. The tier is the backend's (check_tiers.py); a
+// check from a payload that has none is worth a look, never decided here.
 export function attentionItems(asset: Asset): AttentionItem[] {
   const ctx = { platform: asset.platform_target, category: asset.category }
-  const out: AttentionItem[] = []
+  const latest = new Map<string, { stage: StageId; check: Check }>()
   for (const stage of STAGES) {
-    for (const c of checksOf(selectedVersion(asset, stage))) {
-      if (checkPassed(c)) continue
-      const id = c.id ?? c.name
-      out.push({ stage, check: c, id, text: checkSentence(c, ctx), rank: attentionRank(id) })
-    }
+    for (const c of checksOf(selectedVersion(asset, stage))) latest.set(c.id ?? c.name, { stage, check: c })
+  }
+  const out: AttentionItem[] = []
+  for (const [id, { stage, check }] of latest) {
+    if (checkPassed(check)) continue
+    out.push({ stage, check, id, text: checkSentence(check, ctx), rank: attentionRank(id), tier: check.tier ?? 'look' })
   }
   return out.sort((a, b) => a.rank - b.rank || STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage))
+}
+
+// The short line a person reads for a check: the first sentence without its brackets, cut at the first comma, semicolon
+// or colon when it is long, and at a word as a last resort. Never an ellipsis: the rest is the "Why".
+export function oneLine(text: string, max = 100): string {
+  const first = (text.replace(/\s*\([^)]*\)/g, '').split(/(?<=[.!?])\s+(?=[A-Z])/)[0] ?? text).trim().replace(/[.:;,]+$/, '')
+  if (first.length <= max) return first
+  const clause = first.slice(25).search(/[,;:]/)
+  if (clause >= 0 && clause + 25 <= max + 20) return first.slice(0, clause + 25)
+  const cut = first.slice(0, max)
+  return cut.slice(0, Math.max(cut.lastIndexOf(' '), 40)).replace(/\s+(and|or|of|the|a|to|so|that|in|on|with)$/i, '')
+}
+
+export const TIER_ORDER: CheckTier[] = ['likely', 'look', 'advice']
+
+// The items of each tier, in the order the finished page shows them.
+export function itemsByTier(items: AttentionItem[]): Record<CheckTier, AttentionItem[]> {
+  return { likely: items.filter((i) => i.tier === 'likely'), look: items.filter((i) => i.tier === 'look'), advice: items.filter((i) => i.tier === 'advice') }
+}
+
+const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
+const countWord = (n: number) => COUNT_WORDS[n] ?? String(n)
+
+// The one-line verdict. Never says the asset failed: no check stops it being used.
+export function verdictLine(items: AttentionItem[]): string {
+  if (items.length === 0) return 'Ready to use. Every check passed.'
+  const t = itemsByTier(items)
+  const bits: string[] = []
+  if (t.likely.length) bits.push(`${countWord(t.likely.length)} ${t.likely.length === 1 ? 'thing is' : 'things are'} likely to show in the game`)
+  if (t.look.length) bits.push(`${countWord(t.look.length)} ${t.look.length === 1 ? 'is' : 'are'} worth a look`)
+  if (t.advice.length) bits.push(`${countWord(t.advice.length)} ${t.advice.length === 1 ? 'note is' : 'notes are'} advice only`)
+  const first = bits[0][0].toUpperCase() + bits[0].slice(1)
+  return `Ready to use. ${[first, ...bits.slice(1)].join(', ')}.`
 }
 
 // (The clean-up's old `facing` check compared the turn with the test that chose it, so it is not read here any more.)

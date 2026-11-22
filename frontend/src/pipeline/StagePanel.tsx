@@ -29,7 +29,8 @@ import { ChecksList, Disclosure, isCheckList, MetricChips, PlainChecks, StatusBa
 import { conceptCountDefault, conceptCountLabel, preferredConceptModel, rememberConceptCount } from '../guide'
 import { FIX_TOOLS, humanError, modelLabel, paramPlain, PLAIN_VIEW_REDRAW, redrawViewsSeconds, redrawViewsWarning, stageEstimate, stagePlaceholder, stagePlain, stageVerb } from '../help'
 import { useRefData, type RefData } from '../refdata'
-import { isAutopilotActive, type AutopilotActions } from './AutopilotPanel'
+import { isAutopilotActive, isFinished, type AutopilotActions } from './AutopilotPanel'
+import { attentionItems } from './finish'
 import { freshParams, startOverState } from './startOver'
 import { savedInUse } from './stepSettings'
 import { HairRailLine, HairSettingPanel, useHairPanel } from './HairSetting'
@@ -643,7 +644,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                   Quality checks
                   <Info term="term.gate_ok" />
                 </div>
-                <PlainChecks checks={checks} ctx={ctx} onFix={fix} busy={busy} compact />
+                <PlainChecks checks={checks} ctx={ctx} onFix={fix} busy={busy} compact skipIds={stage === 'export' && isFinished(asset) ? new Set(attentionItems(asset).map((i) => i.id)) : undefined} skippedNote="The checks that need a look on the finished asset are listed once, in the finished card above." />
                 {stage === 'concept' && active.status === 'done' && (
                   <FixTicks version={active} checks={checks} busy={busy} onRun={(ids, instruction) => act(async () => { const out = await api.refine(active.id, { instruction, fix_for: ids }); setActiveId(out.version.id) })} />
                 )}
