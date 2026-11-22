@@ -76,25 +76,25 @@ def test_unc_path_is_checked(no_blender):
         tools.check_blender_paths([unc])
 
 
-def test_deepest_fixed_file_length_is_the_held_item_glb_under_export():
-    # projects/<36>/assets/<36>/export/<36>/items/<8>/<name>.glb with the longest export name (25 characters), relative
-    # to the library folder. The export LOD (173), the unreal FBX (170) and the clean-up face picture (169) are shallower.
-    assert library.DEEPEST_FIXED_LENGTH == len("projects/") + 36 + len("/assets/") + 36 + len("/export/") + 36 + len("/items/") + 8 + 1 + 25 + len(".glb")
-    assert library.DEEPEST_FIXED_LENGTH == 178
-    assert library.max_library_folder_length() == 80
+def test_limit_is_the_deepest_real_path_at_the_shortest_export_name():
+    # The folder limit is set by the deepest path the app writes with the shortest export name (a 4-character cut, "_",
+    # and 8 id characters): the item's texture pack under items/<id8>/ (71 characters). The clean-up face picture (169
+    # below the folder) is shallower than the item files at that name.
+    assert library.name_length(library.MIN_NAME_CUT) == 13
+    assert library.max_library_folder_length() == 71
 
 
-def test_deepest_real_path_at_the_folder_limit_stays_under_260():
-    # The deepest file the app writes under a library folder, built from the real export name (the longest: 200 characters
-    # cut to 16, plus the id's 8) and 36-character ids: the held item GLB Blender opens, under export/<id>/items/<id8>/.
+def test_deep_library_gets_a_shorter_name_and_every_real_path_stays_under_260():
     from vgac.stages import export
-    name = export.asset_export_name(SimpleNamespace(asset=SimpleNamespace(name="N" * 200, id=str(uuid.uuid4()))))
-    rel = f"projects/{'p' * 36}/assets/{'a' * 36}/export/{'v' * 36}/items/{uuid.uuid4().hex[:8]}/{name}.glb"
-    n = library.max_library_folder_length()
-    folder = "X:\\" + "a" * (n - 3)
-    assert len(folder) == n
-    deepest = folder + "\\" + rel.replace("/", "\\")
-    assert len(deepest) < library.LONG_PATH_LIMIT  # Blender refuses 260 characters or more
+    sc = SimpleNamespace(asset=SimpleNamespace(name="N" * 200, id=str(uuid.uuid4())))
+    folder_len = 70
+    name = export.asset_export_name(sc, folder_length=folder_len)
+    assert name == "NNNNN_" + sc.asset.id[:8]  # cut to 5 at this depth, never refused
+    folder = "X:\\" + "a" * (folder_len - 3)
+    assert len(folder) == folder_len
+    for template in library.NAMED_TEMPLATES + library._FIXED:
+        rel = template.format(p="p" * 36, a="a" * 36, v="v" * 36, i="i" * 8, n=name)
+        assert len(folder) + 1 + len(rel) < library.LONG_PATH_LIMIT  # Blender refuses 260 characters or more
 
 
 def test_library_folder_at_the_limit_passes_one_more_is_refused():
@@ -107,16 +107,24 @@ def test_library_folder_at_the_limit_passes_one_more_is_refused():
     assert "too long for Windows" in message
 
 
-def test_folder_limit_is_the_export_check_boundary_for_the_longest_name():
-    # The export check (stages/export.py) refuses the held item GLB at the same folder length the setting refuses.
+def test_refused_folder_names_the_number_and_the_shortest_name_is_refused_too():
     from vgac.stages import export
-    name = export.asset_export_name(SimpleNamespace(asset=SimpleNamespace(name="N" * 200, id=str(uuid.uuid4()))))
     n = library.max_library_folder_length()
+    sc = SimpleNamespace(asset=SimpleNamespace(name="N" * 200, id=str(uuid.uuid4())))
+    with pytest.raises(library.LibraryPathError) as info:
+        export.asset_export_name(sc, folder_length=n + 1)
+    assert f"under {n + 1} characters" in str(info.value)
+
+
+def test_export_check_agrees_with_the_folder_limit_at_the_shortest_name():
+    # The room check (stages/export.py check_export_room) passes the shortest name at the limit and refuses one more.
+    from vgac.stages import export
+    n = library.max_library_folder_length()
+    name = "x" * library.name_length(library.MIN_NAME_CUT)
     rel = Path(*f"projects/{'p' * 36}/assets/{'a' * 36}/export/{'v' * 36}".split("/"))
-    folder = Path("X:\\" + "a" * (n - 3))
-    export.check_export_room(folder / rel)  # at the limit: passes
+    export.check_export_room(Path("X:\\" + "a" * (n - 3)) / rel, name)  # at the limit: passes
     with pytest.raises(library.LibraryPathError):
-        export.check_export_room(Path("X:\\" + "a" * (n - 2)) / rel)  # one more: refused
+        export.check_export_room(Path("X:\\" + "a" * (n - 2)) / rel, name)  # one more: refused
 
 
 def test_plain_example_folder_passes_the_library_check():

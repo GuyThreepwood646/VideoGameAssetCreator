@@ -112,31 +112,37 @@ def lod_list(lods: dict[str, int]) -> list[dict[str, Any]]:
     return out
 
 
-# Export folder and file names carry the asset name. A name is cut to this many characters (the full name stays in the
-# manifest's "name" field), so a long name cannot push the export files past Windows' 260-character limit. Two assets
-# never collide: the export name ends with the asset id's first 8 characters, and a cut folder name does too.
-EXPORT_NAME_MAX = library.EXPORT_NAME_MAX  # one source: the library's folder limit is computed from the longest name
+# Export folder and file names carry the asset name. The name is cut to the longest length the library folder leaves room
+# for (library.cut_for_library: EXPORT_NAME_MAX characters at most, MIN_NAME_CUT at least), then "_" and the asset id's
+# first 8 characters, so two assets never collide. The full name stays in the manifest's "name" field. An export made
+# earlier keeps the name it was made with (its params carry export_name, and the item files are read by that name).
+EXPORT_NAME_MAX = library.EXPORT_NAME_MAX
 
 
-def _cut(text: str) -> str:
-    return slug(text)[:EXPORT_NAME_MAX].rstrip("_") or "asset"
+def _cut(text: str, cut: int) -> str:
+    return slug(text)[:cut].rstrip("_") or "asset"
 
 
-def asset_export_name(sc: StageContext) -> str:
-    return f"{_cut(sc.asset.name)}_{sc.asset.id[:8]}"
+def asset_export_name(sc: StageContext, folder_length: int | None = None) -> str:
+    """The export name for this asset under the library folder of folder_length characters (default: the current library).
+    Refuses in plain words when the folder is too deep even for the minimum cut (the setting refuses such a folder first)."""
+    if folder_length is None:
+        folder_length = len(os.path.abspath(str(library.library_root())))
+    cut = library.cut_for_library(folder_length)
+    if cut is None:
+        raise library.LibraryPathError(library.library_path_message())
+    return f"{_cut(sc.asset.name, cut)}_{sc.asset.id[:library.ID_CHARS]}"
 
 
-def check_export_room(version_dir: Path) -> None:
-    """Before an export writes: refuse, in plain words, when Blender could not open a held item's GLB under this
-    version folder. Blender (equip.py) opens items/<id8>/<name>.glb, and its Python cannot open a file of 260 characters
-    or more (measured on this machine: 259 opens, 260 does not). The item's name is not known here, so the longest
-    export name is measured: the same bound as the library folder limit (library.max_library_folder_length).
-    Raises LibraryPathError."""
-    below = f"items/{'x' * library.ITEM_FOLDER_CHARS}/{'x' * library.EXPORT_NAME_LONGEST}.glb"
-    total = len(os.path.abspath(str(version_dir))) + 1 + len(below)
-    if total < library.LONG_PATH_LIMIT:
-        return
-    raise library.LibraryPathError(library.library_path_message())
+def check_export_room(version_dir: Path, export_name: str) -> None:
+    """Before an export writes: refuse, in plain words, when any path the export writes under this version folder with this
+    name would be 260 characters or more. Blender cannot open a file that long (measured on this machine: 259 opens, 260
+    does not). The held item's files sit under items/<id8>/. Raises LibraryPathError."""
+    folder = len(os.path.abspath(str(version_dir)))
+    for template in library.NAMED_TEMPLATES:
+        tail = template.partition("/export/{v}/")[2]  # the part below the version folder
+        if folder + 1 + len(tail.format(i="x" * library.ID_CHARS, n=export_name)) >= library.LONG_PATH_LIMIT:
+            raise library.LibraryPathError(library.library_path_message())
 
 
 # --- Engine texture packs (G01, G02; docs/GREAT-ASSETS-PLAN.md 3.1) ---------------------------------------------------
@@ -1580,7 +1586,7 @@ async def judge(sc: StageContext) -> None:
 async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     # The material category never reaches here: stages.module_for routes its export to stages/material.py.
     name = asset_export_name(sc)
-    check_export_room(sc.dir)  # refused before any export file is written
+    check_export_room(sc.dir, name)  # refused before any export file is written
     sc.set_params(export_name=name, unity=bool(params.get("unity", True)), clips_library=params.get("clips_library", "ual1"),
                   sprites=bool(params.get("sprites", False)), sprite_directions=int(params.get("sprite_directions") or 8),
                   sprite_size=int(params.get("sprite_size") or 128))

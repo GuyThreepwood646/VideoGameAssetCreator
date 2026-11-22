@@ -43,25 +43,56 @@ def version_dir(asset: Asset, version: Version, settings: Settings | None = None
 
 
 # Blender cannot open a file whose path is 260 characters or more (measured on this machine: 259 opens, 260 does not;
-# its Python is not long-path aware). The backend's own Python and ComfyUI's Python open 271 characters fine. So the
-# folder limit comes from the deepest file Blender opens or writes. Those paths are below, with 36-character ids and the
-# longest export name (stages/export.py cuts the asset name to EXPORT_NAME_MAX characters and adds "_" and the id's
-# first 8). The deepest is the held item GLB under export/<id>/items/<id8>/<name>.glb: 178 characters below the library
-# folder, which gives the 80-character folder limit. The export check (stages/export.py) measures the same file.
+# its Python is not long-path aware). The backend's own Python and ComfyUI's Python open 271 characters fine. Windows
+# long-path support is not reliable across Blender, Unity and ComfyUI, so the 260 check stays for every path the app writes.
+#
+# The room under the library folder is shared by the files whose names carry the asset's export name. The export name is
+# the asset name cut to a length (EXPORT_NAME_MAX at most, at least MIN_NAME_CUT) plus "_" and the first 8 characters of
+# the asset id, so ids stay unique. A folder with room keeps the full cut; a deeper folder gets a shorter cut; only a
+# folder too deep for the minimum cut is refused. The paths below are the ones the app writes with the export name; the
+# fixed clean-up face picture is the one path with no name in it.
 LONG_PATH_LIMIT = 260
-EXPORT_NAME_MAX = 16  # stages/export.py takes its name cut from here
-EXPORT_NAME_LONGEST = EXPORT_NAME_MAX + 1 + 8
-ITEM_FOLDER_CHARS = 8  # a held item's files go under items/<first 8 characters of the item's id>/ (items.py equip)
-_BELOW_LIBRARY = (
-    "projects/{p}/assets/{a}/prep/{v}/face/painted_head_closeup_2_drawn.png",  # the clean-up face picture the rebake reads
-    "projects/{p}/assets/{a}/export/{v}/lods/{n}_LOD0.glb",  # an export LOD, written by blender/pack.py
-    "projects/{p}/assets/{a}/export/{v}/{n}_unreal.fbx",  # the unreal FBX, written by blender/pack.py
+EXPORT_NAME_MAX = 16  # stages/export.py: the asset name's cut at most
+MIN_NAME_CUT = 4  # the shortest cut a deep library gets before its folder is refused
+ID_CHARS = 8  # the id characters in every export name, and the item folder items/<id8>/ (items.py equip)
+_ID36 = "x" * 36
+NAMED_TEMPLATES = (  # paths under a version folder that carry the export name {n}; {i} is the item folder
+    "projects/{p}/assets/{a}/export/{v}/{n}.glb",
+    "projects/{p}/assets/{a}/export/{v}/{n}.fbx",
+    "projects/{p}/assets/{a}/export/{v}/{n}_godot.glb",
+    "projects/{p}/assets/{a}/export/{v}/{n}_unreal.fbx",  # blender/pack.py
+    "projects/{p}/assets/{a}/export/{v}/lods/{n}_LOD0.glb",  # blender/pack.py
+    "projects/{p}/assets/{a}/export/{v}/T_{n}_MetallicSmoothness.png",
+    "projects/{p}/assets/{a}/export/{v}/T_{n}_ORM.png",
+    "projects/{p}/assets/{a}/export/{v}/T_{n}_Hair_MetallicSmoothness.png",
+    "projects/{p}/assets/{a}/export/{v}/T_{n}_Hair_ORM.png",
     "projects/{p}/assets/{a}/export/{v}/items/{i}/{n}.glb",  # a held item's GLB, read by blender/equip.py
+    "projects/{p}/assets/{a}/export/{v}/items/{i}/{n}.fbx",
+    "projects/{p}/assets/{a}/export/{v}/items/{i}/{n}_godot.glb",
+    "projects/{p}/assets/{a}/export/{v}/items/{i}/T_{n}_MetallicSmoothness.png",
+    "projects/{p}/assets/{a}/export/{v}/items/{i}/T_{n}_ORM.png",
 )
-DEEPEST_FIXED_LENGTH = max(len(t.format(p="x" * 36, a="x" * 36, v="x" * 36, i="x" * ITEM_FOLDER_CHARS,
-                                        n="x" * EXPORT_NAME_LONGEST))
-                           for t in _BELOW_LIBRARY)
+_FIXED = ("projects/{p}/assets/{a}/prep/{v}/face/painted_head_closeup_2_drawn.png",)  # the clean-up face picture (rebake)
 _BELOW_VERSION = "face/painted_head_closeup_2_drawn.png"  # the clean-up face picture, below a version folder (guard only)
+
+
+def name_length(cut: int) -> int:
+    """Characters in an export name made with a cut of this length: the cut, "_", and the id's first ID_CHARS."""
+    return cut + 1 + ID_CHARS
+
+
+def _length(template: str, name: str) -> int:
+    return len(template.format(p=_ID36, a=_ID36, v=_ID36, i="x" * ID_CHARS, n=name))
+
+
+def cut_for_library(folder_length: int) -> int | None:
+    """The longest cut of the asset name (EXPORT_NAME_MAX down to MIN_NAME_CUT) for which every path the app writes under
+    a library folder of this many characters is 259 characters or fewer. None when even MIN_NAME_CUT does not fit."""
+    room = LONG_PATH_LIMIT - 1 - folder_length - 1  # below the folder: the separator and the path must fit in 259
+    for cut in range(EXPORT_NAME_MAX, MIN_NAME_CUT - 1, -1):
+        if all(_length(t, "x" * name_length(cut)) <= room for t in NAMED_TEMPLATES) and all(_length(t, "") <= room for t in _FIXED):
+            return cut
+    return None
 
 
 class LibraryPathError(ValueError):
@@ -69,13 +100,14 @@ class LibraryPathError(ValueError):
 
 
 def max_library_folder_length() -> int:
-    """The longest library folder path (characters) that still lets the deepest fixed file fit under 260 characters:
-    folder + one separator + the file's relative path must stay at 259 characters or fewer."""
-    return LONG_PATH_LIMIT - 2 - DEEPEST_FIXED_LENGTH
+    """The longest library folder path (characters) for which even the minimum export name fits: every path the app
+    writes under it stays at 259 characters or fewer. A folder up to this long is never refused; it may get shorter names."""
+    return LONG_PATH_LIMIT - 2 - max(_length(t, "x" * name_length(MIN_NAME_CUT)) for t in NAMED_TEMPLATES + _FIXED)
 
 
 def library_path_problem(folder: Any) -> str | None:
-    """A plain sentence when the library folder path is too long for Windows, else None. Used when the setting is saved."""
+    """A plain sentence when the library folder path is too long even for the minimum export name, else None.
+    Used when the setting is saved."""
     if not isinstance(folder, (str, Path)) or not str(folder).strip():
         return None
     n = len(os.path.abspath(str(folder)))
@@ -86,7 +118,7 @@ def library_path_problem(folder: Any) -> str | None:
 
 def library_path_message() -> str:
     return (f"Move the library folder to a shorter path, under {max_library_folder_length() + 1} characters, for example F:\\Games\\VGAC library: "
-            "the path is too long for Windows to write the files inside it.")
+            "the path is too long for Windows to write the files inside it, even with the shortest export names.")
 
 
 def check_version_room(d: Path) -> None:

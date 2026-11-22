@@ -1019,7 +1019,7 @@ async def equip(sc: Any, name: str) -> dict[str, Any] | None:
         # The folder is the item's id, not its export name: the export name repeats in every file name, and the path
         # must stay under the library folder limit (library.py). The stored relative paths are what readers use.
         export_name = ex.params.get("export_name") or Path(files["glb"]).stem
-        folder = str(it.id)[:library.ITEM_FOLDER_CHARS]
+        folder = str(it.id)[:library.ID_CHARS]
         d = items_dir / folder
         d.mkdir(parents=True, exist_ok=True)
         rel = {}
