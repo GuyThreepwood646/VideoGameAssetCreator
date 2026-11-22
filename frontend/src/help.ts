@@ -128,7 +128,7 @@ export function tryAgainLabel(stage: StageId, opts: { count?: number; fromPictur
   if (stage === 'concept') {
     if (opts.fromPicture && !opts.hasDescription) return null
     const n = opts.count ?? 1
-    return `Paint ${n} new picture${n > 1 ? 's' : ''} from the description`
+    return `Draw ${n} new picture${n > 1 ? 's' : ''} from the description`
   }
   return { turnaround: 'Draw all sides again', mesh: 'Build the 3D model again', prep: 'Clean up for the game again', rig: 'Make it move again', export: 'Make the files again' }[stage]
 }
@@ -540,7 +540,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   gallery: H('Gallery', 'Every finished asset from every project in one place.', 'Find a finished asset, open it, or copy the folder its files were saved to.', 'gallery (GET /api/gallery)'),
   delivered_to: H('Saved to', 'The folder on this computer where the finished files were copied.', 'Open this folder, or point your game engine at it, to use the asset.', 'delivered_to'),
   // Autopilot
-  autopilot: H('Autopilot', 'Runs every step for you, keeps each result that passes its checks, and stops only when something needs you.', 'Press "Make it" once and come back to a finished asset; you can still change any step afterwards.', 'autopilot (POST /api/assets/{id}/autopilot)'),
+  autopilot: H('Autopilot', 'Runs every step for you, keeps each result that passes its checks, and stops only when something needs you.', 'Press "Create and make it" when you create the asset, or "Make it" on an asset you already started, once and come back to a finished asset; you can still change any step afterwards.', 'autopilot (POST /api/assets/{id}/autopilot)'),
   stop_on: H('When to stop', 'Which check failures make the autopilot pause: serious problems only, any warning, or never.', 'Serious problems would break the asset in the game, so the default pauses on those and continues past warnings.', 'stop_on (block | warn | never)'),
   until_stage: H('Run until', 'The last step the autopilot runs before it stops.', 'Usually the hand-off; stop earlier if you only want the picture or the model.', 'until_stage'),
   // Style presets
@@ -1072,7 +1072,7 @@ export function checkSeverity(check: Check): 'block' | 'warn' {
 // With op "refine" it runs the refine on the version the check is on with `instruction` ("Redraw it ready for 3D").
 export type FixAction = { stage: StageId; params: Record<string, unknown>; label: string; ui?: string; knob?: string; op?: 'refine' | 'upscale'; instruction?: string }
 
-export const REDRAW_LABEL = 'Redraw it ready for 3D'
+export const REDRAW_LABEL = 'Draw it again, ready for 3D'
 
 // The step and the Fine-tune setting each tool lives in.
 export const FIX_TOOLS: Record<string, { stage: StageId; knob?: string; plain: string }> = {
@@ -1101,8 +1101,8 @@ const FIX_LABELS: Record<string, string> = {
   unity_humanoid_avatar: 'Rig the standard skeleton again',
   clips: 'Make the moves again',
   legs_moved: 'Make the moves again',
-  hitbox_cover: 'Fit them looser',
-  hitbox_overreach: 'Fit them snugger',
+  hitbox_cover: 'Make the hit boxes bigger',
+  hitbox_overreach: 'Make the hit boxes smaller',
   hitbox_fit: 'Try again',
   movement_shape: 'Add a body shape',
   collider_triangles: 'Simplify the collision shape',
@@ -1366,7 +1366,7 @@ export const OPTION_LABELS: Record<string, Record<string, string>> = {
 
 // A clip name in a sentence ("Moves: idle, walk, turn and get hit"). turn_left and turn_right are one move, "turn".
 const CLIP_PLAIN: Record<string, string> = {
-  idle: 'idle',
+  idle: 'stand still',
   walk: 'walk',
   run: 'run',
   turn: 'turn',
@@ -1448,7 +1448,6 @@ export function libraryMissingLine(): string {
 // A clip's name in the viewer's clip picker: "Walk", "Turn left", "Get hit", "Die".
 const CLIP_LABELS: Record<string, string> = {
   idle: 'Stand still',
-  attack: 'Sword attack',
   jump_start: 'Jump (take off)',
   jump_loop: 'Jump (in the air)',
   jump_land: 'Jump (land)',

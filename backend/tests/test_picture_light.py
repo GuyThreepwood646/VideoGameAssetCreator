@@ -53,7 +53,7 @@ def test_hard_light_warns_with_plain_help_and_the_even_light_redraw():
     assert c["name"] == "soft_light" and c["value"] < concept.LIGHT_RATIO_MIN
     assert "hard, high-contrast light" in c["help"] and "nearly black" in c["help"] and "flat, even light" in c["help"]
     assert "carry on" in c["help"] and "{" not in c["help"]
-    assert c["fix_label"] == "Redraw it in even light"
+    assert c["fix_label"] == "Draw it again in even light"
     assert c["fix"]["op"] == "refine" and c["fix"]["instruction"] == readiness.HUMANOID_REDRAW
     assert guidance.CHECK_GUIDE["soft_light"]["severity"] == "warn"
 

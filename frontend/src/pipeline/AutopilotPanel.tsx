@@ -173,7 +173,7 @@ function RedrawPair({ asset, version }: { asset: Asset; version: Version }) {
   const redraw = version.files.pose_ready_picture
   if (!redraw) return null
   const original = conceptOf(asset, version)?.files.image
-  const items: PictureItem[] = [...(original ? [{ src: libraryUrl(original)!, label: 'Your step 1 picture' }] : []), { src: libraryUrl(redraw)!, label: 'Redrawn for 3D' }]
+  const items: PictureItem[] = [...(original ? [{ src: libraryUrl(original)!, label: 'Your step 1 picture' }] : []), { src: libraryUrl(redraw)!, label: 'Drawn again for 3D' }]
   return (
     <div className="redraw-pair" aria-label="Your picture and its redraw side by side">
       {items.map((it, i) => (

@@ -88,15 +88,15 @@ CLIP_TABLE: dict[str, dict[str, tuple[str, str]]] = {
         "Sprint_Loop": ("Sprint", "walking"), "Crouch_Fwd_Loop": ("Crouch walk", "walking"),
         "Jump_Start": ("Jump (take off)", "jumping"), "Jump_Loop": ("Jump (in the air)", "jumping"),
         "Jump_Land": ("Jump (land)", "jumping"), "Roll": ("Roll", "jumping"),
-        "Punch_Jab": ("Punch (jab)", "fighting"), "Punch_Cross": ("Punch (cross)", "fighting"),
-        "Sword_Attack": ("Sword attack", "sword"),
+        "Punch_Jab": ("Punch", "fighting"), "Punch_Cross": ("Punch (cross)", "fighting"),
+        "Sword_Attack": ("Attack", "sword"),
         "Pistol_Idle_Loop": ("Stand with a pistol", "pistol"), "Pistol_Aim_Neutral": ("Aim a pistol ahead", "pistol"),
         "Pistol_Aim_Up": ("Aim a pistol up", "pistol"), "Pistol_Aim_Down": ("Aim a pistol down", "pistol"),
         "Pistol_Shoot": ("Shoot a pistol", "pistol"), "Pistol_Reload": ("Reload a pistol", "pistol"),
         "Spell_Simple_Enter": ("Raise hands for a spell", "magic"), "Spell_Simple_Idle_Loop": ("Hold a spell ready", "magic"),
         "Spell_Simple_Shoot": ("Cast a spell", "magic"), "Spell_Simple_Exit": ("Lower hands after a spell", "magic"),
-        "Hit_Chest": ("Get hit in the chest", "hit"), "Hit_Head": ("Get hit on the head", "hit"), "Death01": ("Die", "hit"),
-        "Interact": ("Use something", "using"), "PickUp_Table": ("Pick up from a table", "using"),
+        "Hit_Chest": ("Get hit", "hit"), "Hit_Head": ("Get hit on the head", "hit"), "Death01": ("Die", "hit"),
+        "Interact": ("Use or pick up", "using"), "PickUp_Table": ("Pick up from a table", "using"),
         "Push_Loop": ("Push something heavy", "using"), "Fixing_Kneeling": ("Kneel and fix something", "work"),
         "Sitting_Enter": ("Sit down on a chair", "sitting"), "Sitting_Idle_Loop": ("Sit on a chair", "sitting"),
         "Sitting_Talking_Loop": ("Sit and talk", "sitting"), "Sitting_Exit": ("Stand up from a chair", "sitting"),
@@ -139,6 +139,21 @@ LOOP_EXTRA = {"Sword_Idle", "Pistol_Aim_Neutral", "Pistol_Aim_Up", "Pistol_Aim_D
 # Names for the built-in (procedural) moves a character keeps next to the library ones.
 BUILT_IN_LABELS = {"turn_left": "Turn left", "turn_right": "Turn right", "idle": "Stand still", "walk": "Walk", "run": "Run",
                    "attack": "Attack", "hit": "Get hit", "death": "Die"}
+
+
+
+def move_label(name: str) -> str:
+    """The one plain name of a move, for every page and picture: a built-in move by its action name ("idle"), a library
+    move by its clip name ("Hit_Chest"). A name in neither table reads as words."""
+    low = name.lower()
+    if low in BUILT_IN_LABELS:
+        return BUILT_IN_LABELS[low]
+    for table in CLIP_TABLE.values():
+        for clip, (label, _group) in table.items():
+            if clip.lower() == low:
+                return label
+    return name.replace("_", " ").capitalize()
+
 
 _lock = threading.Lock()
 _catalog_cache: dict[str, Any] = {}

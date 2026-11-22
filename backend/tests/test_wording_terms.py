@@ -73,3 +73,16 @@ def test_glossary_step_headings_come_from_the_step_table():
     assert "STAGE_TEXT[s].plain" in src and "STAGES.map" in src
     for stage in reference.STAGE_ORDER:
         assert guidance.stage_guide(stage)["help"]["technical"] == reference.STAGE_NAMES[stage]["technical"]
+
+
+def test_one_name_per_move_everywhere():
+    from vgac import moves
+
+    assert moves.move_label("idle") == "Stand still" and moves.move_label("Idle_Loop") == "Stand still"
+    assert moves.move_label("Hit_Chest") == "Get hit" == moves.move_label("hit")
+    assert moves.move_label("Sword_Attack") == "Attack" == moves.move_label("attack")
+    assert moves.move_label("Punch_Jab") == "Punch" and moves.move_label("Interact") == "Use or pick up"
+    src = HELP_TS.read_text(encoding="utf-8")
+    block = re.search(r"const CLIP_LABELS: Record<string, string> = \{\n(.*?)\n\}", src, re.S).group(1)
+    for key, label in re.findall(r"^\s+(\w+): '([^']*)',?$", block, re.M):
+        assert label == moves.move_label(key) or key in {"jump_start", "jump_loop", "jump_land", "crouch_idle", "crouch_walk"}, key

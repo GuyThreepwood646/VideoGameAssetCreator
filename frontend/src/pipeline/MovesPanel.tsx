@@ -75,11 +75,11 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
         </div>
         {data.can_add && kept && (
           <div className="row-gap">
-            <button type="button" className="primary" disabled={busy} onClick={() => setPicking(true)}>
-              Add a move
+            <button type="button" className="primary" disabled={busy} onClick={() => setPicking(true)} title="Pick moves from the app's move library">
+              Add a move from the library
             </button>
-            <button type="button" disabled={busy} onClick={() => setPickingOwn(true)} title="Use an animation file from another source: FBX, GLB or BVH">
-              Add your own move
+            <button type="button" disabled={busy} onClick={() => setPickingOwn(true)} title="Use an animation file you made or found yourself: FBX, GLB or BVH">
+              Add a move from your own file
             </button>
           </div>
         )}
@@ -278,7 +278,7 @@ function MovePicker({ have, busy, startOwn = false, onAdd, onClose }: { have: Ch
       <div className="overlay-card move-picker" onClick={(e) => e.stopPropagation()}>
         <div className="row-between">
           <h2 id="move-picker-title" className="overlay-title">
-            Add a move
+            Add a move from the library
           </h2>
           <PanelClose onClose={onClose} />
         </div>
@@ -335,7 +335,7 @@ function MovePicker({ have, busy, startOwn = false, onAdd, onClose }: { have: Ch
                           </span>
                         ))}
                         <button type="button" onClick={() => setOwn({ mode: 'upload' })}>
-                          Add your own move
+                          Add a move from your own file
                         </button>
                         <span className="muted">{mine?.responsibility || RESPONSIBILITY}</span>
                       </div>

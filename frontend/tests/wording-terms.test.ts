@@ -11,8 +11,8 @@ test('every step has an industry term, and the backend one wins', () => {
 })
 
 test('Try again names what it will make, and is absent for a picture with no description', () => {
-  assert.equal(tryAgainLabel('concept', { count: 2, hasDescription: true }), 'Paint 2 new pictures from the description')
-  assert.equal(tryAgainLabel('concept', { count: 1, hasDescription: true }), 'Paint 1 new picture from the description')
+  assert.equal(tryAgainLabel('concept', { count: 2, hasDescription: true }), 'Draw 2 new pictures from the description')
+  assert.equal(tryAgainLabel('concept', { count: 1, hasDescription: true }), 'Draw 1 new picture from the description')
   assert.equal(tryAgainLabel('concept', { fromPicture: true, hasDescription: false }), null)
   assert.equal(tryAgainLabel('export'), 'Make the files again')
 })

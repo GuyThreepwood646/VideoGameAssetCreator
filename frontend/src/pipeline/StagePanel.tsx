@@ -305,7 +305,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
     const total = TURNAROUND_VIEWS.filter((v) => v in from.files).length
     const secs = redrawViewsSeconds(stageEstimate('turnaround', stageInfo, suggestion?.estimates), views.length, total)
     const warning = redrawViewsWarning(views.length, secs, words.trim().length > 0)
-    if (warning && !(await confirm.ask({ title: `Redraw ${views.length} views?`, body: warning, confirmLabel: 'Redraw' }))) return false
+    if (warning && !(await confirm.ask({ title: `Draw ${views.length} views again?`, body: warning, confirmLabel: 'Draw again' }))) return false
     let sent = false
     await act(async () => {
       const out = await api.refine(from.id, {
@@ -743,7 +743,7 @@ function RunningPlaceholder({ version, asset }: { version: Version; asset: Asset
   const [full, setFull] = useState<number | null>(null)
   const items: PictureItem[] = [
     ...(from ? [{ src: from, label: 'Working from this' }] : []),
-    ...(redraw ? [{ src: redraw, label: 'Redrawn for 3D' }] : []),
+    ...(redraw ? [{ src: redraw, label: 'Drawn again for 3D' }] : []),
     ...(closeup ? [{ src: closeup, label: closeupCaption ?? 'Close-up of the face' }] : []),
   ]
   const closeupAt = (from ? 1 : 0) + (redraw ? 1 : 0)
@@ -765,7 +765,7 @@ function RunningPlaceholder({ version, asset }: { version: Version; asset: Asset
               <Zoomable label="the redrawn picture" onOpen={() => setFull(from ? 1 : 0)}>
                 <img src={redraw} alt="The redrawn picture for 3D" />
               </Zoomable>
-              <figcaption className="muted small">Redrawn for 3D. If it looks wrong, Stop above and change the settings.</figcaption>
+              <figcaption className="muted small">Drawn again for 3D. If it looks wrong, Stop above and change the settings.</figcaption>
             </figure>
           )}
           {closeup && (
@@ -926,8 +926,8 @@ function HappyBlock({
             </select>
           )}
         </span>
-        <button type="button" aria-pressed={changeOpen} disabled={paintLock !== null} onClick={() => setChangeOpen(!changeOpen)} title={paintLock ?? 'Describe a change or fine-tune the settings'}>
-          Change something
+        <button type="button" aria-pressed={changeOpen} disabled={paintLock !== null} onClick={() => setChangeOpen(!changeOpen)} title={paintLock ?? 'Opens a box to describe a change in words, and the settings to fine-tune'}>
+          Change something: describe or fine-tune
         </button>
         {paintLock && <span className="small muted">{paintLock}</span>}
         <span className="grow" />

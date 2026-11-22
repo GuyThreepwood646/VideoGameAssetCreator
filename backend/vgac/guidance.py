@@ -505,7 +505,7 @@ def _padding_fix(c: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
 
-REDRAW_LABEL = "Redraw it ready for 3D"
+REDRAW_LABEL = "Draw it again, ready for 3D"
 
 
 def _redraw_fix(c: dict[str, Any]) -> dict[str, Any] | None:
@@ -684,14 +684,14 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": "{n} hit boxes cover {cover} of the body and follow the skeleton.",
         "fail": "The hit boxes cover only {cover} of the body, so some hits would pass through.",
         "fix": lambda c: {"stage": "rig", "params": {"hitbox_fit": "loose"}},
-        "fix_label": "Fit them looser",
+        "fix_label": "Make the hit boxes bigger",
     },
     "hitbox_overreach": {
         "severity": "warn",
         "ok": "The hit boxes stay close to the body.",
         "fail": "The hit boxes stick out well past the body ({times} times its size), so hits would land in thin air.",
         "fix": lambda c: {"stage": "rig", "params": {"hitbox_fit": "snug"}},
-        "fix_label": "Fit them snugger",
+        "fix_label": "Make the hit boxes smaller",
     },
     "hitbox_fit": {
         "severity": "warn",
@@ -1171,9 +1171,9 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                  "The 3D step paints that light into the character as if it were its colour, so half the face, the legs or the back "
                  "can come out nearly black, and no game lighting can lift it. A picture in flat, even light (soft studio or "
                  "cloudy-day light, no strong shadows) gives a character that looks right in any scene. You can carry on with this "
-                 "picture. \"Redraw it in even light\" asks the picture editor to redraw it with the same person in flat light."),
+                 "picture. \"Draw it again in even light\" asks the picture editor to draw it again with the same person in flat light."),
         "fix": _redraw_fix,
-        "fix_label": "Redraw it in even light",
+        "fix_label": "Draw it again in even light",
     },
     # A picture combined from the person's own pictures (feature photos, stages/concept.compose_check): the clothes or the hair
     # colour drifted from the pictures. A warning only; the Fix combines the same pictures again.

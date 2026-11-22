@@ -192,7 +192,7 @@ def test_the_redraw_fix_runs_a_refine(client, engine):
     pose = next(c for c in dv["metrics"]["checks"] if c["name"] == "pose_for_3d")
     assert not pose["passed"] and pose["fix"]["stage"] == "turnaround" and pose["fix"]["params"] == {"pose_ready": True}
     fix = frame["fix"]
-    assert fix["label"] == "Redraw it ready for 3D" and fix["op"] == "refine"
+    assert fix["label"] == "Draw it again, ready for 3D" and fix["op"] == "refine"
     r = client.post(f"/api/versions/{v['id']}/refine", json={"instruction": fix["instruction"], "params": fix["params"]})
     assert r.status_code == 200
     ref = r.json()

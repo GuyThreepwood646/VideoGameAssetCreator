@@ -36,6 +36,7 @@ from PIL import Image, ImageDraw
 
 from .. import declared_parts, guidance, headtris, imaging, library, limbjoins, quality, steptime
 from ..comfy import ComfyClient, ComfyError
+from ..moves import move_label
 from ..graphs.skintoken import TEMPLATES, rig_graph
 from ..imaging import contact_sheet
 from .base import StageContext
@@ -644,7 +645,7 @@ async def _inspect(sc: StageContext, rig_glb: Path, bend_test: bool) -> None:
             sc.register("bones", bones_png)
         strip_paths = [info_dir / f for f in [bones_png.name if bones_png else "rest.png"] + [fn for k, fn in (info.get("renders") or {}).items() if k != "rest"] if (info_dir / f).is_file()]
         if strip_paths:
-            sc.register("bend_strip", contact_sheet(strip_paths, sc.dir / "bend_strip.png", cell=384, columns=len(strip_paths), labels=[p.stem for p in strip_paths]))
+            sc.register("bend_strip", contact_sheet(strip_paths, sc.dir / "bend_strip.png", cell=384, columns=len(strip_paths), labels=[_bend_label(p.stem) for p in strip_paths]))
         sc.set_metrics(bones=info.get("bones"), bone_names=info.get("bone_names"), roots=info.get("roots"),
                        weight_coverage=round(float(info.get("weight_coverage", 0.0)), 4), max_influences=info.get("max_influences"),
                        unnormalised_verts=info.get("unnormalised_verts"), bent=info.get("bent"))
@@ -1006,6 +1007,13 @@ async def _after_moves(sc: StageContext, anim_glb: Path, params: dict[str, Any])
     await _strip(sc, anim_glb)
 
 
+def _bend_label(stem: str) -> str:
+    """The words under a picture of the bend strip: the skeleton, then each bend in degrees."""
+    if stem.startswith("bend_") and stem[5:].isdigit():
+        return f"Bent {stem[5:]} degrees"
+    return "Skeleton" if stem in ("bones", "rest") else stem.replace("_", " ").capitalize()
+
+
 async def _strip(sc: StageContext, anim_glb: Path) -> None:
     """The rendered strip of the final clips (anim_strip)."""
     if not (sc.version.metrics.get("clips") or []):
@@ -1018,7 +1026,7 @@ async def _strip(sc: StageContext, anim_glb: Path) -> None:
     for clip, files in (frames.get("clips") or {}).items():
         for i, f in enumerate(files):
             paths.append(frames_dir / f)
-            labels.append(f"{clip} {i}")
+            labels.append(f"{move_label(clip)}, frame {i + 1}")
     if paths:
         strip = contact_sheet(paths, sc.dir / "anim_strip.png", cell=256, columns=frames.get("frames", 6), labels=labels)
         sc.register("anim_strip", strip)
