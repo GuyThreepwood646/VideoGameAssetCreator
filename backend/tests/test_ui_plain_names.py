@@ -25,8 +25,6 @@ SKIP_FILES = {"api.ts"}
 
 # (file name, substring of the line) -> reason. The substring must still match, so stale entries fail the test.
 ALLOWED: dict[tuple[str, str], str] = {
-    ("GlossaryPage.tsx", "${STAGE_TEXT[s].plain} (${s})"):
-        "plain name first, technical key second in brackets: the decided rule for technical names",
 }
 
 JSX_ONLY_KEY = re.compile(r">\s*" + KEYS + r"\s*<")

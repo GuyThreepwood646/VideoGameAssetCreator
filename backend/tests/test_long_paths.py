@@ -86,8 +86,8 @@ def test_library_folder_at_the_limit_passes_one_more_is_refused():
     assert library.library_path_problem("X:\\" + "a" * (n - 3)) is None
     message = library.library_path_problem("X:\\" + "a" * (n - 2))
     assert message is not None
-    assert f"keep it under {n + 1} characters" in message
-    assert "for example F:\\Games\\VGAC library." in message
+    assert f"under {n + 1} characters" in message
+    assert "for example F:\\Games\\VGAC library:" in message
     assert "too long for Windows" in message
 
 
@@ -102,7 +102,7 @@ def test_setting_refuses_a_long_library_folder_in_plain_words(tmp_path: Path, mo
     with pytest.raises(setup_settings.SettingError) as info:
         setup_settings.v_library(str(tmp_path), SimpleNamespace())
     assert "too long for Windows" in str(info.value)
-    assert f"keep it under {len(str(tmp_path))} characters" in str(info.value)
+    assert f"under {len(str(tmp_path))} characters" in str(info.value)
 
 
 def test_setting_accepts_a_library_folder_within_the_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

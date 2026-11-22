@@ -98,7 +98,7 @@ export function FixTicks({
         </Disclosure>
       )}
       <button type="button" className="small-btn" disabled={busy || !text || n === 0} onClick={() => void onRun(used, text ?? '')}>
-        {n === 0 ? 'Redraw with the ticked fixes' : n === 1 ? 'Redraw with 1 fix' : `Redraw with ${n} fixes`}
+        {n === 0 ? 'Draw again with the ticked fixes' : n === 1 ? 'Draw again with 1 fix' : `Draw again with ${n} fixes`}
       </button>
       {ticked.length > 0 && n === 0 && !planError && plan && <div className="muted small">None of the ticked problems can be fixed this way.</div>}
     </div>

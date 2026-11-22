@@ -1,5 +1,5 @@
 id: humanoid
-label: Humanoid
+label: Person or humanoid
 rig_engine: skintoken_mixamo
 symmetric: true
 size_m: 1.8

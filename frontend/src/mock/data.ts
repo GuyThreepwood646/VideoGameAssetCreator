@@ -648,7 +648,7 @@ export function addBackendFinish(asset: Asset, version: Version) {
   version.metrics.finish_lines = [
     { id: 'size', text: 'Real size: 1.8 m tall, but the front may face the wrong way.', state: 'warn', term: 'face_yaw', check: 'facing_tests' },
     { id: 'surface', text: 'Looks right in Unity: colour, bumps, shadows, metal and shine are connected.', state: 'ok', term: 'metal_shine' },
-    { id: 'movement', text: 'Ready to move: set Speed and it idles, walks and runs; Attack, Hit and Die are one line each.', state: 'ok', term: 'animator_controller' },
+    { id: 'movement', text: 'Ready to move: in the Unity Animator, set the Speed value and the character stands still, walks and runs; the Attack, Get hit and Die triggers each play that move once.', state: 'ok', term: 'animator_controller' },
     { id: 'collision', text: 'Bumps into things: a standing capsule for moving and 11 hit boxes that follow the animation.', state: 'ok', term: 'hitboxes' },
     { id: 'shared_animations', text: 'Shared animations: 46 human moves work on this character.', state: 'ok', term: 'avatar' },
     { id: 'files', text: 'Files: FBX (Unity, Unreal, Godot), GLB (web) and a ready Unity prefab.', state: 'ok', term: 'formats' },

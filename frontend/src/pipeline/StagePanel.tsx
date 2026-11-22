@@ -27,7 +27,7 @@ import { firstStaleStage, isRemovable, isSetAside, isStopped, laterVersions, STA
 import { ResumeButton } from '../components/ui'
 import { ChecksList, Disclosure, isCheckList, MetricChips, PlainChecks, StatusBadge, SubmitTextarea, timeAgo, type FixRequest } from '../components/ui'
 import { conceptCountDefault, conceptCountLabel, preferredConceptModel, rememberConceptCount } from '../guide'
-import { FIX_TOOLS, humanError, modelLabel, paramPlain, PLAIN_VIEW_REDRAW, redrawViewsSeconds, redrawViewsWarning, stageEstimate, stagePlaceholder, stagePlain, stageVerb } from '../help'
+import { FIX_TOOLS, humanError, modelLabel, paramPlain, PLAIN_VIEW_REDRAW, redrawViewsSeconds, redrawViewsWarning, stageEstimate, stagePlaceholder, stagePlain, stageTech, stageVerb, tryAgainLabel } from '../help'
 import { useRefData, type RefData } from '../refdata'
 import { isAutopilotActive, isFinished, type AutopilotActions } from './AutopilotPanel'
 import { attentionItems } from './finish'
@@ -107,6 +107,8 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   const prevSelected = prev ? selectedVersion(asset, prev) : undefined
   const canRun = !prev || !!prevSelected
   const [count, setCount] = useState(conceptCountDefault)
+  // The Try again label names what it will make; none for a picture the person brought and no description (UX-11).
+  const tryLabel = tryAgainLabel(stage, { count, fromPicture: active?.params?.source === 'upload', hasDescription: !!asset.prompt?.trim() })
   const [busy, setBusy] = useState(false)
   const [changeOpen, setChangeOpen] = useState(false)
   // Settings chosen for the first build of this step (shown while it has no versions); the build buttons send them.
@@ -303,7 +305,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
     const total = TURNAROUND_VIEWS.filter((v) => v in from.files).length
     const secs = redrawViewsSeconds(stageEstimate('turnaround', stageInfo, suggestion?.estimates), views.length, total)
     const warning = redrawViewsWarning(views.length, secs, words.trim().length > 0)
-    if (warning && !(await confirm.ask({ title: `Redraw ${views.length} views?`, body: warning, confirmLabel: 'Redraw' }))) return false
+    if (warning && !(await confirm.ask({ title: `Draw ${views.length} views again?`, body: warning, confirmLabel: 'Draw again' }))) return false
     let sent = false
     await act(async () => {
       const out = await api.refine(from.id, {
@@ -461,11 +463,12 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         <div className="section-head">
           <h2 className="section-title">
             {stagePlain(stage, stageInfo)}
+            <span className="tech-term stage-tech">{stageTech(stage, stageInfo)}</span>
             <Info term={'stage.' + stage} />
           </h2>
           <span className="muted small">
             {versions.length ? `${versions.length} version${versions.length > 1 ? 's' : ''}` : 'no versions yet'}
-            {canRun && prevSelected ? ` / built from "${stagePlain(prev!, ref?.stages.find((s) => s.id === prev) ?? null)}" version ${shortId(prevSelected.id)}` : ''}
+            {canRun && prevSelected ? ` / built from "${stagePlain(prev!, ref?.stages.find((s) => s.id === prev) ?? null)}" version ${versionsOf(asset, prev!).findIndex((v) => v.id === prevSelected.id) + 1}` : ''}
             {stageInfo?.estimate_note ? ` / ${stageInfo.estimate_note}` : ''}
           </span>
           {startOverControl}
@@ -625,9 +628,11 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 <div className="error-sentence">{state === 'error' ? 'Did not finish.' : humanError(active.error)}</div>
                 <div className="row-gap">
                   {state !== 'error' && (
-                    <button type="button" className="try-again" disabled={busy} onClick={() => tryAgain(active)}>
-                      Try again
-                    </button>
+                    tryLabel && (
+                      <button type="button" className="try-again" data-try-again disabled={busy} onClick={() => tryAgain(active)}>
+                        {tryLabel}
+                      </button>
+                    )
                   )}
                   {active.error && (
                     <Disclosure label="Show details">
@@ -662,6 +667,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 changeOpen={changeOpen}
                 setChangeOpen={setChangeOpen}
                 onKeep={() => act(() => api.select(active.id))}
+                tryLabel={tryLabel}
                 onTryAgain={() => tryAgain(active)}
                 onReject={() => act(() => api.reject(active.id))}
                 onFeedbackSaved={onChanged}
@@ -737,7 +743,7 @@ function RunningPlaceholder({ version, asset }: { version: Version; asset: Asset
   const [full, setFull] = useState<number | null>(null)
   const items: PictureItem[] = [
     ...(from ? [{ src: from, label: 'Working from this' }] : []),
-    ...(redraw ? [{ src: redraw, label: 'Redrawn for 3D' }] : []),
+    ...(redraw ? [{ src: redraw, label: 'Drawn again for 3D' }] : []),
     ...(closeup ? [{ src: closeup, label: closeupCaption ?? 'Close-up of the face' }] : []),
   ]
   const closeupAt = (from ? 1 : 0) + (redraw ? 1 : 0)
@@ -759,7 +765,7 @@ function RunningPlaceholder({ version, asset }: { version: Version; asset: Asset
               <Zoomable label="the redrawn picture" onOpen={() => setFull(from ? 1 : 0)}>
                 <img src={redraw} alt="The redrawn picture for 3D" />
               </Zoomable>
-              <figcaption className="muted small">Redrawn for 3D. If it looks wrong, Stop above and change the settings.</figcaption>
+              <figcaption className="muted small">Drawn again for 3D. If it looks wrong, Stop above and change the settings.</figcaption>
             </figure>
           )}
           {closeup && (
@@ -874,6 +880,7 @@ function HappyBlock({
   changeOpen,
   setChangeOpen,
   onKeep,
+  tryLabel,
   onTryAgain,
   onReject,
   onFeedbackSaved,
@@ -889,6 +896,7 @@ function HappyBlock({
   changeOpen: boolean
   setChangeOpen: (b: boolean) => void
   onKeep: () => void
+  tryLabel: string | null
   onTryAgain: () => void
   onReject: () => void
   onFeedbackSaved: () => void
@@ -903,27 +911,29 @@ function HappyBlock({
           {isSelected ? 'Kept' : 'Yes, keep it'}
         </button>
         <span className="answer-group">
-          <button type="button" disabled={busy || paintLock !== null} onClick={onTryAgain} title={paintLock ?? 'Make a fresh attempt with the same settings'}>
-            Try again
-          </button>
-          {stage === 'concept' && (
+          {tryLabel && (
+            <button type="button" data-try-again disabled={busy || paintLock !== null} onClick={onTryAgain} title={paintLock ?? 'Make a fresh attempt with the same settings'}>
+              {tryLabel}
+            </button>
+          )}
+          {stage === 'concept' && tryLabel && (
             <select value={count} onChange={(e) => setCount(Number(e.target.value))} aria-label="How many new pictures" disabled={busy}>
               {[1, 2, 3, 4].map((n) => (
                 <option key={n} value={n}>
-                  {n} new picture{n > 1 ? 's' : ''}
+                  {n}
                 </option>
               ))}
             </select>
           )}
         </span>
-        <button type="button" aria-pressed={changeOpen} disabled={paintLock !== null} onClick={() => setChangeOpen(!changeOpen)} title={paintLock ?? 'Describe a change or fine-tune the settings'}>
-          Change something
+        <button type="button" aria-pressed={changeOpen} disabled={paintLock !== null} onClick={() => setChangeOpen(!changeOpen)} title={paintLock ?? 'Opens a box to describe a change in words, and the settings to fine-tune'}>
+          Change something: describe or fine-tune
         </button>
         {paintLock && <span className="small muted">{paintLock}</span>}
         <span className="grow" />
         <FeedbackButtons fb={fb} />
         <details className="more-menu">
-          <summary aria-label="More actions" title="More actions">...</summary>
+          <summary aria-label="More actions for this version" title="More actions for this version">...</summary>
           <div className="status-pop more-pop">
             <button type="button" className="link small" disabled={busy || active.status !== 'done'} onClick={onReject} title="Hide this version; it stays in the history">
               Reject this version
@@ -1019,6 +1029,7 @@ function FeedbackButtons({ fb }: { fb: FeedbackState }) {
         <ThumbIcon down />
         <span>Thumbs down</span>
       </button>
+      <span className="muted small feedback-note">Helps the app suggest settings. Stays on this computer.</span>
     </span>
   )
 }
@@ -1095,7 +1106,7 @@ function ChangePanel({
   // Fine-tune settings changed but not sent yet: Make the change takes them along, and Apply and re-run takes the text.
   const [pending, setPending] = useState<{ params: Record<string, unknown>; names: string[] } | null>(null)
   const [resetNonce, setResetNonce] = useState(0)
-  // Your LoRAs for this change (edit_addons, concept only): sent with this change alone, then cleared.
+  // Your add-ons (LoRAs) for this change (edit_addons, concept only): sent with this change alone, then cleared.
   const [refineLoras, setRefineLoras] = useState<Record<string, EditChoice>>({})
   const myLoras = useMyAddons(stage === 'concept')
   const refineChoices = Object.fromEntries(Object.entries(refineLoras).filter(([id, c]) => c !== 'off' && editLoras(myLoras).some((e) => e.id === id)))
@@ -1174,7 +1185,7 @@ function ChangePanel({
       </form>
       {stage === 'concept' && (
         <EditLoras
-          purpose="Your LoRAs for this change"
+          purpose="Your add-ons (LoRAs) for this change"
           entries={editLoras(myLoras)}
           choices={refineLoras}
           disabled={disabled}

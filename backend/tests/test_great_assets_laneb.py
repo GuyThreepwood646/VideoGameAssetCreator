@@ -203,7 +203,7 @@ def test_number_formats():
 def test_pattern_checks_have_both_sentences():
     ok = _described("lod2_ratio", 0.25, 0.25, True)
     bad = _described("lod2_ratio", 0.6, 0.25, False)
-    assert ok["help"] == "Detail level 2 keeps 25% of the triangles." and bad["help"].endswith("25% expected.")
+    assert ok["help"] == "Detail level 2 (LOD2) keeps 25% of the triangles." and bad["help"].endswith("25% expected.")
     assert _described("texture_base_color_pow2", [2048, 2048], "power of two", True)["help"] == "The base color texture is a power-of-two size."
     assert _described("texture_normal_square", [1000, 2048], "square", False)["help"] == "The normal texture is 1000 x 2048 px; it must be square."
     assert _described("texture_ao_budget", 4096, 2048, False)["help"] == "The ao texture is 4,096 px; the platform allows 2,048 px."

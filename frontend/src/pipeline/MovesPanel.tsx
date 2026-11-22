@@ -11,7 +11,7 @@ import { MovePreview } from './MovePreview'
 import { MyMoveForm, MyMoveUpload, RESPONSIBILITY } from './MyMoves'
 
 // Your own moves carry a Yours mark instead of a word here.
-const SOURCE_WORD: Record<CharacterMove['source'], string> = { library: 'hand-made', mine: '', 'built-in': 'built in' }
+const SOURCE_WORD: Record<CharacterMove['source'], string> = { library: 'from the move library', mine: '', 'built-in': 'made by the app' }
 const BUSY_POLL_MS = 4000
 
 // previewClips: the clips the viewer can play (from the file, named like the move: `clip` is the library id, not the file's name); a move outside it says so. onPlay plays one in the viewer.
@@ -70,20 +70,21 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
     <section className="moves-panel">
       <div className="row-between">
         <div className="field-label">
-          Moves in your files ({data.moves.length})
+          Moves ({data.moves.length}): from the move library, your own files and made by the app
           <Info term="term.add_move" />
         </div>
         {data.can_add && kept && (
           <div className="row-gap">
-            <button type="button" className="primary" disabled={busy} onClick={() => setPicking(true)}>
-              Add a move
+            <button type="button" className="primary" disabled={busy} onClick={() => setPicking(true)} title="Pick moves from the move library">
+              Add a move from the library
             </button>
-            <button type="button" disabled={busy} onClick={() => setPickingOwn(true)} title="Use an animation file from another source: FBX, GLB or BVH">
-              Add your own move
+            <button type="button" disabled={busy} onClick={() => setPickingOwn(true)} title="Use an animation file you made or found yourself: FBX, GLB or BVH">
+              Add a move from your own file
             </button>
           </div>
         )}
       </div>
+      <p className="muted small">Library moves are ready-made and copied onto this skeleton. Built-in moves are made by the app itself for this skeleton, so they work on any shape.</p>
       {!data.can_add && (
         <p className="small moves-instead">
           {data.reason}
@@ -190,7 +191,7 @@ function StandStill({ current, busy, onChoose }: { current: string; busy: boolea
         Stand still{' '}
         <select value={current} disabled={busy} aria-label="Where Stand still comes from" onChange={(e) => e.target.value !== current && onChoose(e.target.value)}>
           <option value="builtin">Made by the app (upright, arms close)</option>
-          <option value="library">The hand-made library (leans forward a little)</option>
+          <option value="library">The move library (leans forward a little)</option>
           {!known && <option value={current}>Another move from the library</option>}
           {standing.map((c) => (
             <option key={c.id} value={c.id}>
@@ -278,7 +279,7 @@ function MovePicker({ have, busy, startOwn = false, onAdd, onClose }: { have: Ch
       <div className="overlay-card move-picker" onClick={(e) => e.stopPropagation()}>
         <div className="row-between">
           <h2 id="move-picker-title" className="overlay-title">
-            Add a move
+            Add a move from the library
           </h2>
           <PanelClose onClose={onClose} />
         </div>
@@ -335,7 +336,7 @@ function MovePicker({ have, busy, startOwn = false, onAdd, onClose }: { have: Ch
                           </span>
                         ))}
                         <button type="button" onClick={() => setOwn({ mode: 'upload' })}>
-                          Add your own move
+                          Add a move from your own file
                         </button>
                         <span className="muted">{mine?.responsibility || RESPONSIBILITY}</span>
                       </div>

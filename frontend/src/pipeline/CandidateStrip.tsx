@@ -186,7 +186,7 @@ function CandidateCard({
           <strong title={`Technical id: ${shortId(version.id)}`}>Version {index}</strong>
         </span>
         {stage === 'concept' && version.params.source === 'upload' && (
-          <span className="chip chip-accent" title="Made from a picture you added, not painted by the app">
+          <span className="chip chip-accent" title="Made from a picture you added, not drawn by the app">
             Your picture
           </span>
         )}

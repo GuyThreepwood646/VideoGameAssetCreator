@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { hairFormState, hairLibraryOffer } from '../src/pipeline/HairSetting'
 
 const OK = { ok: true, reason: '' }
-const KEPT = 'The hair stays built into the 3D model.'
+const KEPT = 'The hair stays built with the 3D model.'
 
 test('a library choice that the look or description rules out is disabled, with the reason and what stays', () => {
   const rule = hairLibraryOffer('a knight, bald, scarred', 'realistic_pbr', 'humanoid')

@@ -46,7 +46,7 @@ export function MyMoveUpload({ maxMb, onDone, onCancel }: { maxMb: number; onDon
   return (
     <div className="mymove-add">
       <div className="row-between">
-        <strong>Add your own move</strong>
+        <strong>Add a move from your own file</strong>
         <button type="button" className="link" onClick={onCancel} disabled={busy}>
           Cancel
         </button>

@@ -93,6 +93,8 @@ def load(db: Session, v: Version) -> dict[str, Any]:
             publish(db, v, doc)
     except HTTPException:
         raise
+    except library.LibraryPathError as e:
+        raise HTTPException(500, str(e))  # already one plain sentence with the fix first: no prefix stacked on it
     except Exception as e:  # noqa: BLE001
         raise HTTPException(500, f"The marks could not be found: {e}")
     return doc

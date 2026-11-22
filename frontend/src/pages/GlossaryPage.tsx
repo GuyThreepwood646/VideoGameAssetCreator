@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { STAGES, type StageId } from '../api'
-import { helpFor, STAGE_TEXT, type HelpEntry } from '../help'
+import { helpFor, splitTechnical, STAGE_TEXT, type HelpEntry } from '../help'
 
 type Item = { id: string; term: string; title?: string; also?: string }
 type Group = { title: string; intro: string; items: Item[] }
@@ -24,8 +24,8 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    title: 'Painting the picture',
-    intro: 'The first step paints a picture with an image model; LoRAs push it toward a look.',
+    title: 'Drawing the picture',
+    intro: 'The first step draws a picture with an image model; LoRAs push it toward a look.',
     items: [
       { id: 'model', term: 'term.model' },
       { id: 'addons', term: 'term.addons' },
@@ -36,10 +36,10 @@ const GROUPS: Group[] = [
   },
   {
     title: 'The six steps',
-    intro: 'Every asset goes through these in order. The technical name is the one in the page address.',
+    intro: 'Every asset goes through these in order. Each shows its industry term.',
     items: [
       { id: 'stage', term: 'term.stage' },
-      ...STAGES.map((s: StageId) => ({ id: 'stage-' + s, term: 'stage.' + s, title: `${STAGE_TEXT[s].plain} (${s})` })),
+      ...STAGES.map((s: StageId, i: number) => ({ id: 'stage-' + s, term: 'stage.' + s, title: `Step ${i + 1}: ${STAGE_TEXT[s].plain}` })),
     ],
   },
   {
@@ -53,13 +53,13 @@ const GROUPS: Group[] = [
       { id: 'rig', term: 'term.rig' },
       { id: 'skeleton', term: 'term.skeleton' },
       { id: 'skin-weights', term: 'term.skin_weights' },
-      { id: 'lod', term: 'term.lod', title: 'LOD (detail levels)' },
-      { id: 'collider', term: 'term.collider', title: 'Collider (collision shape)' },
-      { id: 'attachment-point', term: 'term.socket', title: 'Socket (attachment point)' },
+      { id: 'lod', term: 'term.lod', title: 'Detail levels (LOD)' },
+      { id: 'collider', term: 'term.collider', title: 'Collision shape (collider)' },
+      { id: 'attachment-point', term: 'term.socket', title: 'Attachment point (socket)' },
       { id: 'items', term: 'term.items', title: 'Items (held and carried things)' },
       { id: 'moves-from', term: 'term.moves_from', title: 'Animation library (where moves come from)' },
       { id: 'preview-light', term: 'term.preview_light', title: 'Preview light (environment light)' },
-      { id: 'beauty-render', term: 'term.beauty_render', title: 'Beauty render (beauty picture)' },
+      { id: 'beauty-render', term: 'term.beauty_render', title: 'Beauty picture (beauty render)' },
     ],
   },
   {
@@ -99,6 +99,24 @@ function matches(r: Row, q: string): boolean {
     .every((w) => hay.includes(w))
 }
 
+function TechnicalLines({ technical }: { technical: string }) {
+  const { industry, file } = splitTechnical(technical)
+  return (
+    <>
+      {industry && (
+        <div className="muted">
+          Industry term: <span className="mono">{industry}</span>
+        </div>
+      )}
+      {file && (
+        <div className="muted small">
+          In the files: <span className="mono">{file}</span>
+        </div>
+      )}
+    </>
+  )
+}
+
 export default function GlossaryPage() {
   const [q, setQ] = useState('')
   const groups = useMemo(() => GROUPS.map((g) => ({ ...g, rows: rowsOf(g).filter((r) => matches(r, q.trim())) })), [q])
@@ -108,8 +126,8 @@ export default function GlossaryPage() {
     <div className="page-narrow glossary">
       <h1 className="page-title">Glossary</h1>
       <p className="muted">
-        The words this app uses, in plain language. The same explanations appear when you hover any "i" next to a label. Each entry ends with the technical name, in case you
-        want to look it up.
+        The words this app uses, in plain language. The same explanations appear when you hover any "i" next to a label. Each entry ends with the industry term, in case you
+        want to look it up, and the field name where the term is different.
       </p>
       <label className="field glossary-search">
         <span className="field-label">Find a word</span>
@@ -141,9 +159,7 @@ export default function GlossaryPage() {
                   <dd>
                     <div>{r.entry.meaning}</div>
                     <div className="muted">Why it matters: {r.entry.why}</div>
-                    <div className="muted small">
-                      Technical name: <span className="mono">{r.entry.technical.replace(/\s*\((?:GET|POST|PUT|DELETE|PATCH) [^)]*\)/g, '')}</span>
-                    </div>
+                    <TechnicalLines technical={r.entry.technical} />
                   </dd>
                 </div>
               ))}

@@ -17,42 +17,48 @@ from .reference import STAGE_ORDER
 STAGE_GUIDE: dict[str, dict[str, Any]] = {
     "concept": {
         # Seconds per candidate.
-        "plain_name": "Describe", "plain_verb": "Make concept art", "estimate_seconds": 25,
-        "help": {"meaning": "The first picture of your asset, painted from your description.",
+        "plain_verb": "Make concept art", "estimate_seconds": 25,
+        "help": {"meaning": "The first picture of your asset, drawn from your description.",
                  "why": "Everything later is built from this picture, so get the look right here.",
                  "technical": "Concept image (text-to-image), with a background cutout"},
     },
     "turnaround": {
-        "plain_name": "Check all sides", "plain_verb": "Show it from all sides", "estimate_seconds": 180,
+        "plain_verb": "Check all sides", "estimate_seconds": 180,
         "help": {"meaning": "Views of your asset from the front, sides and back.",
                  "why": "The 3D builder guesses the sides it cannot see; checking them now avoids surprises later.",
                  "technical": "Turnaround views (multi-angle image editing), consistency checks per view"},
     },
     "mesh": {
-        "plain_name": "Build the 3D model", "plain_verb": "Build the 3D model", "estimate_seconds": 200,
+        "plain_verb": "Build the 3D model", "estimate_seconds": 200,
         "help": {"meaning": "Turns the picture into a textured 3D model sized for your platform.",
                  "why": "This is the model your game will use.",
                  "technical": "Image-to-3D (TRELLIS.2 shape and texture), remesh, decimate, unwrap, bake"},
     },
     "prep": {
-        "plain_name": "Clean up for the game", "plain_verb": "Clean it up", "estimate_seconds": 20,
-        "help": {"meaning": "Turns the model to face forward, sets its real-world size (scenery is rounded to the grid), puts the pivot at the base (a corner for scenery), removes stray geometry and checks the textures; it mirrors the two halves only when you ask.",
+        "plain_verb": "Clean up for the game", "estimate_seconds": 20,
+        "help": {"meaning": "Turns the model to face forward, sets its real size, puts its anchor point at the base, removes stray bits and checks the textures.",
                  "why": "Game engines expect models at the right scale, facing the right way, with a clean surface and textures painted for that surface.",
                  "technical": "Yaw to face +Z, uniform scale on the category size axis (grid snap and corner pivot for environment), pivot, weld, optional symmetrize with re-bake, manifold cleanup, PBR and baked-light checks"},
     },
     "rig": {
-        "plain_name": "Make it move", "plain_verb": "Add a skeleton", "estimate_seconds": 90,
-        "help": {"meaning": "Puts a skeleton inside the model and attaches the surface to it, then tries a walk and an idle.",
+        "plain_verb": "Make it move", "estimate_seconds": 90,
+        "help": {"meaning": "Puts a skeleton inside the model, joins the surface to it, and makes the full set of moves for it.",
                  "why": "Without a skeleton the model cannot animate.",
                  "technical": "Auto-rigging (SkinToken), skin weights, procedural idle and walk clips"},
     },
     "export": {
-        "plain_name": "Hand off to the game", "plain_verb": "Finish and package", "estimate_seconds": 120,
+        "plain_verb": "Hand off to the game", "estimate_seconds": 120,
         "help": {"meaning": "Packages the model with detail levels, a collider, textures and animations, and checks it in Unity.",
                  "why": "This is what you drop into your game project.",
                  "technical": "LOD chain, convex collider, FBX and GLB export, Unity prefab build"},
     },
 }
+
+# The step names come from reference.STAGE_NAMES, the one source: the plain name leads, the industry term follows.
+for _stage, _names in reference.STAGE_NAMES.items():
+    STAGE_GUIDE[_stage]["plain_name"] = _names["plain"]
+    STAGE_GUIDE[_stage]["technical_short"] = _names["technical"]
+    STAGE_GUIDE[_stage]["help"]["technical"] = _names["technical"]
 
 PARAM_HELP: dict[str, dict[str, Any]] = {
     "model": {"simple": True, "help": {"meaning": "Which image model paints the first picture.", "why": "Each has a different look and speed; the suggestion picks one for your style and platform.", "technical": "Diffusion model (the options are the concept models in models.yaml)"}},
@@ -91,7 +97,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                                               "technical": "Pixal3DMultiViewConditioning fov; empty wires MoGe-2's horizontal field of view of the framed front crop (MoGeGeometryToFOV)"}},
     "input_view": {"simple": False, "help": {"meaning": "Which picture the builder starts from.", "why": "A three-quarter view usually gives better depth than a flat front. Left alone, a person is built from the three-quarter view, or from the other three-quarter view when the first one lost the pose of the arms and legs in your picture; a view you pick yourself is always used.", "technical": "Conditioning image selection; input_view_origin records whether the view was chosen by hand"},
                    "options": {"concept": "The first picture", "front": "Front view", "quarter": "Three-quarter view", "quarter2": "Three-quarter view (other side)"}},
-    "target_faces": {"simple": True, "help": {"meaning": "Triangle count (detail level): how many triangles the model may have.", "why": "Phones need few, PCs allow more; the platform target sets a good default.", "technical": "Target triangle count (decimation budget)"}},
+    "target_faces": {"simple": True, "help": {"meaning": "Detail level (triangle count): how many triangles the model may have.", "why": "Phones need few, PCs allow more; the platform target sets a good default.", "technical": "Target triangle count (decimation budget)"}},
     "texture_size": {"simple": True, "help": {"meaning": "Sharpness of the painted surface.", "why": "Bigger textures look crisper close up but cost memory; your style and platform set a default.", "technical": "Texture atlas resolution"},
                      "options": {"256": "256 px (smallest, retro looks)", "512": "512 px", "1024": "1024 px", "2048": "2048 px", "4096": "4096 px (largest)"}},
     "upsample": {"simple": False, "help": {"meaning": "Finer colour and shape: builds the model on a finer grid, so colour detail such as faces, eyes and markings, and small shapes, can come out sharper.", "why": "It redoes the whole colour pass, so colours can also shift and results vary: try it as a second version and keep the better one. About 2 to 3 times slower, and very slow for large, bulky objects.", "technical": "TRELLIS.2 upsample resolution"},
@@ -143,11 +149,11 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "moves": {"simple": True, "help": {"meaning": "Animation clips: the moves made for this character or creature.",
                                        "why": "Leave out moves your game will never use to keep the file smaller.",
                                        "technical": "Library clips retargeted in Blender (retarget.py) for human shapes, else the procedural set (procanim.py)"},
-              "options": {"idle": "Standing still", "walk": "Walk", "run": "Run", "turn": "Turn on the spot", "attack": "Attack", "hit": "Get hit", "death": "Die",
+              "options": {"idle": "Stand still", "walk": "Walk", "run": "Run", "turn": "Turn on the spot", "attack": "Attack", "hit": "Get hit", "death": "Die",
                           "jump": "Jump", "crouch": "Crouch", "roll": "Roll", "interact": "Use or pick up",
                           "flap": "Fly", "glide": "Glide", "takeoff": "Take off", "land": "Land", "slither": "Slither or swim"}},
     "clips_source": {"simple": True, "help": {"meaning": "Where the character's moves come from.",
-                                              "why": "The hand-made library moves look natural; the built-in moves work for any skeleton and need nothing installed.",
+                                              "why": "The move library moves look natural; the built-in moves work for any skeleton and need nothing installed.",
                                               "technical": "CC0 Quaternius Universal Animation Library retargeted in Blender (retarget.py), else procanim.py"},
                      "options": {"auto": "Automatic", "library": "Hand-made library", "procedural": "Built-in moves"}},
     "move_size": {"simple": False, "help": {"meaning": "How big the moves are.", "why": "Small suits heavy or calm creatures, big suits lively ones.",
@@ -180,7 +186,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                                                  "technical": "Root CapsuleCollider (direction Y or Z) or BoxCollider"},
                        "options": {"auto": "Automatic (by category)", "upright": "Standing capsule (works with Unity's Character Controller)",
                                    "along": "Lying capsule along the body", "box": "Box", "none": "None"}},
-    "lods": {"simple": True, "help": {"meaning": "LOD (detail levels): smaller copies for far away; each fraction is one copy.", "why": "The game swaps to simpler copies at distance to stay fast.", "technical": "LOD ratios"}},
+    "lods": {"simple": True, "help": {"meaning": "Detail levels (LOD): smaller copies for far away; each fraction is one copy.", "why": "The game swaps to simpler copies at distance to stay fast.", "technical": "LOD ratios"}},
     "collider": {"simple": True, "help": {"meaning": "Invisible simple shapes the game uses to know where the asset is solid.",
                                           "why": "Without them things pass straight through it; the right shapes keep doorways open and seats usable.",
                                           "technical": "Primitive, convex hull (255-triangle cap), CoACD convex decomposition, or mesh collider (static only)"},
@@ -214,14 +220,14 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "face_strength": {"simple": False, "help": {"meaning": "How much of the painted face goes onto the model.",
                                                 "why": "Lower it if the painted face looks pasted on; 1 uses all of it.",
                                                 "technical": "Projection weight multiplier, 0 to 1"}},
-    "face_density": {"simple": False, "help": {"meaning": "Face texel density (face sharpness): how many texture pixels the face gets. Standard is an eighth of the texture's width; High is about 512 across the face, or as many as the picture has detail for.",
+    "face_density": {"simple": False, "help": {"meaning": "Face sharpness (texel density): how many texture pixels the face gets. Standard is an eighth of the texture's width; High is about 512 across the face, or as many as the picture has detail for.",
                                                "why": "More texels make the eyes and mouth crisp up close. Where the texture budget is 4096, High ships the colour texture at 4096; at 2048 and 1024 the face takes a larger share and the rest of the body gives up at most 12 percent of its sharpness.",
                                                "technical": "Face UV island scale and repack (max loss 12 percent), base colour at 4096 on 4096 budgets"},
                      "options": {"auto": "Automatic (by platform and picture)", "standard": "Standard", "high": "High"}},
     "face_closeup": {"simple": False, "help": {"meaning": "Close-up source (a larger picture of the face): when the face in the picture is small, the image model draws a close-up of the same head and the face is painted from it.",
                                                "why": "A small painted face has too few pixels to fill the texture. The close-up is used only if it is still the same face; otherwise the painting is used.",
                                                "technical": "Qwen-Image-Edit close-up at 1024 (drawn once more in the look's own words if the first drifts from the painting); each eye and the mouth found again by block matching at the painting's resolution and moved back if a little off; checked by likeness, eye, skin and hair colour, and skin texture (a photograph-like close-up is not used)"}},
-    "hair_detail": {"simple": True, "help": {"meaning": "Hair detail (strands and shading painted on): the hair gets strands and clumps along the way it falls, darker roots and under-layers, lighter tips and, for painted looks, a soft highlight band.",
+    "hair_detail": {"simple": True, "help": {"meaning": "Gives the hair strands and clumps along the way it falls, darker roots and under-layers, lighter tips and, for painted looks, a soft highlight band.",
                                              "why": "The 3D builder makes hair as one flat-coloured shape; this makes it read as hair. Nothing is added to the shape. It stands back when hair cannot be told from skin or clothes.",
                                              "technical": "Hair mask by a colour vote over the model and the turnaround pictures; flow from oriented line filters or down from the crown; line integral convolution in 3D; strand height in the normal map; more texels for the hair in the face's relayout"}},
     "hair_strength": {"simple": False, "help": {"meaning": "How strongly the hair detail is painted: 1 is full, 0 changes nothing.",
@@ -499,7 +505,7 @@ def _padding_fix(c: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
 
-REDRAW_LABEL = "Redraw it ready for 3D"
+REDRAW_LABEL = "Draw it again, ready for 3D"
 
 
 def _redraw_fix(c: dict[str, Any]) -> dict[str, Any] | None:
@@ -565,7 +571,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         # case gets the new-draw button from fixnotes.EXTRA_FIXES.
         "fix": lambda c: ({"stage": "mesh", "params": {"seed": None, "remesh": True}}
                           if _var(c, "route") == "buildings" and _var(c, "rebuild") is False else None),
-        "fix_label": "Build it again with Remesh on",
+        "fix_label": "Build the 3D model again with Remesh on",
     },
     "degenerate_faces": {
         "severity": "warn",
@@ -635,7 +641,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": "{value:n} detail levels were made.",
         "fail": "{value:n} detail levels were made; {limit:n} expected. The detail-level chain is missing a step.",
         "fix": lambda c: {"stage": "export", "params": {}},
-        "fix_label": "Rebuild the detail levels",
+        "fix_label": "Make the detail levels again",
     },
     "collider_present": {
         "severity": "block",
@@ -678,14 +684,14 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": "{n} hit boxes cover {cover} of the body and follow the skeleton.",
         "fail": "The hit boxes cover only {cover} of the body, so some hits would pass through.",
         "fix": lambda c: {"stage": "rig", "params": {"hitbox_fit": "loose"}},
-        "fix_label": "Fit them looser",
+        "fix_label": "Make the hit boxes bigger",
     },
     "hitbox_overreach": {
         "severity": "warn",
         "ok": "The hit boxes stay close to the body.",
         "fail": "The hit boxes stick out well past the body ({times} times its size), so hits would land in thin air.",
         "fix": lambda c: {"stage": "rig", "params": {"hitbox_fit": "snug"}},
-        "fix_label": "Fit them snugger",
+        "fix_label": "Make the hit boxes smaller",
     },
     "hitbox_fit": {
         "severity": "warn",
@@ -747,8 +753,8 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     },
     "library_clips": {
         "severity": "warn",
-        "ok": "{count:n} moves come from the hand-made library.",
-        "fail": "The hand-made moves could not be put on this skeleton, so it uses the built-in moves. {reason}",
+        "ok": "{count:n} moves come from the app's move library.",
+        "fail": "The library moves could not be put on this skeleton, so it uses the built-in moves. {reason}",
         "fix": lambda c: {"stage": "rig", "params": {}},
         "fix_label": "Make the moves again",
     },
@@ -793,7 +799,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": "Unity recognised the skeleton as a person, so all {value} shared animations work.",
         "fail": "Unity could not read the skeleton as a person, so the shared animations are missing; it still has its own moves.",
         "fix": lambda c: {"stage": "rig", "params": {"template": "mixamo"}},
-        "fix_label": "Fit the standard skeleton again",
+        "fix_label": "Rig the standard skeleton again",
     },
     "materials_connected": {
         "severity": "warn",
@@ -801,21 +807,21 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                          if _var(c, "no_bumps") else "Unity uses all the surface textures: colour, bumps, shadows, metal and shine."),
         "fail": "Unity is missing the {missing} texture, so the surface will look {effect}.",
         "fix": lambda c: {"stage": "export", "params": {}},
-        "fix_label": "Rebuild for Unity",
+        "fix_label": "Make the files again",
     },
     "textures_full_size": {
         "severity": "warn",
         "ok": "Unity imports every texture at its full size (the largest is {file_px} px).",
         "fail": "Unity imports the {texture} texture at {import_px} px, smaller than the file's {file_px} px, so it looks softer in the game.",
         "fix": lambda c: {"stage": "export", "params": {}},
-        "fix_label": "Rebuild for Unity",
+        "fix_label": "Make the files again",
     },
     "clips_loop": {
         "severity": "block",
         "ok": "Idle and walk loop smoothly.",
         "fail": "The {value} animation does not loop, so it would stop after one cycle.",
         "fix": lambda c: {"stage": "export", "params": {}},
-        "fix_label": "Rebuild for Unity",
+        "fix_label": "Make the files again",
     },
     "clips_face_forward": {
         # Unity hand-off (VgacImport Version 16): the body's heading while each move the controller plays runs,
@@ -829,14 +835,14 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                            + (", and {others} more moves are turned too" if _var(c, "others") else "")
                            + ", so in a game the character would face the wrong way while it plays."),
         "fix": lambda c: {"stage": "export", "params": {}},
-        "fix_label": "Rebuild for Unity",
+        "fix_label": "Make the files again",
     },
     "placement_exact": {
         "severity": "warn",
         "ok": "Hit boxes and attachment points sit exactly where they were fitted.",
         "fail": "Hit boxes or attachment points landed {cm} cm away from where they were fitted, so hits and held items would look off.",
         "fix": lambda c: {"stage": "export", "params": {}},
-        "fix_label": "Rebuild for Unity",
+        "fix_label": "Make the files again",
     },
     "grip_found": {
         "severity": "warn",
@@ -871,14 +877,14 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": "An animation controller switches between idle, walk and run by speed.",
         "fail": "No animation controller was built, so you would have to set one up in Unity.",
         "fix": lambda c: {"stage": "export", "params": {}},
-        "fix_label": "Rebuild for Unity",
+        "fix_label": "Make the files again",
     },
     "rig_restore": {
         "severity": "warn",
         "ok": "The rigged model kept its textures and its size.",
         "fail": "The rigged model lost its textures or its size while the skeleton was fitted.",
         "fix": lambda c: {"stage": "rig", "params": {}},
-        "fix_label": "Fit the skeleton again",
+        "fix_label": "Rig the skeleton again",
     },
     "seam_error": {
         "severity": "warn",
@@ -914,7 +920,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": "The surface detail was painted onto the final model.",
         "fail": "The surface detail was painted for an earlier copy of the model, so shading may look wavy.",
         "fix": lambda c: {"stage": "prep", "params": {"rebake": True}},
-        "fix_label": "Repaint the surface",
+        "fix_label": "Paint the surface again",
     },
     # The 3D step's normal map with its green channel the right way up (vgac/normalfix.py), checked at the 3D step on
     # its own map and at the clean-up step on the map it baked from. The Fix rebuilds the step that measured it.
@@ -939,9 +945,9 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": lambda c: ("The base colour (the colour texture) came out much darker than the picture: {value:pct} of its brightness, "
                            "it needs {limit:pct}. "
                            + ("It was built {tries:n} times and this is the closest. " if _var(c, "rebuilt") else "")
-                           + "Build it again, or use a picture with some soft light and shadow on the character."),
+                           + "Build the 3D model again, or use a picture with some soft light and shadow on the character."),
         "fix": lambda c: {"stage": "mesh", "params": {"seed": None}},
-        "fix_label": "Build it again",
+        "fix_label": "Build the 3D model again",
     },
     # Report-only (vgac/texfidelity.py): the model drawn flat from the picture's side against the picture. Severity warn,
     # so they show on the card and never block a run. No fix yet: sharper colour needs the picture projected onto the
@@ -962,17 +968,17 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     },
     "texture_padding": {
         "severity": "warn",
-        "ok": "Texture pieces have {value:n} px of space around them, enough for distant views.",
-        "fail": "Texture pieces have only {value:n} px of space, so thin dark seams may show at a distance.",
+        "ok": "Texture pieces (UV islands) have {value:n} px of space around them (UV padding), enough for distant views.",
+        "fail": "Texture pieces (UV islands) have only {value:n} px of space (UV padding), so thin dark seams may show at a distance.",
         "fix": _padding_fix,
         "fix_label": "Add more space",
     },
     "atlas_used": {
         "severity": "warn",
-        "ok": "The model uses {value:pct} of its texture.",
-        "fail": "The model uses only {value:pct} of its texture, so it looks less sharp than it could.",
+        "ok": "The model uses {value:pct} of its texture (UV space usage).",
+        "fail": "The model uses only {value:pct} of its texture (UV space usage), so it looks less sharp than it could.",
         "fix": _atlas_fix,
-        "fix_label": "Repaint the surface",
+        "fix_label": "Paint the surface again",
     },
     # The face detail pass (stages/face_detail.py), checked in prep. It measures sharpness and how well the model's
     # face carries the fitted picture's features; it does not claim the face is the same person.
@@ -1016,7 +1022,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": "Your face LoRA was used for the close-up.",
         "fail": "Your face LoRA was not used: the graphics engine did not answer. Run the clean-up again to try again.",
         "fix": lambda c: {"stage": "prep", "params": {"face_closeup": True}},
-        "fix_label": lambda c: "Run the clean-up again",
+        "fix_label": lambda c: "Clean up again",
     },
     # The hair detail pass (stages/hair_detail.py), checked in prep. When the hair cannot be told from skin or clothes
     # the pass stands back and the check passes with the reason; it fails softly when something went wrong or when the
@@ -1165,9 +1171,9 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                  "The 3D step paints that light into the character as if it were its colour, so half the face, the legs or the back "
                  "can come out nearly black, and no game lighting can lift it. A picture in flat, even light (soft studio or "
                  "cloudy-day light, no strong shadows) gives a character that looks right in any scene. You can carry on with this "
-                 "picture. \"Redraw it in even light\" asks the picture editor to redraw it with the same person in flat light."),
+                 "picture. \"Draw it again in even light\" asks the picture editor to draw it again with the same person in flat light."),
         "fix": _redraw_fix,
-        "fix_label": "Redraw it in even light",
+        "fix_label": "Draw it again in even light",
     },
     # A picture combined from the person's own pictures (feature photos, stages/concept.compose_check): the clothes or the hair
     # colour drifted from the pictures. A warning only; the Fix combines the same pictures again.
@@ -1247,7 +1253,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "severity": "warn",
         "ok": lambda c: ("You moved or checked the marks on the body." if _var(c, "state") == "edited"
                          else "The app placed the marks on the body (chin, shoulders, elbows, wrists, groin, knees, ankles) and is confident."),
-        "fail": lambda c: "Please check the marks on the body under Mark the body: " + (_var(c, "words") or "some marks are unsure") + ".",
+        "fail": lambda c: "Please check the marks on the body (the dots that show where each joint is) under Mark the body: " + (_var(c, "words") or "some marks are unsure") + ".",
     },
     # The three-quarter view the 3D step builds from (stages/mesh.choose_build_view): fails only when both views lost the pose.
     "pose_held_build": {
@@ -1275,7 +1281,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": lambda c: _braces(" ".join([_var(c, "words") or "The pose will join parts of the 3D model.",
                                             *((_var(c, "cautions") or []) if _var(c, "offer") else [])])),
         "fix": lambda c: {"stage": "turnaround", "params": {"pose_ready": True}} if _var(c, "offer") else None,
-        "fix_label": "Pose it for 3D, then draw the sides",
+        "fix_label": "Open the pose, then redraw the side views (Pose for 3D first)",
     },
     # The guard after the pose redraw (buildpose.guard): refused redraws keep the person's picture; the fix keeps the
     # refused redraw anyway (vars.version: the step 2 version holding it).
@@ -1438,8 +1444,8 @@ def _pattern_guide(name: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
     """Entries for check ids that carry a number or a map name: lodN_ratio and texture_<map>_<kind>."""
     m = re.match(r"^lod(\d+)_ratio$", name)
     if m:
-        return ({"severity": "warn", "ok": "Detail level {level} keeps {value:pct} of the triangles.",
-                 "fail": "Detail level {level} keeps {value:pct} of the triangles; {limit:pct} expected."}, {"level": m.group(1)})
+        return ({"severity": "warn", "ok": "Detail level {level} (LOD{level}) keeps {value:pct} of the triangles.",
+                 "fail": "Detail level {level} (LOD{level}) keeps {value:pct} of the triangles; {limit:pct} expected."}, {"level": m.group(1)})
     if name.startswith("texture_"):
         tmap = {"map": _map_name(name)}
         if name.endswith("_pow2"):
@@ -1555,6 +1561,30 @@ def format_check_text(template: str, values: dict[str, Any]) -> str:
         return _FORMATTER.vformat(template, (), values)
     except (ValueError, IndexError, KeyError, AttributeError):
         return template
+
+
+def refresh_check_wording(metrics: dict[str, Any]) -> dict[str, Any]:
+    """The version's metrics with each stored check's sentence and fix button text in today's words. Only the words are
+    taken from describe_check; the measured value, the verdict and the fix's settings stay as the version stored them, so
+    a version made before a wording change reads like one made after it."""
+    checks = metrics.get("checks") if isinstance(metrics, dict) else None
+    if not isinstance(checks, list):
+        return metrics
+    out = []
+    for c in checks:
+        try:
+            d = describe_check(c) if isinstance(c, dict) else c
+            n = dict(c)
+            if "help" in d and "help" in c:
+                n["help"] = d["help"]
+            if isinstance(c.get("fix"), dict) and isinstance(d.get("fix"), dict) and d["fix"].get("label"):
+                n["fix"] = {**c["fix"], "label": d["fix"]["label"]}
+            if c.get("fix_label") and d.get("fix_label"):
+                n["fix_label"] = d["fix_label"]
+            out.append(n)
+        except Exception:  # noqa: BLE001
+            out.append(c)
+    return {**metrics, "checks": out}
 
 
 def describe_check(c: dict[str, Any]) -> dict[str, Any]:

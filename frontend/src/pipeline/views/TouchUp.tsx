@@ -68,26 +68,26 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
             <div className="touch-up-row">
               <span className="segmented" role="radiogroup" aria-label="What to paint">
                 <button type="button" role="radio" aria-checked={s.target === 'colour'} className={'seg' + (s.target === 'colour' ? ' seg-on' : '')} onClick={() => paint.setSettings({ target: 'colour' })}>
-                  Colour
+                  Colour <span className="tech-term">base colour</span>
                 </button>
                 {paint.maps.shine && (
-                  <button type="button" role="radio" aria-checked={s.target === 'shine'} className={'seg' + (s.target === 'shine' ? ' seg-on' : '')} onClick={() => paint.setSettings({ target: 'shine' })}>
-                    Shine
+                  <button type="button" role="radio" aria-checked={s.target === 'shine'} className={'seg' + (s.target === 'shine' ? ' seg-on' : '')} onClick={() => paint.setSettings({ target: 'shine' })} title="Shine is the inverse of roughness: 100 percent shine is 0 roughness">
+                    Shine <span className="tech-term">inverse of roughness</span>
                   </button>
                 )}
                 {paint.maps.metal && (
                   <button type="button" role="radio" aria-checked={s.target === 'metal'} className={'seg' + (s.target === 'metal' ? ' seg-on' : '')} onClick={() => paint.setSettings({ target: 'metal' })}>
-                    Metal
+                    Metal <span className="tech-term">metallic</span>
                   </button>
                 )}
               </span>
               {s.target === 'shine' && (
                 <label className="small">
                   Shine {Math.round(s.shine * 100)}%{' '}
-                  <input type="range" min={0} max={100} value={Math.round(s.shine * 100)} onChange={(e) => paint.setSettings({ shine: Number(e.target.value) / 100 })} aria-label="Shine: matt to shiny" />
+                  <input type="range" min={0} max={100} value={Math.round(s.shine * 100)} onChange={(e) => paint.setSettings({ shine: Number(e.target.value) / 100 })} aria-label="Shine (inverse of roughness): matt to shiny" />
                 </label>
               )}
-              {s.target === 'shine' && <span className="small muted">0 is matt, 100 is shiny.</span>}
+              {s.target === 'shine' && <span className="small muted">0 is matt, 100 is shiny. This is the inverse of roughness: 100 shine is 0 roughness.</span>}
               {s.target === 'metal' && (
                 <label className="small">
                   Metal {Math.round(s.metal * 100)}%{' '}
