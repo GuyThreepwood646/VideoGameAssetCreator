@@ -56,10 +56,10 @@ pictures_sharpened movement_shape
 
 # WP-86 and WP-92 (warnings only; never "likely" until each is calibrated per category).
 _NEW_LOOK = """
-painted_share uv_transfer_offset texel_density_spread flipped_shells unreached_texels
+painted_share texel_density_spread flipped_shells unreached_texels
 """
 _NEW_ADVICE = """
-slivers
+slivers uv_transfer_offset
 """
 
 TABLE: dict[str, str] = {}
