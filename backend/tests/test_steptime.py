@@ -198,3 +198,22 @@ def test_the_report_runs_from_the_command_line(tmp_path, capsys):
     assert timing_report.main(["--db", str(db), "--step", "export"]) == 0
     out = capsys.readouterr().out
     assert "export" in out and "unity" in out and "20.0" in out
+
+
+def test_nested_parts_are_printed_under_their_parent_and_marked(tmp_path):
+    parts = {"blender_prep": 50.0, "rebake": 20.0, "projection": 80.0, "pose_search": 60.0, "face_detail": 100.0,
+             "sharpening": 30.0, "second_compose": 10.0, "face_rebake": 5.0, "judge": 2.0, "total": 300.0}
+    rows = timing_report.summarise(timing_report.collect(_library(tmp_path, [{"stage": "prep", "job_seconds": 300, "parts": parts}])))
+    order = [r["part"] for r in rows]
+    assert order.index("rebake") == order.index("blender_prep") + 1
+    assert order.index("pose_search") == order.index("projection") + 1
+    assert order[order.index("face_detail") + 1:order.index("face_detail") + 4] == ["sharpening", "second_compose", "face_rebake"]
+    assert _row(rows, "prep", "pose_search")["within"] == "projection" and "within" not in _row(rows, "prep", "projection")
+    text = timing_report.format_rows(rows)
+    assert "pose_search (within projection)" in text and "sharpening (within face_detail)" in text
+    assert "note:" in text and "wait for a graphics card" in text
+
+
+def test_a_nested_part_with_no_parent_in_the_data_stays_a_plain_row(tmp_path):
+    rows = timing_report.summarise(timing_report.collect(_library(tmp_path, [{"stage": "prep", "job_seconds": 9, "parts": {"rebake": 4.0}}])))
+    assert "within" not in _row(rows, "prep", "rebake")

@@ -30,6 +30,11 @@ from typing import Any
 DEFAULT_TEST_PATTERN = r"(?i)\b(test|tests|check|checks|trial|trials|research|demo|proof|bakeoff|rct2?|wig)\b"
 JOB = "job (start to finish)"
 TOTAL = "total"
+# A part that runs inside another: its seconds are already in the parent's, so it is printed under it and never added.
+NESTED = {"rebake": "blender_prep", "pose_search": "projection", "second_compose": "face_detail", "sharpening": "face_detail",
+          "face_rebake": "face_detail"}
+WAITS = ("Parts can include a wait for a graphics card or for the host's one Blender; parts drawn on two cards at once "
+         "overlap, so do not add parts up.")
 STEP_ORDER = ["concept", "turnaround", "mesh", "prep", "rig", "export"]
 
 SQL = """
@@ -109,27 +114,36 @@ def summarise(data: dict[str, dict[str, list[float]]]) -> list[dict[str, Any]]:
     for step in steps:
         parts = data[step]
         head = [p for p in (JOB, TOTAL) if p in parts]
-        rest = sorted((p for p in parts if p not in head), key=lambda p: -quantile(parts[p], 0.5))
+        nested = {p: NESTED[p] for p in parts if NESTED.get(p) in parts}
+        rest = sorted((p for p in parts if p not in head and p not in nested), key=lambda p: -quantile(parts[p], 0.5))
+        order: list[str] = []
         for part in head + rest:
+            order.append(part)
+            order += sorted((c for c, par in nested.items() if par == part), key=lambda c: -quantile(parts[c], 0.5))
+        for part in order:
             vals = parts[part]
             rows.append({"step": step, "part": part, "n": len(vals), "median": round(quantile(vals, 0.5), 1),
-                         "upper_quartile": round(quantile(vals, 0.75), 1)})
+                         "upper_quartile": round(quantile(vals, 0.75), 1), **({"within": nested[part]} if part in nested else {})})
     return rows
 
 
 def format_rows(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return "No finished versions match.\n"
-    width = max(len(r["part"]) for r in rows)
+    def label(r: dict[str, Any]) -> str:
+        return f"  {r['part']} (within {r['within']})" if r.get("within") else r["part"]
+
+    width = max(len(label(r)) for r in rows)
     lines = []
     last = None
     for r in rows:
         if r["step"] != last:
             lines.append("")
             lines.append(f"{r['step']}")
+            lines.append(f"  note: {WAITS}")
             lines.append(f"  {'part'.ljust(width)}  {'runs':>5}  {'median s':>9}  {'upper quartile s':>17}")
             last = r["step"]
-        lines.append(f"  {r['part'].ljust(width)}  {r['n']:>5}  {r['median']:>9.1f}  {r['upper_quartile']:>17.1f}")
+        lines.append(f"  {label(r).ljust(width)}  {r['n']:>5}  {r['median']:>9.1f}  {r['upper_quartile']:>17.1f}")
     return "\n".join(lines).lstrip("\n") + "\n"
 
 
