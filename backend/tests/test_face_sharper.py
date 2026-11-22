@@ -89,7 +89,7 @@ def test_new_knobs_are_declared_for_humanoids():
 
     spec = {p["name"]: p for p in reference.STAGE_SCHEMAS["prep"]}
     assert spec["face_density"]["options"] == ["auto", "standard", "high"] and spec["face_density"]["default"] == "auto"
-    assert spec["face_density"]["label"].startswith("Face texel density (face sharpness)")
+    assert spec["face_density"]["label"].startswith("Face sharpness (texel density)")  # WP-96: plain words first
     assert spec["face_closeup"]["categories"] == ["humanoid"]
     assert reference.validate_params("prep", {"face_density": "high"}, "humanoid")["face_density"] == "high"
     with pytest.raises(ValueError):
