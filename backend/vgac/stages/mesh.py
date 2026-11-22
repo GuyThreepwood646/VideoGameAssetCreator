@@ -386,6 +386,10 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
         return await _trellis_build(sc, name, n, seed, target_faces, tex, upsample, remesh, padding, keep_normal, picture,
                                     tex_steps=tex_steps, match_to=src, views=names, fov=angle, texture_seed=tseed)
 
+    async def build_shape_try(seed: int, n: int) -> dict[str, Any]:
+        return await _trellis_build(sc, name, n, seed, target_faces, tex, upsample, remesh, padding, keep_normal, picture,
+                                    tex_steps=tex_steps, match_to=src, views=names, fov=angle)
+
     def on_retry(n: int, last: dict[str, Any]) -> None:
         if texcolour.try_kind(n, texture_tries) == "texture_only":
             sc.progress(0.05, f"The colours came out too dark against the picture, so only the texture is painted again "
@@ -398,8 +402,13 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
                                                      lambda n: _keep_aside(sc.dir, tries_dir / f"try{n + 1}"),
                                                      lambda n: _bring_back(tries_dir / f"try{n + 1}", sc.dir), on_retry,
                                                      texture_tries=texture_tries)
-    shutil.rmtree(tries_dir, ignore_errors=True)
     kept = tries[best]
+    all_builds = list(tries)
+    shape = None
+    if meshgeom.rebuilds_wanted(sc.asset.category):
+        kept, extra, shape = await _shape_gate(sc, kept, build_shape_try, tries_dir)
+        all_builds += extra
+    shutil.rmtree(tries_dir, ignore_errors=True)
     for key in ("glb", *kept["maps"].keys(), *kept["other"]):
         p = sc.dir / ("model.glb" if key == "glb" else f"{key}.png")
         if p.is_file():
@@ -411,11 +420,71 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     sc.set_metrics(engine="trellis", builder=builder, seed=kept["seed"], elapsed_seconds=kept["elapsed"], target_faces=target_faces, texture_size=tex,
                    unwrap_padding_px=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
                    normal_map=keep_normal, recipe=recipe_with_builder(rec, builder),
-                   elapsed_seconds_all=round(sum(float(t["elapsed"] or 0) for t in tries), 1))
+                   elapsed_seconds_all=round(sum(float(t["elapsed"] or 0) for t in all_builds), 1))
     if picture is not None:
         sc.set_metrics(picture_colour=picture, **texcolour.record(best, tries))
+        sc.set_metrics(texture_match=kept.get("match"))  # the kept build's own, which a shape rebuild may have replaced
+    if shape is not None:
+        sc.set_metrics(shape_rebuild=shape)
     if views is None and headgraft.wanted(sc.asset.category, params, hairlib.is_library(sc), "trellis"):
         await _head_build(sc, params, src, int(kept["seed"]), target_faces, tex, upsample, remesh, padding, keep_normal, tex_steps)
+
+
+# --- The shape gate: build again when the model is torn (WP-83, decision D23) -----------------------------------
+# A broken 3D model never stops an automatic build. On a route in meshgeom.REBUILD_ROUTES the kept build's grey-view measures
+# (mesh_health.py) are judged here; when one is over its limit the model is built again with the next seeds (at most
+# meshgeom.REBUILD_MAX extra builds, each a full build through the same job), the best is kept (meshgeom.pick_best: lowest
+# folded share, then lowest seed) and, when it still fails, the model_whole check says so on the finished page.
+SHAPE_DIR = "shape_health"
+
+
+async def _health(sc: StageContext, glb: Path, tag: str) -> dict[str, Any] | None:
+    """mesh_health.py on one build: its report, or None when Blender failed (then the build counts as unmeasured)."""
+    out = sc.dir / SHAPE_DIR / tag
+    try:
+        with steptime.part(sc, "shape_health"):
+            await sc.blender("mesh_health.py", [glb, out, 64], log_name=f"shape_{tag}.log", timeout=sc.settings.blender_timeout_seconds)
+        return json.loads((out / "health.json").read_text())
+    except Exception as e:  # noqa: BLE001  (a build that cannot be measured is not rebuilt for it)
+        sc.set_metrics(shape_health_error=str(e)[:300])
+        return None
+
+
+def _shape_try(build: dict[str, Any], report: dict[str, Any] | None, passed: bool | None) -> dict[str, Any]:
+    folded = None if report is None else float((report.get("folded") or {}).get("120", 0.0))
+    return {"seed": build["seed"], "folded": folded, "passed": passed, "elapsed": build.get("elapsed")}
+
+
+async def _shape_gate(sc: StageContext, kept: dict[str, Any], build_again, tries_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    """Judge the kept build; while it fails, build again with the next seeds (at most REBUILD_MAX). Returns (the build to keep,
+    the extra builds made, the record kept in metrics.shape_rebuild). The kept build's files are in the version folder."""
+    category = sc.asset.category
+    report = await _health(sc, sc.dir / "model.glb", "try1")
+    passed = None if report is None else meshgeom.passes(category, report)
+    tried = [_shape_try(kept, report, passed)]
+    builds = [kept]
+    if passed is not False:  # whole, or not measurable: nothing to rebuild
+        return kept, [], {"tries": tried, "kept_try": 1, "extra_builds": 0, "kept_passed": passed}
+    extra: list[dict[str, Any]] = []
+    for i in range(1, meshgeom.REBUILD_MAX + 1):
+        _keep_aside(sc.dir, tries_dir / f"shape{i}")
+        seed = texcolour.try_seed(int(kept["seed"]), i)
+        sc.progress(0.05, f"The 3D model came out torn, so it is being built again (extra build {i} of {meshgeom.REBUILD_MAX})")
+        with steptime.part(sc, "shape_rebuild"):
+            build = await build_again(seed, texcolour.MAX_TRIES + i - 1)
+        report = await _health(sc, sc.dir / "model.glb", f"try{i + 1}")
+        passed = None if report is None else meshgeom.passes(category, report)
+        builds.append(build)
+        extra.append(build)
+        tried.append(_shape_try(build, report, passed))
+        if passed is not False:
+            break
+    best = meshgeom.pick_best(tried)
+    if best != len(builds) - 1:
+        _keep_aside(sc.dir, tries_dir / f"shape{len(builds)}")
+        _bring_back(tries_dir / f"shape{best + 1}", sc.dir)
+    return builds[best], extra, {"tries": tried, "kept_try": best + 1, "extra_builds": len(extra),
+                                 "kept_passed": tried[best]["passed"]}
 
 
 # --- The head built on its own (vgac/headgraft.py, docs/HEAD-BUILD-PLAN.md) -------------------------------------
@@ -885,7 +954,8 @@ async def judge(sc: StageContext) -> None:
     if hg:
         checks.append(buildpose.redraw_guard_check("hand_guard", "The hand redraw", hg, int(hg.get("tries") or 1) > 1,
                                                    "It was not used; the 3D model was built from your own picture."))
-    gc = meshgeom.check(sc.asset.category, sc.version.metrics.get("geometry"), (sc.version.params or {}).get("remesh"))
+    extra_builds = int(((sc.version.metrics or {}).get("shape_rebuild") or {}).get("extra_builds") or 0)
+    gc = meshgeom.check(sc.asset.category, sc.version.metrics.get("geometry"), (sc.version.params or {}).get("remesh"), extra_builds)
     if gc:
         checks.append(gc)
     sc.set_metrics(**quality.summarise(checks))

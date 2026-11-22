@@ -561,12 +561,16 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": "The surface has {value:n} open edges, so it may show small holes. Harmless for most game uses.",
     },
     # Step 3 geometry (vgac/meshgeom.py): measured in Blender after joining the texture-seam duplicates. Warn only; whether an
-    # automatic build stops on it is meshgeom.BLOCK_ROUTES (empty until calibrated on bad examples from each route).
+    # automatic build stops on it (decision D23: never); on buildings the 3D step builds again first (meshgeom.REBUILD_ROUTES).
     "model_whole": {
         "severity": "warn",
         "ok": "The 3D model is whole: no torn surface, folded edges or loose pieces beyond what a {route_words} normally has.",
-        "fail": "The 3D model looks damaged, like torn paper: {problem_list}. A picture with the texture on can hide this, so look at "
-                "the grey views under the model.",
+        "fail": lambda c: ("The 3D model looks damaged, like torn paper: {problem_list}. The app built it again {rebuilds} more "
+                           "time(s) with new random draws and kept the least damaged, and it is still damaged. A picture with the texture on "
+                           "can hide this, so look at the grey views under the model."
+                           if (_var(c, "rebuilds") or 0) > 0 else
+                           "The 3D model looks damaged, like torn paper: {problem_list}. A picture with the texture on can hide this, so look at "
+                           "the grey views under the model."),
         # Scenery built with the rebuild off is the case seen: it comes out torn and the rebuild on made it whole. Every other
         # case gets the new-draw button from fixnotes.EXTRA_FIXES.
         "fix": lambda c: ({"stage": "mesh", "params": {"seed": None, "remesh": True}}
