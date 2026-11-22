@@ -503,6 +503,13 @@ def stages_(db: Session = Depends(get_session)) -> list[dict[str, Any]]:
     return estimates.with_history(db, reference.stages())
 
 
+@app.get("/api/check-tiers")
+def check_tiers_() -> dict[str, Any]:
+    """The one table of how much each check matters (check_tiers.py): tier labels, ids and patterns."""
+    from . import check_tiers
+    return check_tiers.served()
+
+
 @app.get("/api/style-presets")
 def style_presets_() -> list[dict[str, Any]]:
     return reference.style_presets()

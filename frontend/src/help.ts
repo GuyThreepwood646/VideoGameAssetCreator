@@ -1732,6 +1732,16 @@ export function firstFailing(metrics: Record<string, unknown>, ctx: CheckContext
   return null
 }
 
+// The most serious tier among a version's failed checks (backend check_tiers.py), or null when none failed or none
+// carries a tier. "advice" alone means nothing here is likely to show in the game: a near miss is never a red dot (UX-10).
+export function failingTier(metrics: Record<string, unknown>): 'likely' | 'look' | 'advice' | null {
+  const checks = metrics.checks
+  if (!Array.isArray(checks)) return null
+  const tiers = (checks as Check[]).filter((c) => c && typeof c === 'object' && !checkPassed(c)).map((c) => c.tier)
+  if (tiers.length === 0 || tiers.some((t) => !t)) return null
+  return tiers.includes('likely') ? 'likely' : tiers.includes('look') ? 'look' : 'advice'
+}
+
 export function looksGood(metrics: Record<string, unknown>): boolean | null {
   if (typeof metrics.gate_ok === 'boolean') return metrics.gate_ok
   if (typeof metrics.consistency_ok === 'boolean') return metrics.consistency_ok

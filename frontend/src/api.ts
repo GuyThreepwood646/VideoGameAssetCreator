@@ -183,6 +183,9 @@ export type CheckFix = { stage?: string; params?: Record<string, unknown>; label
 
 // A quality check. The backend sends {id, name, passed, ok, value, limit, message}
 // and may add help (plain sentence), fix (how the app can fix it) and severity.
+export type CheckTier = 'likely' | 'look' | 'advice'
+export type CheckTiers = { tiers: { id: CheckTier; label: string }[]; table: Record<string, CheckTier>; default: CheckTier; near_miss: number }
+
 export type Check = {
   name: string
   id?: string
@@ -203,6 +206,11 @@ export type Check = {
   // Set on the first picture's checks that one redraw can fix together with others (backend data/fixes.yaml).
   fix_snippet?: string
   severity?: 'block' | 'warn'
+  // How much a failed check matters (backend check_tiers.py, the one table); only on a failed check. near_miss: a measured value within 5 percent of its limit, always advice.
+  tier?: CheckTier
+  near_miss?: boolean
+  // The plain one-line headline of the check kind (backend check_headlines.py); the numbers are under Why.
+  headline?: string
   // Extra values the sentence was filled from (axis_word, missing, effect, ...).
   vars?: Record<string, unknown>
 }
@@ -978,6 +986,7 @@ export const api = {
   styles: () => get<StylePreset[]>('/api/styles'),
   platforms: () => get<Platform[]>('/api/platforms'),
   stages: () => get<StageInfo[]>('/api/stages'),
+  checkTiers: () => get<CheckTiers>('/api/check-tiers'),
   models: () => get<ModelInfo[]>('/api/models'),
   credits: () => get<CreditsAnswer>('/api/credits'),
   suggest: (params: { category?: string; style?: string; platform?: string }) => get<Suggestion>('/api/suggest' + q(params)),

@@ -45,6 +45,7 @@ Health and reference data
 - GET /api/credits -> { summary: {not_legal_advice, game_credit: {title, points[]}, passing_on: {title, points[]}}, groups: [ {id, title, intro, entries: [ {name, does, author, licence, link, attribution_required, in_your_assets, note, confirmed} ]} ] } who made what the app builds on (AI models, add-ons, ready-made data, hairstyles, tools, software libraries); `licence` is "not confirmed" when it could not be checked
 - GET /api/styles -> [ {id, label, model, prompt_block} ]
 - GET /api/platforms -> [ {id, label, triangles_character, triangles_prop, texture} ]
+- GET /api/check-tiers -> {tiers: [{id: likely|look|advice, label}], table: {check id: tier}, patterns, default, near_miss}; the one table of how much a check matters (`check_tiers.py`). Every failed check on a served version also carries `tier` (and `near_miss: true` when its value is within 5 percent of its limit, which makes it advice).
 - GET /api/stages -> [ {id, label, adjust_schema: JSON-schema-like list of params with type/min/max/default} ]
 
 Projects

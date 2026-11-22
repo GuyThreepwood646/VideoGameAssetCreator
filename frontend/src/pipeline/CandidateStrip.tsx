@@ -4,7 +4,7 @@ import { isSetAside, isStopped, libraryUrl, versionFeedback, type Job, type Stag
 import { StatusBadge, TrafficDot } from '../components/ui'
 import { useGlbSnapshot } from '../glbSnapshot'
 import { useState } from 'react'
-import { firstFailing, looksGood } from '../help'
+import { failingTier, firstFailing, looksGood } from '../help'
 import { confirmLeaveUnsavedPaint } from '../unsavedPaint'
 
 export function CandidateStrip({
@@ -160,6 +160,10 @@ function CandidateCard({
   const cls = ['candidate', isActive ? 'active' : '', isSelected ? 'selected' : '', version.status === 'rejected' ? 'rejected' : '', isStopped(version) ? 'stopped' : ''].join(' ')
   const good = version.status === 'done' ? looksGood(version.metrics) : null
   const reason = version.status === 'done' ? firstFailing(version.metrics) : null
+  // Red only when a failed check is likely to show in the game; everything else (worth a look, advice, a near miss) is amber (UX-10).
+  const tier = good === false ? failingTier(version.metrics) : null
+  const amber = tier === 'look' || tier === 'advice'
+  const verdict = tier === 'likely' ? 'Likely to show in the game' : tier === 'look' ? 'Worth a look' : tier === 'advice' ? 'Looks good, with advice' : good === false ? 'Needs a look' : 'Looks good'
   const thumbs = version.status === 'done' ? versionFeedback(version)?.thumbs : null
   return (
     <button type="button" className={cls} onClick={onClick} aria-pressed={isActive} aria-label={`version ${index}`}>
@@ -198,9 +202,9 @@ function CandidateCard({
         )}
         {version.status === 'done' ? (
           good === null || good === undefined ? null : (
-            <span className={'traffic-line ' + (good === false ? 'bad' : 'ok')} title={reason ?? 'Every check passed'}>
-              <TrafficDot state={good === false ? 'bad' : 'ok'} />
-              {good === false ? 'Needs a look' : 'Looks good'}
+            <span className={'traffic-line ' + (amber ? 'warn' : good === false ? 'bad' : 'ok')} title={reason ?? 'Every check passed'}>
+              <TrafficDot state={amber ? 'warn' : good === false ? 'bad' : 'ok'} />
+              {verdict}
             </span>
           )
         ) : (
