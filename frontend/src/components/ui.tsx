@@ -1,7 +1,7 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { ApiError, type Check, type CheckTier, type JobStatus, type VersionStatus } from '../api'
-import { checkHelpKey, checkPassed, checkSentence, metricPlain, type CheckContext, type FixAction } from '../help'
+import { checkHelpKey, checkPassed, checkSentence, metricPlain, oneSentence, type CheckContext, type FixAction } from '../help'
 import { CheckLine, TierHeading } from './CheckLine'
 import { Info } from './Info'
 import { TrafficDot, type TrafficState } from './TrafficDot'
@@ -313,7 +313,7 @@ export function ErrorText({ error }: { error: unknown }) {
   } else if (status !== null && status >= 500) {
     plain = 'Something went wrong inside VGAC. Trying again often fixes it.'
   }
-  if (!plain) return <div className="error">{raw}</div>
+  if (!plain) return <div className="error">{oneSentence(raw)}</div>
   return (
     <div className="error error-block" role="alert">
       <div>{plain} {action}</div>

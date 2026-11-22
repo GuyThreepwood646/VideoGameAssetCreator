@@ -1106,7 +1106,7 @@ function ChangePanel({
   // Fine-tune settings changed but not sent yet: Make the change takes them along, and Apply and re-run takes the text.
   const [pending, setPending] = useState<{ params: Record<string, unknown>; names: string[] } | null>(null)
   const [resetNonce, setResetNonce] = useState(0)
-  // Your LoRAs for this change (edit_addons, concept only): sent with this change alone, then cleared.
+  // Your add-ons (LoRAs) for this change (edit_addons, concept only): sent with this change alone, then cleared.
   const [refineLoras, setRefineLoras] = useState<Record<string, EditChoice>>({})
   const myLoras = useMyAddons(stage === 'concept')
   const refineChoices = Object.fromEntries(Object.entries(refineLoras).filter(([id, c]) => c !== 'off' && editLoras(myLoras).some((e) => e.id === id)))
@@ -1185,7 +1185,7 @@ function ChangePanel({
       </form>
       {stage === 'concept' && (
         <EditLoras
-          purpose="Your LoRAs for this change"
+          purpose="Your add-ons (LoRAs) for this change"
           entries={editLoras(myLoras)}
           choices={refineLoras}
           disabled={disabled}

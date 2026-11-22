@@ -520,7 +520,7 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
         />
       )}
       {fromPicture && sizeNote(picture) && <div className="tool-note small">{sizeNote(picture)}</div>}
-      <Field label="1. What are you making?" term={'category.' + category} hint={cat ? (cat.id === 'material' ? MATERIAL_NOTE : cat.rig_engine === 'none' ? 'No skeleton; it will not animate.' : 'It will get a skeleton and can be animated.') : undefined}>
+      <Field label="1. What are you making?" term={'category.' + category}>
         <div className="category-tiles" role="radiogroup" aria-label="What are you making?">
           {groupCategories(ref?.categories ?? []).map((g) => (
             <div key={g.name} className="category-group" role="group" aria-label={g.name}>
@@ -532,6 +532,9 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
                   </button>
                 ))}
               </div>
+              {cat && g.items.some((c) => c.id === cat.id) && (
+                <div className="field-hint category-note">{cat.label}: {cat.id === 'material' ? MATERIAL_NOTE : cat.rig_engine === 'none' ? 'no skeleton; it will not animate.' : 'it will get a skeleton and can be animated.'}</div>
+              )}
             </div>
           ))}
         </div>
@@ -549,7 +552,7 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
       <FeaturePhotos slots={featureSlots} onChange={setFeatureSlots} startFrom={startFrom} category={category} disabled={busy} />
       {features.length > 0 && !fromModel && (
         <EditLoras
-          purpose="Your LoRAs for combining the photos"
+          purpose="Your photo-combining add-ons (LoRAs)"
           entries={editLoras(myLoras)}
           choices={combineLoras}
           disabled={busy}

@@ -1,6 +1,6 @@
 """Moves: what a human-shaped character can do, and "Add a move".
 
-Three sources of hand-made moves, all copied onto the character's own skeleton by blender/retarget.py:
+Three sources of library moves, all copied onto the character's own skeleton by blender/retarget.py:
   - pack 1 and pack 2 of the CC0 Quaternius Universal Animation Library (settings.clips_libraries ual1 and ual2;
     data/animations/*/License.txt says CC0 1.0, free for commercial games);
   - the person's own animation files ("Use my own animation file"): FBX, GLB or BVH with a human-shaped skeleton,
@@ -843,7 +843,7 @@ def _can_add(asset: Any) -> tuple[bool, str]:
     if cat.get("rig_engine") in (None, "none"):
         return False, "This model has no skeleton, so it does not move."
     if cat.get("rig_engine") != "skintoken_mixamo" or not cat.get("library_clips"):
-        return False, "The hand-made moves only fit human-shaped characters, so this one keeps the moves made for its own skeleton."
+        return False, "The library moves only fit human-shaped characters, so this one keeps the moves made for its own skeleton."
     return True, ""
 
 
@@ -853,7 +853,7 @@ PLAIN_MOVE = {"idle": "stand still", "walk": "walk", "run": "run", "turn_left": 
 
 
 def creature_moves(category_id: str) -> list[str]:
-    """What a creature gets instead of the hand-made moves: its category's built-in moves, in plain words."""
+    """What a creature gets instead of the library moves: its category's built-in moves, in plain words."""
     from . import reference
 
     try:

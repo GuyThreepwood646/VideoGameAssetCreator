@@ -43,7 +43,7 @@ export function loraDefaults(entries: { id: string; stage?: string; default_stre
 // What picture_loras.edit_loras records per use, in the version's metrics.
 type UseRecord = { applied?: { id: string; label?: string; strength?: string }[]; ignored?: { id?: string; reason?: string }[]; unknown?: unknown[] }
 
-// Your LoRAs for picture edits from the listing (the stage is set by the backend: "edit").
+// Your picture-edit add-ons (LoRAs) from the listing (the stage is set by the backend: "edit").
 export function editLoras(list: { addons: unknown[] } | null | undefined): EditLora[] {
   return (list?.addons ?? []).map((a) => a as EditLora).filter((a) => a.stage === 'edit')
 }

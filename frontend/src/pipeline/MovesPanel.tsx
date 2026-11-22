@@ -11,7 +11,7 @@ import { MovePreview } from './MovePreview'
 import { MyMoveForm, MyMoveUpload, RESPONSIBILITY } from './MyMoves'
 
 // Your own moves carry a Yours mark instead of a word here.
-const SOURCE_WORD: Record<CharacterMove['source'], string> = { library: 'hand-made', mine: '', 'built-in': 'built in' }
+const SOURCE_WORD: Record<CharacterMove['source'], string> = { library: 'from the move library', mine: '', 'built-in': 'built in' }
 const BUSY_POLL_MS = 4000
 
 // previewClips: the clips the viewer can play (from the file, named like the move: `clip` is the library id, not the file's name); a move outside it says so. onPlay plays one in the viewer.
@@ -75,7 +75,7 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
         </div>
         {data.can_add && kept && (
           <div className="row-gap">
-            <button type="button" className="primary" disabled={busy} onClick={() => setPicking(true)} title="Pick moves from the app's move library">
+            <button type="button" className="primary" disabled={busy} onClick={() => setPicking(true)} title="Pick moves from the move library">
               Add a move from the library
             </button>
             <button type="button" disabled={busy} onClick={() => setPickingOwn(true)} title="Use an animation file you made or found yourself: FBX, GLB or BVH">
@@ -190,7 +190,7 @@ function StandStill({ current, busy, onChoose }: { current: string; busy: boolea
         Stand still{' '}
         <select value={current} disabled={busy} aria-label="Where Stand still comes from" onChange={(e) => e.target.value !== current && onChoose(e.target.value)}>
           <option value="builtin">Made by the app (upright, arms close)</option>
-          <option value="library">The hand-made library (leans forward a little)</option>
+          <option value="library">The move library (leans forward a little)</option>
           {!known && <option value={current}>Another move from the library</option>}
           {standing.map((c) => (
             <option key={c.id} value={c.id}>

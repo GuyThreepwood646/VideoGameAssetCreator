@@ -283,7 +283,7 @@ function baseFinishLines(asset: Asset): FinishLine[] {
   const hb = hitboxSummary(asset)
   if (hb) {
     const shape = movementShapeWord(exp.params.movement_shape, hb.movement_default)
-    const boxes = hb.mode === 'simple' ? 'hit boxes (hitboxes) for the head and body' : `${hb.count} hit boxes (hitboxes) that follow the animation`
+    const boxes = hb.mode === 'simple' ? 'hit boxes (invisible shapes that show where a hit lands) for the head and body' : `${hb.count} hit boxes (invisible shapes that show where a hit lands) that follow the animation`
     const cover = findCheck(asset, 'hitbox_cover')
     const over = findCheck(asset, 'hitbox_overreach')
     const bad = failed(cover) ? cover : failed(over) ? over : null

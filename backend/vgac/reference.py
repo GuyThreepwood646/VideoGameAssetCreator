@@ -99,9 +99,9 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("lora_strength", "number", 0.9, min=0.0, max=1.5, step=0.05),
         # The person's own LoRAs for the views and the pose redraw (docs/PLAN-qwen-edit-loras-2026-11-18.md). A view
         # LoRA can stop the views turning, so a changed choice redraws every view it applies to.
-        _param("view_addons", "edit_addons", None, label="Your LoRAs for the side views", options=list(ADDON_CHOICES),
+        _param("view_addons", "edit_addons", None, label="Your side-view add-ons (LoRAs)", options=list(ADDON_CHOICES),
                description="Your own LoRAs for the side views, loaded after the built-in views LoRA. Can stop the views turning correctly; when not set, the ones you set to start on for this kind of asset (System, Your library)"),
-        _param("pose_addons", "edit_addons", None, categories=["humanoid"], label="Your LoRAs for the pose redraw",
+        _param("pose_addons", "edit_addons", None, categories=["humanoid"], label="Your pose-redraw add-ons (LoRAs)",
                options=list(ADDON_CHOICES),
                description="Your own LoRAs for the pose redraw only. The posed picture feeds the 3D build; when not set, the ones you set to start on for this kind of asset (System, Your library)"),
         _param("seed", "integer", None, min=0, max=2**31 - 1),
@@ -179,7 +179,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("face_closeup", "boolean", True, categories=["humanoid"], label="Close-up source (a larger picture of the face)",
                description="When the face in the picture is small, draw a close-up of it and use it if it is still the same face"),
         # Your own LoRAs for the face close-up only (never the sharpening redraw): docs/PLAN-qwen-edit-loras-2026-11-18.md.
-        _param("face_addons", "edit_addons", None, categories=["humanoid"], label="Your LoRAs for the face close-up",
+        _param("face_addons", "edit_addons", None, categories=["humanoid"], label="Your face add-ons (LoRAs)",
                options=list(ADDON_CHOICES), description="Your own LoRAs for the face close-up only; when not set, the ones you set to start on for this kind of asset (System, Your library)"),
         _param("face_closeup_guided", "boolean", True, categories=["humanoid"], label="Guide the close-up by your face picture (optional)",
                description="With your own close-up, or a face picture given with the new asset, the close-up is drawn with that face's features; off draws it from the painting alone"),
@@ -216,7 +216,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                                                       "flap", "glide", "takeoff", "land", "slither"],
                categories=["humanoid", "quadruped", "multileg", "winged", "serpent"], description="Every move of the category when empty"),
         _param("clips_source", "select", "auto", options=["auto", "library", "procedural"], categories=["humanoid"],
-               description="Automatic uses the hand-made library for human-shaped characters when it is installed"),
+               description="Automatic uses the app's move library for human-shaped characters when it is installed"),
         _param("move_size", "select", "normal", options=["small", "normal", "big"], categories=["humanoid", "quadruped", "multileg", "winged", "serpent"]),
         _param("move_speed", "select", "normal", options=["slow", "normal", "fast"], categories=["humanoid", "quadruped", "multileg", "winged", "serpent"]),
         _param("hitboxes", "select", None, options=["detailed", "simple", "none"], categories=["humanoid", "quadruped", "multileg", "winged", "serpent"],

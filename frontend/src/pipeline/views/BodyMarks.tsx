@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
 import { api, libraryUrl, type BodyMarks as Marks, type Mark, type MarkView } from '../../api'
 import { Info } from '../../components/Info'
+import { oneSentence } from '../../help'
 import { PictureViewer, Zoomable, type PictureItem } from '../../components/PictureViewer'
 import { useEditHistory } from '../../editHistory'
 import { UndoRedoButtons } from '../../components/UndoRedo'
@@ -390,7 +391,7 @@ export function BodyMarksPanel({ versionId, locked }: { versionId: string; locke
         {locked ? '' : ' Drag a mark to move it.'}
       </div>
       {!data && !error && <div className="muted small">Finding the marks...</div>}
-      {(error || historyError) && <div className="body-marks-error small">The marks could not be shown: {error ?? historyError}</div>}
+      {(error || historyError) && <div className="body-marks-error small">{oneSentence(`The marks could not be shown: ${error ?? historyError}`)}</div>}
       {data && (
         <>
           <div className="body-marks-state small" aria-live="polite">

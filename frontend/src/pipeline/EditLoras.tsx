@@ -43,7 +43,7 @@ export function EditLoras({
         <Info term="term.edit_lora" />
       </div>
       {entries.length === 0 && (
-        <div className="muted small">You have no LoRAs for picture edits yet. Add one from the LoRA list on the Concept step, and choose Picture edits.</div>
+        <div className="muted small">You have no picture-edit add-ons (LoRAs) yet. Add one from the LoRA list on the Concept step, and choose Picture edits.</div>
       )}
       {entries.length > 0 && (
         <div className="small edit-lora-summary" role="status">

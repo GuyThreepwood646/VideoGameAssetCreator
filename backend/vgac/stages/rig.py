@@ -1231,7 +1231,7 @@ async def _retarget(sc: StageContext, anim_glb: Path, params: dict[str, Any], ch
     t0 = time.monotonic()
     sc.set_metrics(library_skipped=None, library_missing=None)
     try:
-        sc.progress(0.82, "moving the hand-made clips onto the skeleton")
+        sc.progress(0.82, "moving the move-library clips onto the skeleton (retargeting)")
         await sc.blender("retarget.py", args, log_name="retarget.log", timeout=sc.settings.blender_timeout_seconds)
     except Exception as e:  # noqa: BLE001
         rep = json.loads(report.read_text()) if report.is_file() else {}
@@ -2019,7 +2019,7 @@ async def judge(sc: StageContext) -> None:
             checks.append(quality.check("rig_restore", bool(m["rig_restore"].get("ok")), bool(m["rig_restore"].get("ok")), True))
         clips, missing = m.get("clips") or [], m.get("missing_clips") or []
         checks.append(quality.check("clips", bool(clips) and not missing, clips, clips + missing, vars={"missing": missing}))
-        # The hand-made library was meant to run (humanoid, automatic or library) but gave no clips.
+        # The move library was meant to run (humanoid, automatic or library) but gave no clips.
         if m.get("library_skipped") is None and "library_clips" in m and (m.get("library_clips") or m.get("retarget_error")):
             lib = m.get("library_clips") or []
             checks.append(quality.check("library_clips", bool(lib) and not m.get("retarget_error"), len(lib), ">0",

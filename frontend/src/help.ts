@@ -399,7 +399,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   padding: H('Seam space (UV padding)', 'Extra painted space around each piece of the texture.', 'Stops thin dark lines appearing at seams when the model is far away.', 'UV island padding and edge dilation, in texels'),
   bake: H('Surface painting (texture bake)', 'Copying the fine detail and colour from the raw model onto the clean game model.', 'If it is painted onto a different shape, the shading looks wavy or faceted.', 'Texture bake (normal, AO, colour) from source to target mesh'),
   rebake: H('Paint the surface again (rebake)', 'Paint the colours and surface detail onto the cleaned-up model again, even when its shape did not change.', 'If it is painted onto a different shape, the shading looks wavy or faceted.', 'Cycles selected-to-active bake from the mesh stage model'),
-  delight: H('Remove painted-on shadows (delight)', "Shadows and highlights from the original picture that ended up in the model's colours.", "They stay put when your game's sun moves, and crevices look twice as dark. Stylised looks keep them on purpose.", 'Baked lighting in albedo; AO and up-normal guided delight pass'),
+  delight: H('Remove painted-on shadows (delight)', "Takes out the shadows and highlights from the original picture that ended up painted into the model's colours. Games call this delight.", "They stay put when your game's sun moves, and crevices look twice as dark. Stylised looks keep them on purpose.", 'Baked lighting in albedo; AO and up-normal guided delight pass'),
   baked_light: H('Painted-on shadows (baked lighting)', "Shadows and highlights from the original picture that ended up in the model's colours.", "They stay put when your game's sun moves, and crevices look twice as dark. Stylised looks keep them on purpose.", 'Baked lighting in albedo; AO and up-normal guided delight pass'),
   face_detail: H('Match the face to the picture', 'Paint the face from the picture onto the model, so the eyes, brows and mouth are sharp and look like the picture.', 'The 3D builder makes up the face from one picture and blurs it; this puts the painted face back.', 'Front render, painted head sharpened by Qwen-Image-Edit, fitted to the render, projected through the UVs'),
   source_project: H('Paint the picture onto the model', 'Puts the picture\'s own colours and detail onto the side of the model the picture shows, and the drawn views onto the other sides, so the model looks like the picture. Adds about 2 minutes.', 'The 3D builder makes up its colours and they come out soft. Automatic does this for characters on smooth looks (not Retro 64, Low-poly or a fixed palette); On tries it on any model; Off keeps the builder\'s own colours, for example if the drawn views leave patches.', 'Picture fitted to a render by outline and optical flow, projected through the UVs with depth, edge and stretch limits'),
@@ -466,14 +466,14 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   // Creature moves (3.7)
   motion: H('How it moves', 'Whether the creature walks, flies or slithers.', 'Decides which animations it gets; change it for a bird that cannot fly or a fish shaped like a snake.', 'Procedural locomotion mode: legs, wings, wave'),
   moves: H('Moves (animation clips)', 'The animations made for this creature: standing still, walking, running, turning, attacking, getting hit and so on.', 'Leave out moves your game will never use to keep the file smaller.', 'Procedural clip set (procanim.py)'),
-  clips_source: H('Where the moves come from', 'Human-shaped characters can use a library of hand-made moves; every other skeleton gets moves built for it.', 'The hand-made moves look natural. The built-in ones work on any skeleton and need nothing installed.', 'CC0 Quaternius Universal Animation Library retargeted in Blender, else procedural clips'),
+  clips_source: H('Where the moves come from', 'Human-shaped characters can use the library of ready-made moves; every other skeleton gets moves built for it.', 'The library moves look natural. The built-in ones work on any skeleton and need nothing installed.', 'CC0 Quaternius Universal Animation Library retargeted in Blender, else procedural clips'),
   move_size: H('How big the moves are', 'How far the legs, body and wings swing in each move.', 'Small suits heavy or calm creatures; big suits lively ones.', 'Amplitude 0.7, 1.0 or 1.3'),
   move_speed: H('How fast', 'How quickly the moves play.', 'Match the creature\'s size and mood: big animals move slower.', 'Clip speed 0.8, 1.0 or 1.25'),
   // Add a move (rig step)
-  add_move: H('Add a move', 'Pick more hand-made moves for a human-shaped character, such as sitting, blocking with a shield or casting a spell, or take some off.', 'Only the moves are made again; the skeleton and hit boxes stay as they are. Once you hand it off to the game again (step 6), each added move is in the files and in Unity, ready to use.', 'Quaternius Universal Animation Library packs 1 and 2 (CC0), retargeted in Blender; rig params added_moves, removed_moves'),
-  stand_still: H('Stand still', 'The move the character plays when it is not doing anything. New human-shaped characters get the idle the app makes itself: upright, with the arms close to the body and a small breathing sway. You can pick the hand-made library idle instead, or another standing move from the library.', 'The library idle is a ready, relaxed stand that leans forward a little and closes the hands; the one the app makes stands straighter. A character made before this choice keeps the library idle until you change it here. Changing it only makes the moves again; the skeleton stays as it is, and the new Stand still is in the files the next time you hand it off to the game.', 'rig param idle_source: builtin, library or a library clip id; Unity importer Version 20 plays it as the idle of the Locomotion blend'),
+  add_move: H('Add a move', 'Pick more library moves for a human-shaped character, such as sitting, blocking with a shield or casting a spell, or take some off.', 'Only the moves are made again; the skeleton and hit boxes stay as they are. Once you hand it off to the game again (step 6), each added move is in the files and in Unity, ready to use.', 'Quaternius Universal Animation Library packs 1 and 2 (CC0), retargeted in Blender; rig params added_moves, removed_moves'),
+  stand_still: H('Stand still', 'The move the character plays when it is not doing anything. New human-shaped characters get the idle the app makes itself: upright, with the arms close to the body and a small breathing sway. You can pick the move library idle instead, or another standing move from the library.', 'The library idle is a ready, relaxed stand that leans forward a little and closes the hands; the one the app makes stands straighter. A character made before this choice keeps the library idle until you change it here. Changing it only makes the moves again; the skeleton stays as it is, and the new Stand still is in the files the next time you hand it off to the game.', 'rig param idle_source: builtin, library or a library clip id; Unity importer Version 20 plays it as the idle of the Locomotion blend'),
   my_moves: H('Your own animation file', 'An FBX, GLB or BVH file of a human-shaped skeleton that you bring, for example a Mixamo download without skin or a motion capture file.', 'The app recognises the bones by their names and copies the moves onto your character. You are responsible for being allowed to use the file in your game.', 'Bone names: Mixamo, Unreal, Rigify, Unity Humanoid and common BVH names; library/my_moves'),
-  moves_from: H('Where moves come from', 'Human-shaped characters get hand-made moves from a free library (CC0, fine in commercial games), copied onto their own skeleton, and you can add more from that library or bring your own animation file. Other creatures, such as animals, spiders, birds and snakes, get moves the app builds for their own skeleton.', 'Hand-made moves look natural; the built ones fit any skeleton and need nothing extra.', 'Animation retargeting'),
+  moves_from: H('Where moves come from', 'Human-shaped characters get library moves from a free library (CC0, fine in commercial games), copied onto their own skeleton, and you can add more from that library or bring your own animation file. Other creatures, such as animals, spiders, birds and snakes, get moves the app builds for their own skeleton.', 'Hand-made moves look natural; the built ones fit any skeleton and need nothing extra.', 'Animation retargeting'),
   // Preview in realistic light (PHOTOREAL-PLAN phase 1)
   preview_light: H('Preview light', 'The light the 3D preview is shown in: Studio, Outdoors, Overcast, Night, or Flat for plain lights that make the shape easy to check.', 'Metal and shiny parts only look right when there is something around them to reflect. Only the preview changes; your game uses its own lights.', 'Image-based lighting (IBL)'),
   beauty_render: H('Beauty picture (beauty render)', 'A finished picture of your asset in the same outdoor light as the preview, made when the files are packed.', 'Good for showing people what you made.', 'Beauty render'),
@@ -582,7 +582,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   ),
   addon_mine: H('Your own LoRA', 'A LoRA file you brought in yourself, listed under Yours for the models you said it was made for.', 'The app has not tested it. If the picture looks wrong, try Subtle or switch it off. Remove takes it off the list; the file stays in its LoRA folder.', 'LoRA (library/my_addons.json)'),
   addon_painter: H('Base model (which model it was made for)', 'Every LoRA is trained for one model family and only works with that one.', 'Its download page names it, usually as the base model (for example Z-Image Turbo). The app reads the file when it can and leaves this empty when it cannot tell.', 'Base model (ss_base_model_version)'),
-  edit_lora: H('Your LoRAs for picture edits', 'A LoRA you added that the app loads on top of its picture-edit model, for one picture-edit step: Refine, the side views, the pose redraw or the face close-up.', 'Off is the default. Each step has its own choice, and a LoRA can change the result in ways you do not expect: check the picture, and try Subtle first.', 'Your LoRA chained after the Lightning LoRA on the Qwen-Image-Edit graph; the version records which ones drew it'),
+  edit_lora: H('Your picture-edit add-ons (LoRAs)', 'A LoRA you added that the app loads on top of its picture-edit model, for one picture-edit step: Refine, the side views, the pose redraw or the face close-up.', 'Off is the default. Each step has its own choice, and a LoRA can change the result in ways you do not expect: check the picture, and try Subtle first.', 'Your LoRA chained after the Lightning LoRA on the Qwen-Image-Edit graph; the version records which ones drew it'),
   made_for: H('What was it made for?', 'Qwen-Image-Edit is the model this app uses for picture edits. Plain Qwen-Image is a close relative of it, and a LoRA made for it may only partly work there.', 'The app reads the file where it can. When the file does not say, choose: plain Qwen-Image, or not sure, gets a warning. Its download page usually names the model.', 'modelspec.architecture, ss_base_model_version and the file name; a sure Edit signal or plain signal decides'),
   addon_trigger: H('Trigger words (words the LoRA needs in the description)', 'Some LoRAs only work when certain words are in the description.', 'Its download page lists them. The app adds them to your description for you whenever the LoRA is on.', 'Trigger words (data/addons.yaml)'),
   addon: H('Style add-on (LoRA)', 'One small trained file that loads on top of the image model.', 'Switch it off to drop its effect, or pick how strongly it pushes the picture.', 'data/addons.yaml'),
@@ -1396,7 +1396,7 @@ const CLIP_PLAIN: Record<string, string> = {
 // The moves a creature can make, by how it moves (the category yaml's clips, with turn as one move).
 export const MOVES_BY_MOTION: Record<string, string[]> = {
   legs: ['idle', 'walk', 'run', 'turn', 'attack', 'hit', 'death'],
-  // Human-shaped characters also get the hand-made library's extra moves.
+  // Human-shaped characters also get the move library's extra moves.
   human: ['idle', 'walk', 'run', 'turn', 'attack', 'hit', 'death', 'jump', 'crouch', 'roll', 'interact'],
   wings: ['idle', 'walk', 'flap', 'glide', 'takeoff', 'land', 'attack', 'hit', 'death'],
   wave: ['idle', 'slither', 'turn', 'attack', 'hit', 'death'],
@@ -1456,14 +1456,14 @@ const CLIP_LABELS: Record<string, string> = {
   interact: 'Use or pick up',
 }
 
-// "Moves: 15 hand-made (free library) and 2 built in." from the rig version's metrics; '' when it does not say.
+// "Moves: 15 from the move library (free) and 2 built in." from the rig version's metrics; '' when it does not say.
 export function movesSourceLine(metrics: Record<string, unknown>): string {
   // Moves from the person's own files ("Add a move", metrics.moves source "mine") are counted on their own.
   const mine = Array.isArray(metrics.moves) ? metrics.moves.filter((m) => (m as { source?: string; made?: boolean })?.source === 'mine' && (m as { made?: boolean }).made !== false).length : 0
   const lib = (Array.isArray(metrics.library_clips) ? metrics.library_clips.length : 0) - mine
   const proc = Array.isArray(metrics.procedural_clips) ? metrics.procedural_clips.length : 0
   const yours = mine ? `, ${mine} from your own file${mine > 1 ? 's' : ''}` : ''
-  if (metrics.clips_source === 'library' && lib + mine > 0) return `Where they come from: ${lib} hand-made (a free library, fine for commercial games)${yours}${proc ? ` and ${proc} built in` : ''}.`
+  if (metrics.clips_source === 'library' && lib + mine > 0) return `Where they come from: ${lib} from the move library (free, fine for commercial games)${yours}${proc ? ` and ${proc} built in` : ''}.`
   if (metrics.clips_source === 'procedural') return 'Where they come from: built in, made for this skeleton.'
   return ''
 }
@@ -1736,6 +1736,18 @@ export function examplePrompts(category: string): [string, string] {
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
+
+// One sentence for a person: a wrapper such as "The marks could not be found: ..." in front of a plain message is
+// dropped, however many were stacked, so the message that says what to do comes first (WP-96).
+export function oneSentence(message: string): string {
+  let out = message.trim()
+  for (let i = 0; i < 5; i++) {
+    const m = /^[A-Z][^:]{0,70} could not be [a-z ]+:\s+([A-Z][\s\S]*)$/.exec(out)
+    if (!m) break
+    out = m[1]
+  }
+  return out
+}
 
 export function humanError(raw: string | null | undefined): string {
   const r = (raw ?? '').toLowerCase()

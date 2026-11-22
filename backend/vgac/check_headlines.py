@@ -62,7 +62,7 @@ HEADLINES: dict[str, str] = {
     "weights_normalised": "Some bone weights do not add up, so skin may stretch oddly",
     "fingers": "Some hands have no usable finger bones",
     "clips_loop": "A move that should loop stops after one cycle",
-    "library_clips": "The hand-made moves could not be used, so built-in moves are used",
+    "library_clips": "The library moves could not be used, so built-in moves are used",
     "rig_restore": "The rigged model lost its textures or its size",
     "moving_parts": "Parts meant to move are not rigged yet",
     "unity_humanoid_avatar": "Unity could not read the skeleton as a person",

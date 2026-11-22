@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { AssetSummary, Category } from '../src/api'
-import { plainJargon, splitTechnical, stageTech, tryAgainLabel } from '../src/help'
+import { oneSentence, plainJargon, splitTechnical, stageTech, tryAgainLabel } from '../src/help'
 import { groupAdvanced } from '../src/pipeline/FineTune'
 import { groupCategories, mostUsedCategory } from '../src/pages/ProjectPage'
 
@@ -45,4 +45,10 @@ test('the industry term is split from the field name', () => {
 test('job messages keep their industry terms in brackets', () => {
   assert.equal(plainJargon('uv unwrap done'), 'laying out the textures (UV unwrap) done')
   assert.equal(plainJargon('texture voxel'), 'painting the textures (texture voxel)')
+})
+
+test('stacked error wrappers are dropped so one sentence shows', () => {
+  const stacked = "The marks could not be shown: The marks could not be found: Move the library folder to a shorter path, under 90 characters: the path is too long for Windows."
+  assert.equal(oneSentence(stacked), 'Move the library folder to a shorter path, under 90 characters: the path is too long for Windows.')
+  assert.equal(oneSentence('Plain message.'), 'Plain message.')
 })

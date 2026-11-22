@@ -434,7 +434,7 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
   return (
     <section className="guide guide-finished finish-card" aria-live="polite">
       <div className="guide-body">
-        <div className="guide-kicker">{byAutopilot ? 'Autopilot finished' : 'Finished'}</div>
+        <div className="guide-kicker">{byAutopilot ? `Autopilot finished all ${STAGES.length} steps` : 'Finished'}</div>
         <div className="guide-happened finish-title">Your asset is ready</div>
         <div className="finish-verdict" role="status">{verdictLine(attention)}</div>
         <div className="guide-now muted">
