@@ -5,7 +5,7 @@ import { Info } from '../components/Info'
 import { JobLog } from '../components/JobLog'
 import { Disclosure, ErrorText, Field, SubmitTextarea, type FixRequest, PanelClose } from '../components/ui'
 import { useEvents } from '../events'
-import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, MODEL_IMPORT_SECONDS, plainJargon, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
+import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, MODEL_IMPORT_SECONDS, plainJargon, platformPlain, stageEstimate, stageGerund, stagePlain, stageTech, suggestFallback, VARIANT_EXAMPLES } from '../help'
 import { autopilotStage, isAutopilotActive, type AutopilotActions } from '../pipeline/AutopilotPanel'
 import { ItemsPanel } from '../pipeline/ItemsPanel'
 import { HairRailLine, HairRebuildNote, HairSettingPanel, useHairPanel } from '../pipeline/HairSetting'
@@ -75,7 +75,7 @@ export default function AssetPage() {
       const byText = (txt: string) => [...document.querySelectorAll<HTMLButtonElement>('.happy-answers button, button.try-again')].find((b) => b.innerText.trim().toLowerCase().startsWith(txt))
       const k = e.key.toLowerCase()
       if (k === 'k') byText('yes, keep')?.click()
-      else if (k === 'r') byText('try again')?.click()
+      else if (k === 'r') document.querySelector<HTMLButtonElement>('[data-try-again]')?.click()
       else if (k === 'c') byText('change something')?.click()
       else if (k === 'arrowleft' || k === 'arrowright') {
         const list = [...document.querySelectorAll<HTMLButtonElement>('.candidate')]
@@ -452,7 +452,10 @@ export default function AssetPage() {
                 <button type="button" className="rail-stage-btn" onClick={() => navigate(`/assets/${asset.id}/${s}`)} title={stagePlain(s, help)} aria-current={s === stage ? 'step' : undefined}>
                   <span className={'sdot sdot-' + st} />
                   <span className="rail-index">{i + 1}</span>
-                  <span className="rail-label">{stagePlain(s, help)}</span>
+                  <span className="rail-label">
+                    {stagePlain(s, help)}
+                    <span className="tech-term rail-tech">{stageTech(s, help)}</span>
+                  </span>
                   <span className={'rail-meta' + (movingPartsOnly ? ' rail-meta-note' : '')}>{meta}</span>
                 </button>
                 <Info term={'stage.' + s} />

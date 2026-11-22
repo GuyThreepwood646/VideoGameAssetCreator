@@ -26,7 +26,7 @@ function cardState(inst: HealthInstance): string {
 
 // The host lane (Blender and Unity) is not a graphics card: it has no card name, so name it as the computer.
 function instanceName(name: string, inst: HealthInstance): string {
-  return inst.gpu || (name === 'host' ? 'This computer (Blender and Unity)' : `Card ${name}`)
+  return inst.gpu || (name === 'host' ? 'This computer (Blender and Unity)' : `Image card ${name.toUpperCase()}`)
 }
 
 // What an instance is, under its name: the card, its job, its address. The host lane has no card or address.
@@ -154,7 +154,7 @@ export function HealthBadge() {
           return (
             <div key={name} className="health-inst" title={`${instanceMeta(inst)}${inst.error ? ' / ' + inst.error : ''}`}>
               <span className={'dot ' + (inst.enabled === false || !inst.reachable ? 'off' : 'ok')} />
-              {instanceName(name, inst)}: {state}
+              {instanceName(name, inst)}: {state.charAt(0).toLowerCase() + state.slice(1)}
               {free ? <span className="muted"> ({free})</span> : null}
             </div>
           )

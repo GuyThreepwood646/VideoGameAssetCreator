@@ -125,7 +125,7 @@ def handoff_problem(mesh_params: dict[str, Any] | None, mesh_triangles: Any, pre
             return None
     except (TypeError, ValueError):
         pass
-    return (f"The 3D model has more triangles than your platform's {limit:,} on purpose, so the clean-up step can give the head more of them. "
+    return (f"The 3D model has more triangles than your platform's {limit:,} on purpose, so the clean-up step can give the head a bigger share of the triangles. "
             "Run Clean up for the game first; it brings the model back to the budget.")
 
 

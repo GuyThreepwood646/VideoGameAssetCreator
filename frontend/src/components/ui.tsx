@@ -1,7 +1,7 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { ApiError, type Check, type CheckTier, type JobStatus, type VersionStatus } from '../api'
-import { checkHelpKey, checkPassed, checkSentence, metricPlain, type CheckContext, type FixAction } from '../help'
+import { checkHelpKey, checkPassed, checkSentence, metricPlain, oneSentence, type CheckContext, type FixAction } from '../help'
 import { CheckLine, TierHeading } from './CheckLine'
 import { Info } from './Info'
 import { TrafficDot, type TrafficState } from './TrafficDot'
@@ -268,11 +268,23 @@ export function Disclosure({
   )
 }
 
+// "Plain label (industry term)" shown as the plain label with the bracket muted and small (UX-25). The words stay the same.
+export function TermText({ text }: { text: ReactNode }) {
+  if (typeof text !== 'string') return <>{text}</>
+  const m = /^(.*?)\s*(\([^()]+\))$/.exec(text)
+  if (!m || !m[1]) return <>{text}</>
+  return (
+    <>
+      {m[1]} <span className="tech-term bracket-term">{m[2]}</span>
+    </>
+  )
+}
+
 export function Field({ label, hint, children, inline = false, term }: { label: ReactNode; hint?: ReactNode; children: ReactNode; inline?: boolean; term?: string }) {
   return (
     <label className={'field' + (inline ? ' field-inline' : '')}>
       <span className="field-label">
-        {label}
+        <TermText text={label} />
         {term && <Info term={term} />}
       </span>
       {children}
@@ -301,7 +313,7 @@ export function ErrorText({ error }: { error: unknown }) {
   } else if (status !== null && status >= 500) {
     plain = 'Something went wrong inside VGAC. Trying again often fixes it.'
   }
-  if (!plain) return <div className="error">{raw}</div>
+  if (!plain) return <div className="error">{oneSentence(raw)}</div>
   return (
     <div className="error error-block" role="alert">
       <div>{plain} {action}</div>
@@ -406,10 +418,11 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): { data: T | 
 export function timeAgo(iso: string | null | undefined): string {
   if (!iso) return ''
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
-  if (s < 60) return `${Math.round(s)}s ago`
-  if (s < 3600) return `${Math.round(s / 60)}m ago`
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`
-  return `${Math.round(s / 86400)}d ago`
+  const ago = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'} ago`
+  if (s < 60) return ago(Math.round(s), 'second')
+  if (s < 3600) return ago(Math.round(s / 60), 'minute')
+  if (s < 86400) return ago(Math.round(s / 3600), 'hour')
+  return ago(Math.round(s / 86400), 'day')
 }
 
 export function duration(a: string | null | undefined, b: string | null | undefined): string {

@@ -222,7 +222,7 @@ export function ShapeTab({ version, onChanged }: { version: Version; onChanged?:
           <p key={m}>{m}</p>
         ))}
         <p className="muted">
-          The ring shows where the cut starts. The engine follows the weight line inside the fused strip, so the real cut sits near the ring, not exactly on it.
+          The ring shows where the cut starts. The app follows the line where the arm ends and the body begins inside the fused strip, so the real cut sits near the ring, not exactly on it.
         </p>
       </div>
       <div className="row">
@@ -232,8 +232,8 @@ export function ShapeTab({ version, onChanged }: { version: Version; onChanged?:
       </div>
       {note && <p className="muted">{note}</p>}
       <p className="muted">
-        After this, the next rig run keeps this rig: its skeleton, and its weights with the ones near the cut made again. Try again on
-        the rig step makes the whole rig from scratch instead.
+        After this, the next time the skeleton is made it keeps this one, and only redoes how the surface follows the bones (skin weights)
+        near the cut. "Make it move again" on the rig step makes the whole skeleton from scratch instead.
       </p>
     </div>
   )

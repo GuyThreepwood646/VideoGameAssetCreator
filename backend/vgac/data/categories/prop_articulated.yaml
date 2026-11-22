@@ -1,5 +1,5 @@
 id: prop_articulated
-label: Articulated prop
+label: Object with moving parts
 rig_engine: none
 symmetric: false
 size_m: 0.8

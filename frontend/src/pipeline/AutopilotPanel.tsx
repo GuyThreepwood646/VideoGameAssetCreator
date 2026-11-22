@@ -173,7 +173,7 @@ function RedrawPair({ asset, version }: { asset: Asset; version: Version }) {
   const redraw = version.files.pose_ready_picture
   if (!redraw) return null
   const original = conceptOf(asset, version)?.files.image
-  const items: PictureItem[] = [...(original ? [{ src: libraryUrl(original)!, label: 'Your step 1 picture' }] : []), { src: libraryUrl(redraw)!, label: 'Redrawn for 3D' }]
+  const items: PictureItem[] = [...(original ? [{ src: libraryUrl(original)!, label: 'Your step 1 picture' }] : []), { src: libraryUrl(redraw)!, label: 'Drawn again for 3D' }]
   return (
     <div className="redraw-pair" aria-label="Your picture and its redraw side by side">
       {items.map((it, i) => (
@@ -358,7 +358,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
                 ? `"${firstFix.label} and continue" fixes ${firstFixCheck?.message ? `"${firstFixCheck.message}"` : 'the first problem listed'} and carries on. You can also keep this result as it is.`
                 : 'No automatic fix is known for this. Change something below, keep a result, then continue; or continue anyway.'
               : versionFailed
-                ? 'Try again runs this step once more and carries on.'
+                ? 'Run this step again makes it once more and carries on.'
                 : 'Continue when you are ready; everything made so far is kept.'
             : 'Start again to continue from where it stopped.'}{' '}
           {elsewhere}
@@ -377,7 +377,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
         )}
         {paused && (versionFailed || !version) && (
           <button type="button" className="primary" disabled={busy} onClick={() => actions.start()}>
-            Try again and continue
+            Run this step again and continue
           </button>
         )}
         {!paused && (
@@ -434,7 +434,7 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
   return (
     <section className="guide guide-finished finish-card" aria-live="polite">
       <div className="guide-body">
-        <div className="guide-kicker">{byAutopilot ? 'Autopilot finished' : 'Finished'}</div>
+        <div className="guide-kicker">{byAutopilot ? `Autopilot finished all ${STAGES.length} steps` : 'Finished'}</div>
         <div className="guide-happened finish-title">Your asset is ready</div>
         <div className="finish-verdict" role="status">{verdictLine(attention)}</div>
         <div className="guide-now muted">

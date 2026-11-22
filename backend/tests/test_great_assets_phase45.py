@@ -254,18 +254,18 @@ def test_surface_checks_sentences_and_fixes():
     by = {c["name"]: c for c in prep_stage.surface_checks(_metrics())}
     assert set(by) == {"bake_matches", "texture_padding", "atlas_used", "baked_light", "albedo_range", "metal_mixed"}
     assert all(c["passed"] for c in by.values())
-    assert by["texture_padding"]["help"] == "Texture pieces have 8 px of space around them, enough for distant views."
-    assert by["atlas_used"]["help"] == "The model uses 57% of its texture."
+    assert by["texture_padding"]["help"] == "Texture pieces (UV islands) have 8 px of space around them (UV padding), enough for distant views."
+    assert by["atlas_used"]["help"] == "The model uses 57% of its texture (UV space usage)."
     assert by["baked_light"]["help"] == "No painted-on shadows found in the colours."
 
     bad = {c["name"]: c for c in prep_stage.surface_checks(_metrics(
         bake_match=0.45, texture_padding_px=1, atlas_used=0.28, light_score=0.3, pbr={"albedo_out": 0.18, "albedo_black": 0.04, "albedo_white": 0.02, "metal_mixed": 0.61}),
         {"symmetric": True})}
     assert not any(c["passed"] for c in bad.values())
-    assert bad["bake_matches"]["fix"] == {"stage": "prep", "params": {"rebake": True}, "label": "Repaint the surface"}
+    assert bad["bake_matches"]["fix"] == {"stage": "prep", "params": {"rebake": True}, "label": "Paint the surface again"}
     assert bad["texture_padding"]["fix"] == {"stage": "mesh", "params": {"padding": 8}, "label": "Add more space"}
-    assert bad["texture_padding"]["help"] == "Texture pieces have only 1 px of space, so thin dark seams may show at a distance."
-    assert bad["atlas_used"]["fix"]["params"] == {"symmetric": False} and bad["atlas_used"]["fix"]["label"] == "Repaint the surface"
+    assert bad["texture_padding"]["help"] == "Texture pieces (UV islands) have only 1 px of space (UV padding), so thin dark seams may show at a distance."
+    assert bad["atlas_used"]["fix"]["params"] == {"symmetric": False} and bad["atlas_used"]["fix"]["label"] == "Paint the surface again"
     assert bad["baked_light"]["fix"] == {"stage": "prep", "params": {"delight": "remove"}, "label": "Remove painted-on shadows"}
     assert bad["albedo_range"]["help"].startswith("6% of the colours are pure black or pure white")
     assert bad["metal_mixed"]["fix"] == {"stage": "prep", "params": {"pbr_fix": True}, "label": "Make metal clearly metal"}

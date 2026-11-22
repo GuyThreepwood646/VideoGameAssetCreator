@@ -484,7 +484,7 @@ _COST = {
 _WHY_WORDS = {"short_bone": "the skeleton's bones there are too short (the skeleton is broken there)",
               "bone_outside": "the skeleton's bones there lie outside the model"}
 FIX = {"stage": "turnaround", "params": {"pose_ready": True}}
-FIX_LABEL = "Make the side views again with Pose for 3D first"
+FIX_LABEL = "Open the pose, then redraw the side views (Pose for 3D first)"
 
 
 def _join_words(words: list[str]) -> str:

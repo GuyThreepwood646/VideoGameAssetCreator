@@ -291,7 +291,7 @@ def test_creatures_hear_what_they_get_instead():
     assert moves.creature_moves("prop_rigid") == []
     asset = SimpleNamespace(category="quadruped")
     can, reason = moves._can_add(asset)
-    assert not can and reason.startswith("The hand-made moves only fit human-shaped characters")
+    assert not can and reason.startswith("The library moves only fit human-shaped characters")
     assert moves._can_add(SimpleNamespace(category="prop_rigid")) == (False, "This model has no skeleton, so it does not move.")
     assert moves._can_add(SimpleNamespace(category="humanoid")) == (True, "")
 

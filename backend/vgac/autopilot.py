@@ -111,7 +111,7 @@ BODY_MARKS_STOP_REASON = (
 POSE_STOP_ASK_TAIL = (
     " Autopilot never redraws the pose on its own, because a redraw can change your character.")
 POSE_STOP_OFFER = (
-    " \"Pose it for 3D, then draw the sides\" has step 2 redraw the pose (it checks the redraw and keeps your own picture if "
+    " \"Open the pose, then redraw the side views (Pose for 3D first)\" has step 2 redraw the pose (it checks the redraw and keeps your own picture if "
     "the character changed), or \"Continue anyway\" builds from the picture as it is. Whichever you pick is remembered, so "
     "it is not asked again for this picture.")
 POSE_STOP_NO_OFFER = (
@@ -355,7 +355,7 @@ async def _run(aid: str) -> None:
                 fix = state.get("pending_fix")
                 if fix:
                     fstage = fix["stage"]
-                    # A fix at a later step ("Pose it for 3D, then draw the sides" from a paused step 1) builds on the
+                    # A fix at a later step ("Open the pose, then redraw the side views (Pose for 3D first)" from a paused step 1) builds on the
                     # version the autopilot paused on: choosing it is keeping that version.
                     pv = db.get(Version, state["version_id"]) if state.get("version_id") else None
                     if (pv is not None and pv.asset_id == aid and pv.status == "done" and pv.stage in STAGE_ORDER

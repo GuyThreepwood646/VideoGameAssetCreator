@@ -1,5 +1,5 @@
 id: multileg
-label: Multi-leg creature
+label: Many-legged creature
 rig_engine: skintoken
 silhouette_min: 0.5
 symmetric: true

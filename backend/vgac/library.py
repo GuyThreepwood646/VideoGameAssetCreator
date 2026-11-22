@@ -74,8 +74,8 @@ def library_path_problem(folder: Any) -> str | None:
 
 
 def library_path_message() -> str:
-    return (f"The library folder's path is too long for Windows: keep it under {max_library_folder_length() + 1} characters, "
-            "for example F:\\Games\\VGAC library.")
+    return (f"Move the library folder to a shorter path, under {max_library_folder_length() + 1} characters, for example F:\\Games\\VGAC library: "
+            "the path is too long for Windows to write the files inside it.")
 
 
 def check_version_room(d: Path) -> None:

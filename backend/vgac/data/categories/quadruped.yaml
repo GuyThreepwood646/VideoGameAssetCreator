@@ -1,5 +1,5 @@
 id: quadruped
-label: Quadruped
+label: Four-legged animal
 rig_engine: skintoken
 silhouette_min: 0.5
 symmetric: true

@@ -36,6 +36,7 @@ from PIL import Image, ImageDraw
 
 from .. import declared_parts, guidance, headtris, imaging, library, limbjoins, quality, steptime
 from ..comfy import ComfyClient, ComfyError
+from ..moves import move_label
 from ..graphs.skintoken import TEMPLATES, rig_graph
 from ..imaging import contact_sheet
 from .base import StageContext
@@ -644,7 +645,7 @@ async def _inspect(sc: StageContext, rig_glb: Path, bend_test: bool) -> None:
             sc.register("bones", bones_png)
         strip_paths = [info_dir / f for f in [bones_png.name if bones_png else "rest.png"] + [fn for k, fn in (info.get("renders") or {}).items() if k != "rest"] if (info_dir / f).is_file()]
         if strip_paths:
-            sc.register("bend_strip", contact_sheet(strip_paths, sc.dir / "bend_strip.png", cell=384, columns=len(strip_paths), labels=[p.stem for p in strip_paths]))
+            sc.register("bend_strip", contact_sheet(strip_paths, sc.dir / "bend_strip.png", cell=384, columns=len(strip_paths), labels=[_bend_label(p.stem) for p in strip_paths]))
         sc.set_metrics(bones=info.get("bones"), bone_names=info.get("bone_names"), roots=info.get("roots"),
                        weight_coverage=round(float(info.get("weight_coverage", 0.0)), 4), max_influences=info.get("max_influences"),
                        unnormalised_verts=info.get("unnormalised_verts"), bent=info.get("bent"))
@@ -1006,6 +1007,13 @@ async def _after_moves(sc: StageContext, anim_glb: Path, params: dict[str, Any])
     await _strip(sc, anim_glb)
 
 
+def _bend_label(stem: str) -> str:
+    """The words under a picture of the bend strip: the skeleton, then each bend in degrees."""
+    if stem.startswith("bend_") and stem[5:].isdigit():
+        return f"Bent {stem[5:]} degrees"
+    return "Skeleton" if stem in ("bones", "rest") else stem.replace("_", " ").capitalize()
+
+
 async def _strip(sc: StageContext, anim_glb: Path) -> None:
     """The rendered strip of the final clips (anim_strip)."""
     if not (sc.version.metrics.get("clips") or []):
@@ -1018,7 +1026,7 @@ async def _strip(sc: StageContext, anim_glb: Path) -> None:
     for clip, files in (frames.get("clips") or {}).items():
         for i, f in enumerate(files):
             paths.append(frames_dir / f)
-            labels.append(f"{clip} {i}")
+            labels.append(f"{move_label(clip)}, frame {i + 1}")
     if paths:
         strip = contact_sheet(paths, sc.dir / "anim_strip.png", cell=256, columns=frames.get("frames", 6), labels=labels)
         sc.register("anim_strip", strip)
@@ -1223,7 +1231,7 @@ async def _retarget(sc: StageContext, anim_glb: Path, params: dict[str, Any], ch
     t0 = time.monotonic()
     sc.set_metrics(library_skipped=None, library_missing=None)
     try:
-        sc.progress(0.82, "moving the hand-made clips onto the skeleton")
+        sc.progress(0.82, "moving the move-library clips onto the skeleton (retargeting)")
         await sc.blender("retarget.py", args, log_name="retarget.log", timeout=sc.settings.blender_timeout_seconds)
     except Exception as e:  # noqa: BLE001
         rep = json.loads(report.read_text()) if report.is_file() else {}
@@ -1958,7 +1966,7 @@ def fingers_check(bone_names: list[str] | None, segments: list[dict[str, Any]] |
         todo = ("Making the 3D model again with \"Open the hands first (hands only)\" turned on, or making the side views again with \"Pose for 3D first\" "
                 "turned on, gives the hands separate fingers; then rig again.")
         fix = {"stage": "mesh", "params": {"hand_edit": True}}
-        label = "Make the 3D model again with open hands"
+        label = "Build the 3D model again with open hands"
     else:
         cause = ("The skeleton step did not place every finger bone, although the model's hand may have enough shape for it. "
                  "Where the fingers are pressed together or small in the model, the skeleton step leaves them out. ")
@@ -2014,7 +2022,7 @@ async def judge(sc: StageContext) -> None:
                 checks.append(uvc)
         clips, missing = m.get("clips") or [], m.get("missing_clips") or []
         checks.append(quality.check("clips", bool(clips) and not missing, clips, clips + missing, vars={"missing": missing}))
-        # The hand-made library was meant to run (humanoid, automatic or library) but gave no clips.
+        # The move library was meant to run (humanoid, automatic or library) but gave no clips.
         if m.get("library_skipped") is None and "library_clips" in m and (m.get("library_clips") or m.get("retarget_error")):
             lib = m.get("library_clips") or []
             checks.append(quality.check("library_clips", bool(lib) and not m.get("retarget_error"), len(lib), ">0",

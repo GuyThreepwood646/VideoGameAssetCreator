@@ -334,6 +334,8 @@ export type Category = {
   label: string
   // The app's plain word for this kind of asset ("character", "prop"; backend reference.CATEGORY_NOUNS).
   noun?: string
+  // The heading it sits under in the picker (backend reference.CATEGORY_GROUPS).
+  group?: string
   rig_engine: string
   symmetric: boolean
   pose_block: string
@@ -405,6 +407,7 @@ export type StageInfo = {
   adjust_schema: AdjustParam[]
   plain_name?: string
   plain_verb?: string
+  technical_short?: string
   help?: HelpText
   estimate_seconds?: number
   // Set when the time with both cards and with one differ by 30 percent: "about 5 minutes with both cards, about 17 minutes with one".
@@ -1303,7 +1306,7 @@ export function isMock(): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Add a move (rig step): the hand-made move library, a character's moves, your own animation files
+// Add a move (rig step): the app's move library, a character's moves, your own animation files
 // ---------------------------------------------------------------------------
 
 export type MovePack = { id: string; label: string; licence: string; count: number }
@@ -1336,7 +1339,7 @@ export type CharacterMoves = {
   added: { clip: string; name: string; loop: boolean }[]
   removed: string[]
   others: { asset_id: string; name: string; added: number; removed: number }[]
-  // Where Stand still comes from: 'builtin' (the app's own), 'library' (the hand-made library's) or a library clip id.
+  // Where Stand still comes from: 'builtin' (the app's own), 'library' (the move library's) or a library clip id.
   idle_source: string
 }
 export type MyMoveClip = { id: string; action: string; label: string; loop: boolean; seconds: number; preview: string | null; frames: number; still: number }

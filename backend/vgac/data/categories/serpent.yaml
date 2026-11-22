@@ -1,5 +1,5 @@
 id: serpent
-label: Serpent or fish
+label: Snake or fish
 rig_engine: skintoken
 silhouette_min: 0.45
 symmetric: true

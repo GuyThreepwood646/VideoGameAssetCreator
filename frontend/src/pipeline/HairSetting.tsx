@@ -56,10 +56,10 @@ export function hairLibraryOffer(prompt: string, style: string, category: string
 
 // The New asset form's labels for the two choices (plain words; the asset page keeps HAIR_OPTION).
 export const FORM_HAIR_OPTION: Record<HairSource, string> = {
-  model: 'Built into the 3D model',
+  model: 'Built with the 3D model',
   library: 'Bald model plus a hairstyle from the library',
 }
-const KEPT_IN_MODEL = ' The hair stays built into the 3D model.'
+const KEPT_IN_MODEL = ' The hair stays built with the 3D model.'
 
 // The library check for the form (hairApi.libraryOn). Idle until wanted; a result for another platform is ignored.
 export type HairLibraryCheck = { state: 'checking' } | { state: 'failed' } | { state: 'ready'; installed: boolean; styles: number }
@@ -213,7 +213,7 @@ export function HairRailLine({ panel, open, onToggle }: { panel: HairPanel; open
       {pickName ? `, "${pickName}"` : ''}
       <Info term="term.hair_library" />{' '}
       <button type="button" className="link small" aria-pressed={open} onClick={onToggle} title={`Change ${HAIR_SETTING}`}>
-        Change
+        Change hair
       </button>
     </div>
   )

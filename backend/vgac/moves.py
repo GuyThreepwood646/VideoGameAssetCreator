@@ -1,6 +1,6 @@
 """Moves: what a human-shaped character can do, and "Add a move".
 
-Three sources of hand-made moves, all copied onto the character's own skeleton by blender/retarget.py:
+Three sources of library moves, all copied onto the character's own skeleton by blender/retarget.py:
   - pack 1 and pack 2 of the CC0 Quaternius Universal Animation Library (settings.clips_libraries ual1 and ual2;
     data/animations/*/License.txt says CC0 1.0, free for commercial games);
   - the person's own animation files ("Use my own animation file"): FBX, GLB or BVH with a human-shaped skeleton,
@@ -88,15 +88,15 @@ CLIP_TABLE: dict[str, dict[str, tuple[str, str]]] = {
         "Sprint_Loop": ("Sprint", "walking"), "Crouch_Fwd_Loop": ("Crouch walk", "walking"),
         "Jump_Start": ("Jump (take off)", "jumping"), "Jump_Loop": ("Jump (in the air)", "jumping"),
         "Jump_Land": ("Jump (land)", "jumping"), "Roll": ("Roll", "jumping"),
-        "Punch_Jab": ("Punch (jab)", "fighting"), "Punch_Cross": ("Punch (cross)", "fighting"),
-        "Sword_Attack": ("Sword attack", "sword"),
+        "Punch_Jab": ("Punch", "fighting"), "Punch_Cross": ("Punch (cross)", "fighting"),
+        "Sword_Attack": ("Attack", "sword"),
         "Pistol_Idle_Loop": ("Stand with a pistol", "pistol"), "Pistol_Aim_Neutral": ("Aim a pistol ahead", "pistol"),
         "Pistol_Aim_Up": ("Aim a pistol up", "pistol"), "Pistol_Aim_Down": ("Aim a pistol down", "pistol"),
         "Pistol_Shoot": ("Shoot a pistol", "pistol"), "Pistol_Reload": ("Reload a pistol", "pistol"),
         "Spell_Simple_Enter": ("Raise hands for a spell", "magic"), "Spell_Simple_Idle_Loop": ("Hold a spell ready", "magic"),
         "Spell_Simple_Shoot": ("Cast a spell", "magic"), "Spell_Simple_Exit": ("Lower hands after a spell", "magic"),
-        "Hit_Chest": ("Get hit in the chest", "hit"), "Hit_Head": ("Get hit on the head", "hit"), "Death01": ("Die", "hit"),
-        "Interact": ("Use something", "using"), "PickUp_Table": ("Pick up from a table", "using"),
+        "Hit_Chest": ("Get hit", "hit"), "Hit_Head": ("Get hit on the head", "hit"), "Death01": ("Die", "hit"),
+        "Interact": ("Use or pick up", "using"), "PickUp_Table": ("Pick up from a table", "using"),
         "Push_Loop": ("Push something heavy", "using"), "Fixing_Kneeling": ("Kneel and fix something", "work"),
         "Sitting_Enter": ("Sit down on a chair", "sitting"), "Sitting_Idle_Loop": ("Sit on a chair", "sitting"),
         "Sitting_Talking_Loop": ("Sit and talk", "sitting"), "Sitting_Exit": ("Stand up from a chair", "sitting"),
@@ -139,6 +139,21 @@ LOOP_EXTRA = {"Sword_Idle", "Pistol_Aim_Neutral", "Pistol_Aim_Up", "Pistol_Aim_D
 # Names for the built-in (procedural) moves a character keeps next to the library ones.
 BUILT_IN_LABELS = {"turn_left": "Turn left", "turn_right": "Turn right", "idle": "Stand still", "walk": "Walk", "run": "Run",
                    "attack": "Attack", "hit": "Get hit", "death": "Die"}
+
+
+
+def move_label(name: str) -> str:
+    """The one plain name of a move, for every page and picture: a built-in move by its action name ("idle"), a library
+    move by its clip name ("Hit_Chest"). A name in neither table reads as words."""
+    low = name.lower()
+    if low in BUILT_IN_LABELS:
+        return BUILT_IN_LABELS[low]
+    for table in CLIP_TABLE.values():
+        for clip, (label, _group) in table.items():
+            if clip.lower() == low:
+                return label
+    return name.replace("_", " ").capitalize()
+
 
 _lock = threading.Lock()
 _catalog_cache: dict[str, Any] = {}
@@ -612,6 +627,16 @@ def find_clip(clip_id: str, settings: Settings | None = None) -> dict[str, Any] 
 # --- A character's moves -----------------------------------------------------------------------------------------------
 
 
+def relabel_moves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The stored moves with each library move under the table's name, so one name shows however old the version is.
+    A move from the person's own file keeps the name they gave it."""
+    out = []
+    for m in rows:
+        new = label_for(str(m.get("from") or str(m.get("clip") or "").rpartition(":")[2])) if isinstance(m, dict) and m.get("source") == "library" else None
+        out.append({**m, "label": new} if new else m)
+    return out
+
+
 def label_for(action: str) -> str | None:
     for table in CLIP_TABLE.values():
         if action in table:
@@ -790,7 +815,8 @@ def moves_metrics(sidecar: dict[str, Any] | None, rows: list[dict[str, Any]], re
         if c.get("source") == "library":
             src = "mine" if str(lib or "").startswith(MINE_PREFIX) else "library"
             clip = f"{lib}:{c.get('from')}" if lib else (r or {}).get("clip")
-            label = c.get("label") or (r or {}).get("label") or label_for(str(c.get("from") or "")) or n.replace("_", " ").capitalize()
+            # the app's table names its own library moves, so one name shows however old the version is
+            label = (c.get("label") if src == "mine" else label_for(str(c.get("from") or "")) or c.get("label")) or (r or {}).get("label") or n.replace("_", " ").capitalize()
         else:
             src, clip = "built-in", None
             label = BUILT_IN_LABELS.get(n) or n.replace("_", " ").capitalize()
@@ -828,7 +854,7 @@ def _can_add(asset: Any) -> tuple[bool, str]:
     if cat.get("rig_engine") in (None, "none"):
         return False, "This model has no skeleton, so it does not move."
     if cat.get("rig_engine") != "skintoken_mixamo" or not cat.get("library_clips"):
-        return False, "The hand-made moves only fit human-shaped characters, so this one keeps the moves made for its own skeleton."
+        return False, "The library moves only fit human-shaped characters, so this one keeps the moves made for its own skeleton."
     return True, ""
 
 
@@ -838,7 +864,7 @@ PLAIN_MOVE = {"idle": "stand still", "walk": "walk", "run": "run", "turn_left": 
 
 
 def creature_moves(category_id: str) -> list[str]:
-    """What a creature gets instead of the hand-made moves: its category's built-in moves, in plain words."""
+    """What a creature gets instead of the library moves: its category's built-in moves, in plain words."""
     from . import reference
 
     try:
@@ -873,7 +899,7 @@ def asset_moves(db: Session, asset: Any, settings: Settings | None = None) -> di
     out["added"], out["removed"] = added_list(params), removed_list(params)
     out["idle_source"] = idle_source(params)
     if isinstance(metrics.get("moves"), list):
-        out["moves"] = metrics["moves"]
+        out["moves"] = relabel_moves(metrics["moves"])
     else:
         # Versions made before "Add a move": from the sidecar.
         from . import library
