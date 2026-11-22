@@ -1,9 +1,10 @@
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import { ApiError, type Check, type JobStatus, type VersionStatus } from '../api'
-import { checkFix, checkFixNote, checkHelpKey, checkPassed, checkSentence, checkSeverity, fixTooltip, metricPlain, type CheckContext, type FixAction } from '../help'
-import { useRefData } from '../refdata'
+import { ApiError, type Check, type CheckTier, type JobStatus, type VersionStatus } from '../api'
+import { checkHelpKey, checkPassed, checkSentence, metricPlain, type CheckContext, type FixAction } from '../help'
+import { CheckLine, TierHeading } from './CheckLine'
 import { Info } from './Info'
+import { TrafficDot, type TrafficState } from './TrafficDot'
 
 export type Tone = 'neutral' | 'ok' | 'bad' | 'warn' | 'accent' | 'muted'
 
@@ -159,63 +160,70 @@ export function ChecksList({ checks }: { checks: Check[] }) {
   )
 }
 
-export type TrafficState = 'ok' | 'warn' | 'bad' | 'none'
-
-export function TrafficDot({ state, title }: { state: TrafficState; title?: string }) {
-  return <span className={'traffic traffic-' + state} title={title} aria-label={title} role={title ? 'img' : undefined} />
-}
+export { TrafficDot }
+export type { TrafficState }
 
 // What a Fix button asks for: re-run a stage with params, or open a tool (`ui`, 2.5).
 export type FixRequest = FixAction
 
-// Plain-language checks: one sentence each with a traffic-light dot, an Info icon
-// and a Fix button (labelled by the check's fix_label) when the app knows how to fix a failure.
-// A passing check reads as a pass; failures come first.
+// Plain-language checks. A failed check is one short line in its tier ("Likely to show in the game", "Worth a look",
+// "Advice"; the tier comes from the backend), with its fix button and a "Why" that unfolds the full sentence. Passed
+// checks are one sentence each with a green dot, folded when compact. skipIds: failed checks listed elsewhere on the page
+// (the finished card), so none appears twice; `skippedNote` says where.
 export function PlainChecks({
   checks,
   ctx,
   onFix,
   busy,
   compact,
+  skipIds,
+  skippedNote,
 }: {
   checks: Check[]
   ctx?: CheckContext
   onFix?: (fix: FixRequest, check: Check) => void
   busy?: boolean
   compact?: boolean
+  skipIds?: Set<string>
+  skippedNote?: string
 }) {
   const [showPassed, setShowPassed] = useState(!compact)
-  const { ref } = useRefData()
-  const failing = checks.filter((c) => !checkPassed(c))
+  const failedAll = checks.filter((c) => !checkPassed(c))
+  const failing = skipIds ? failedAll.filter((c) => !skipIds.has(c.id ?? c.name)) : failedAll
+  const skipped = failedAll.length - failing.length
   const passing = checks.filter((c) => checkPassed(c))
-  const render = (c: Check) => {
-    const ok = checkPassed(c)
-    const sev = checkSeverity(c)
-    const fix = ok ? null : checkFix(c)
+  const tierOf = (c: Check): CheckTier => c.tier ?? 'look'
+  const renderPassed = (c: Check) => {
     const key = checkHelpKey(c)
-    const state: TrafficState = ok ? 'ok' : c.tier === 'advice' || c.tier === 'look' || sev === 'warn' ? 'warn' : 'bad'
     return (
-      <li key={c.id ?? c.name} className={'plain-check ' + state}>
-        <TrafficDot state={state} title={ok ? 'passed' : sev === 'warn' ? 'warning' : 'needs attention'} />
+      <li key={c.id ?? c.name} className="plain-check ok">
+        <TrafficDot state="ok" title="passed" />
         <span className="plain-check-text" title={`Technical name: ${c.id ?? c.name}`}>
           {checkSentence(c, ctx)}
           {key && <Info term={'term.' + key} />}
-          {!ok && checkFixNote(c) && <span className="fix-note muted small">{checkFixNote(c)}</span>}
         </span>
-        {fix && onFix && (
-          <button type="button" className="small-btn" disabled={busy} onClick={() => onFix(fix, c)} title={fixTooltip(fix, ref?.stages)}>
-            {fix.label}
-          </button>
-        )}
       </li>
     )
   }
   return (
     <div className="plain-checks">
-      <ul className="checks">
-        {failing.map(render)}
-        {showPassed && passing.map(render)}
-      </ul>
+      {(['likely', 'look', 'advice'] as CheckTier[])
+        .filter((t) => failing.some((c) => tierOf(c) === t))
+        .map((t) => {
+          const list = failing.filter((c) => tierOf(c) === t)
+          return (
+            <section key={t} className={'tier tier-' + t} aria-label={t}>
+              <TierHeading tier={t} count={list.length} />
+              <ul className="tier-list">
+                {list.map((c) => (
+                  <CheckLine key={c.id ?? c.name} check={c} ctx={ctx} onFix={onFix} busy={busy} />
+                ))}
+              </ul>
+            </section>
+          )
+        })}
+      {skipped > 0 && skippedNote && <div className="muted small">{skippedNote}</div>}
+      {showPassed && passing.length > 0 && <ul className="checks">{passing.map(renderPassed)}</ul>}
       {compact && passing.length > 0 && (
         <button type="button" className="link small" onClick={() => setShowPassed((v) => !v)}>
           {showPassed ? 'Hide' : 'Show'} {passing.length} passed check{passing.length > 1 ? 's' : ''}

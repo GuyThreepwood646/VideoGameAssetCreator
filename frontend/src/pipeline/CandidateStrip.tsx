@@ -163,7 +163,7 @@ function CandidateCard({
   // Red only when a failed check is likely to show in the game; everything else (worth a look, advice, a near miss) is amber (UX-10).
   const tier = good === false ? failingTier(version.metrics) : null
   const amber = tier === 'look' || tier === 'advice'
-  const adviceOnly = tier === 'advice'
+  const verdict = tier === 'likely' ? 'Likely to show in the game' : tier === 'look' ? 'Worth a look' : tier === 'advice' ? 'Looks good, with advice' : good === false ? 'Needs a look' : 'Looks good'
   const thumbs = version.status === 'done' ? versionFeedback(version)?.thumbs : null
   return (
     <button type="button" className={cls} onClick={onClick} aria-pressed={isActive} aria-label={`version ${index}`}>
@@ -204,7 +204,7 @@ function CandidateCard({
           good === null || good === undefined ? null : (
             <span className={'traffic-line ' + (amber ? 'warn' : good === false ? 'bad' : 'ok')} title={reason ?? 'Every check passed'}>
               <TrafficDot state={amber ? 'warn' : good === false ? 'bad' : 'ok'} />
-              {adviceOnly ? 'Looks good, with advice' : good === false ? 'Needs a look' : 'Looks good'}
+              {verdict}
             </span>
           )
         ) : (

@@ -99,12 +99,15 @@ export function attentionItems(asset: Asset): AttentionItem[] {
   return out.sort((a, b) => a.rank - b.rank || STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage))
 }
 
-// The first sentence, cut at a word when it is long: the line a person reads. The rest is the "Why".
-export function oneLine(text: string, max = 150): string {
-  const first = text.split(/(?<=[.!?])\s+(?=[A-Z])/)[0] ?? text
+// The short line a person reads for a check: the first sentence without its brackets, cut at the first comma, semicolon
+// or colon when it is long, and at a word as a last resort. Never an ellipsis: the rest is the "Why".
+export function oneLine(text: string, max = 100): string {
+  const first = (text.replace(/\s*\([^)]*\)/g, '').split(/(?<=[.!?])\s+(?=[A-Z])/)[0] ?? text).trim().replace(/[.:;,]+$/, '')
   if (first.length <= max) return first
+  const clause = first.slice(25).search(/[,;:]/)
+  if (clause >= 0 && clause + 25 <= max + 20) return first.slice(0, clause + 25)
   const cut = first.slice(0, max)
-  return cut.slice(0, Math.max(cut.lastIndexOf(' '), 40)).replace(/[,;:\s]+$/, '') + '...'
+  return cut.slice(0, Math.max(cut.lastIndexOf(' '), 40)).replace(/\s+(and|or|of|the|a|to|so|that|in|on|with)$/i, '')
 }
 
 export const TIER_ORDER: CheckTier[] = ['likely', 'look', 'advice']
