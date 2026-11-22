@@ -106,7 +106,7 @@ none_req = gait.MOTION_ALIASES.get(_req, _req) == "none"
 # Leg chains: leaves whose head sits in the bottom 20 percent of the height, reduced to the lowest leaf per limb
 # cluster (cluster by horizontal distance). Every cluster is kept (G31: spiders move all eight legs).
 leg_leaves = [] if serpent_req else [b for b in leaves if zrel(low[b.name]) < 0.2]
-# A leaf is a limb only if some bone on its branch carries a vertex weight above 0 (WP-19, PREREG sections 8-9). The
+# A leaf is a limb only if some bone on its branch carries a vertex weight above 0 (rig detection fix, 2026-11-22). The
 # branch is the leaf and the bones above it up to the first junction (an ancestor with more than one child), or up to
 # the root. A helper branch hung off the root with no weights (a pole or IK target) is not a limb; an unweighted toe or
 # _End leaf at the end of a weighted leg is still a leg.
@@ -128,9 +128,10 @@ def _branch(b):
     return out
 
 
-leg_leaves = [b for b in leg_leaves if any(x.name in _weighted for x in _branch(b))]
+if _weighted:  # a rig with no weighted mesh at all keeps every leaf, as before
+    leg_leaves = [b for b in leg_leaves if any(x.name in _weighted for x in _branch(b))]
 # A foot bone that hangs off the root (not off the shin) and starts at a leg's ankle is that leg's foot, not a
-# second leg (WP-19 rig detection): a leaf no longer than 0.12 x height, whose head sits within 0.05 x height of
+# second leg (rig detection fix, 2026-11-22): a leaf no longer than 0.12 x height, whose head sits within 0.05 x height of
 # another leg leaf's low point (the ankle), adds no leg. Long leg chains are the ankle anchors.
 _ankles = [b for b in leg_leaves if (tail[b.name] - head[b.name]).length > 0.12 * height]
 _feet = {b.name for b in leg_leaves if b not in _ankles and (tail[b.name] - head[b.name]).length <= 0.12 * height
