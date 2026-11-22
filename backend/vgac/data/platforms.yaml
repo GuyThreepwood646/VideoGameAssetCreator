@@ -1,25 +1,33 @@
-# lod_screen_heights: the Unity LODGroup switch height per level (LOD0..LOD3), as a fraction of the screen height the
-# object fills. Level n is drawn while the object fills at least that much of the screen, so a higher value switches to
-# the lighter copy sooner. Rule: a phone shows the model with fewer pixels, so each cheaper level is used sooner; a
-# large high-resolution screen shows the model with more pixels, so detail stays longer. pc_mid keeps the values the
-# importer used before the per-platform lists (0.6, 0.3, 0.12, 0.03). These are chosen by that rule, not taken from an
-# engine doc. Four entries cover the most levels a category uses (LOD0 plus three ratios).
+# lod_screen_heights: the Unity LODGroup switch height per level (LOD0..LOD3), a fraction of the screen height the object's
+# bounds fill. Level n is drawn while the object fills at least that much of the screen, so a higher value switches to
+# the lighter copy sooner. Rule: each level switches at the same size in pixels on every platform, so the lists differ
+# only by the screen height each platform is judged on (lod_reference_height_px):
+#     height = pixels / lod_reference_height_px
+# Anchor, pc_mid at 1080 px: the old list 0.6, 0.3, 0.12, 0.03 is 648, 324, 129.6 and 32.4 px.
+#   mobile_low at 720 px:  648/720 = 0.9,   324/720 = 0.45,  129.6/720 = 0.18,  32.4/720 = 0.045
+#   high at 1440 px:       648/1440 = 0.45, 324/1440 = 0.225, 129.6/1440 = 0.09, 32.4/1440 = 0.0225
+# Cull floor: the last level (LOD3) ends at 32.4 px on each reference screen, so an object still 32 px tall is never
+# dropped. Tests check that the pixel sizes agree across platforms and that the last level keeps at least 32 px.
+# Four entries cover the most levels a category uses (LOD0 plus three ratios). These are not taken from an engine doc.
 platforms:
   - id: mobile_low
     label: Mobile low
     triangles_character: 5000
     triangles_prop: 1000
     texture: 1024
-    lod_screen_heights: [0.7, 0.4, 0.2, 0.08]
+    lod_reference_height_px: 720
+    lod_screen_heights: [0.9, 0.45, 0.18, 0.045]
   - id: pc_mid
     label: PC mid
     triangles_character: 20000
     triangles_prop: 5000
     texture: 2048
+    lod_reference_height_px: 1080
     lod_screen_heights: [0.6, 0.3, 0.12, 0.03]
   - id: high
     label: High
     triangles_character: 60000
     triangles_prop: 20000
     texture: 4096
-    lod_screen_heights: [0.45, 0.2, 0.08, 0.02]
+    lod_reference_height_px: 1440
+    lod_screen_heights: [0.45, 0.225, 0.09, 0.0225]

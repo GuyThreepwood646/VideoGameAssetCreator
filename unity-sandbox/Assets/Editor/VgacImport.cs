@@ -102,8 +102,8 @@
 // before, it sat at full smoothness and read as plastic. Built-in projects are unchanged.
 //
 // Version 25: LODGroup switch heights per platform. -vgacLodHeights carries the platform's list (platforms.yaml
-// lod_screen_heights, LOD0..LOD3) and the script-built LODGroup uses it; the fixed 0.6/0.3/0.12/0.03 list is gone. Without
-// the argument no LODGroup is built by script (a warning says so), since there is no height to give it.
+// lod_screen_heights, LOD0..LOD3). It is set on the LODGroup Unity builds from the _LODn names and on one the script builds.
+// Without a height for every level the group keeps Unity's own, and a warning says so; no LODGroup is built by script then.
 //
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
@@ -175,6 +175,7 @@ public static class VgacImport
         public string showcase = "";          // the showcase scene the asset now stands in ("" when not updated)
         public int lodCount;
         public List<int> lodTriangles = new List<int>();
+        public List<float> lodSwitchHeights = new List<float>();  // Version 25: each level's screenRelativeTransitionHeight as set
         public int bones;
         public string avatar = "";
         public bool humanoidValid;
@@ -289,6 +290,7 @@ public static class VgacImport
     // G17: categories that get lightmap UVs (environment also gets static flags); G20: categories that cross-fade.
     static readonly string[] LightmapCategories = { "environment", "prop_rigid" };
     static readonly string[] CrossFadeCategories = { "foliage" };
+    const string LodHeightsMissingWarning = "LOD switch heights not set: -vgacLodHeights gives no height for every LOD level, so the LODGroup keeps Unity's own";
     const float CrossFadeWidth = 0.25f;
 
     static bool IsColliderName(string n) => n.Contains("_collider");
@@ -562,12 +564,16 @@ public static class VgacImport
             }
             else if (!bodyShape) report.warnings.Add("no collider mesh");
 
-            // LODGroup: Unity creates it from _LODn names; verify, else build one.
+            // LODGroup: Unity creates it from _LODn names (its own switch heights); verify, else build one. Either way the
+            // platform's heights (-vgacLodHeights, platforms.yaml lod_screen_heights) go on its levels, before the movers and
+            // the cross-fade below read them. Without a height for every level the group keeps its own and the warning says so.
             var lodGroup = instance.GetComponentInChildren<LODGroup>();
             var lodRenderers = renderers.Where(r => r.name.Contains("_LOD") && !IsColliderName(r.name)).OrderBy(r => r.name).ToList();
-            if (lodGroup == null && lodRenderers.Count > 0 && a.lodHeights.Length < lodRenderers.Count)
-                report.warnings.Add("no LODGroup: -vgacLodHeights gives no height for every LOD level");
-            else if (lodGroup == null && lodRenderers.Count > 0)
+            int levelCount = lodGroup != null ? lodGroup.GetLODs().Length : lodRenderers.Count;
+            bool heightsOk = levelCount > 0 && a.lodHeights.Length >= levelCount;
+            if (levelCount > 0 && !heightsOk)
+                report.warnings.Add(LodHeightsMissingWarning);
+            if (lodGroup == null && lodRenderers.Count > 0 && heightsOk)
             {
                 lodGroup = instance.AddComponent<LODGroup>();
                 var lods = new LOD[lodRenderers.Count];
@@ -576,6 +582,13 @@ public static class VgacImport
                 lodGroup.SetLODs(lods);
                 lodGroup.RecalculateBounds();
                 report.warnings.Add("LODGroup built by script, not by importer naming");
+            }
+            else if (lodGroup != null && heightsOk)
+            {
+                var own = lodGroup.GetLODs();
+                for (int i = 0; i < own.Length; i++) own[i].screenRelativeTransitionHeight = a.lodHeights[i];
+                lodGroup.SetLODs(own);
+                lodGroup.RecalculateBounds();
             }
             if (lodGroup != null && movers.Count > 0)
             {
@@ -604,6 +617,7 @@ public static class VgacImport
                         if (mesh) tris += mesh.triangles.Length / 3;
                     }
                     report.lodTriangles.Add(tris);
+                    report.lodSwitchHeights.Add(lod.screenRelativeTransitionHeight);
                 }
             }
             else report.warnings.Add("no LODGroup");

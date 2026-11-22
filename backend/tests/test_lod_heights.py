@@ -53,7 +53,7 @@ def test_a_platform_without_heights_stops_the_data_from_loading(tmp_path, monkey
     data = tmp_path / "data"
     shutil.copytree(reference.DATA_DIR, data)
     text = (data / "platforms.yaml").read_text(encoding="utf-8")
-    cut = "    lod_screen_heights: [0.45, 0.2, 0.08, 0.02]\n"
+    cut = "    lod_screen_heights: [0.45, 0.225, 0.09, 0.0225]\n"
     assert cut in text
     (data / "platforms.yaml").write_text(text.replace(cut, ""), encoding="utf-8")
     monkeypatch.setattr(reference, "DATA_DIR", data)
@@ -64,14 +64,14 @@ def test_a_platform_without_heights_stops_the_data_from_loading(tmp_path, monkey
     finally:
         monkeypatch.undo()
         reference.reload()
-    assert reference.lod_screen_heights("high") == [0.45, 0.2, 0.08, 0.02]
+    assert reference.lod_screen_heights("high") == [0.45, 0.225, 0.09, 0.0225]
 
 
 def test_heights_must_fall_from_one_to_zero(tmp_path, monkeypatch):
     data = tmp_path / "data"
     shutil.copytree(reference.DATA_DIR, data)
     text = (data / "platforms.yaml").read_text(encoding="utf-8")
-    (data / "platforms.yaml").write_text(text.replace("[0.45, 0.2, 0.08, 0.02]", "[0.2, 0.45, 0.08, 0.02]"), encoding="utf-8")
+    (data / "platforms.yaml").write_text(text.replace("[0.45, 0.225, 0.09, 0.0225]", "[0.2, 0.45, 0.08, 0.02]"), encoding="utf-8")
     monkeypatch.setattr(reference, "DATA_DIR", data)
     reference.reload()
     try:
@@ -86,3 +86,49 @@ def test_the_importer_has_no_fixed_height_list_and_takes_the_argument():
     text = IMPORTER.read_text(encoding="utf-8")
     assert "0.6f, 0.3f" not in text
     assert "-vgacLodHeights" in text and "ParseFloats" in text and "lodHeights" in text
+
+
+def test_each_level_switches_at_the_same_pixel_size_on_every_platform():
+    # pc_mid at 1080 px is the anchor: the old list is 648, 324, 129.6 and 32.4 px. Every platform's heights, times its
+    # reference screen height, give those same pixels (rule in platforms.yaml).
+    anchor = [648.0, 324.0, 129.6, 32.4]
+    for pid in PLATFORM_IDS:
+        ref = reference.platform(pid)["lod_reference_height_px"]
+        px = [h * ref for h in reference.lod_screen_heights(pid)]
+        assert all(abs(a - b) < 0.01 for a, b in zip(px, anchor)), (pid, px)
+
+
+@pytest.mark.parametrize("pid", PLATFORM_IDS)
+def test_the_last_level_keeps_at_least_32_pixels_on_the_reference_screen(pid):
+    ref = reference.platform(pid)["lod_reference_height_px"]
+    assert reference.lod_screen_heights(pid)[-1] * ref >= 32
+
+
+def test_a_last_level_that_culls_below_32_pixels_fails_loudly(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    shutil.copytree(reference.DATA_DIR, data)
+    text = (data / "platforms.yaml").read_text(encoding="utf-8")
+    (data / "platforms.yaml").write_text(text.replace("[0.45, 0.225, 0.09, 0.0225]", "[0.45, 0.225, 0.09, 0.02]"), encoding="utf-8")
+    monkeypatch.setattr(reference, "DATA_DIR", data)
+    reference.reload()
+    try:
+        with pytest.raises(ValueError, match="32"):
+            reference.platforms()
+    finally:
+        monkeypatch.undo()
+        reference.reload()
+
+
+def test_a_platform_without_a_reference_height_fails_loudly(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    shutil.copytree(reference.DATA_DIR, data)
+    text = (data / "platforms.yaml").read_text(encoding="utf-8")
+    (data / "platforms.yaml").write_text(text.replace("    lod_reference_height_px: 720\n", ""), encoding="utf-8")
+    monkeypatch.setattr(reference, "DATA_DIR", data)
+    reference.reload()
+    try:
+        with pytest.raises(ValueError, match="mobile_low"):
+            reference.platforms()
+    finally:
+        monkeypatch.undo()
+        reference.reload()
