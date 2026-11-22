@@ -65,3 +65,11 @@ def test_served_table_and_version_payload():
     j = r.json()
     assert [t["id"] for t in j["tiers"]] == ["likely", "look", "advice"]
     assert j["table"]["size_m"] == "likely"
+
+
+def test_a_served_version_carries_the_tier_on_failed_checks():
+    from vgac.db import _with_fix_notes
+    m = _with_fix_notes({"checks": [{"name": "size_m", "id": "size_m", "passed": False, "value": 1.2, "limit": 1.8},
+                                    {"name": "bones", "id": "bones", "passed": True, "value": 1, "limit": 1}]})
+    assert m["checks"][0]["tier"] == "likely"
+    assert "tier" not in m["checks"][1]
