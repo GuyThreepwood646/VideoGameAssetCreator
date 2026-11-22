@@ -43,7 +43,7 @@ def test_help_ts_stage_text_agrees_with_guidance():
         assert plain == g["plain_name"] and tech == g["technical_short"], stage
         assert _un(h.group(2)) == g["help"]["meaning"], stage
         assert _un(h.group(3)) == g["help"]["why"], stage
-        assert _un(h.group(4)) == g["help"]["technical"], stage
+        assert _un(h.group(4)) == g["help"]["technical"] == g["technical_short"], stage
 
 
 def test_every_category_has_a_picker_group():
@@ -66,3 +66,10 @@ def test_category_list_comes_in_picker_order():
     order = [reference.category_order(c["id"]) for c in sorted(reference.categories(), key=lambda c: reference.category_order(c["id"]))]
     assert order == sorted(order)
     assert reference.category_order("humanoid") < reference.category_order("vehicle") < reference.category_order("environment") < reference.category_order("material")
+
+
+def test_glossary_step_headings_come_from_the_step_table():
+    src = (HELP_TS.parent / "pages" / "GlossaryPage.tsx").read_text(encoding="utf-8")
+    assert "STAGE_TEXT[s].plain" in src and "STAGES.map" in src
+    for stage in reference.STAGE_ORDER:
+        assert guidance.stage_guide(stage)["help"]["technical"] == reference.STAGE_NAMES[stage]["technical"]

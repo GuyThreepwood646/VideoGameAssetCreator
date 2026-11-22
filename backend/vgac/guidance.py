@@ -58,6 +58,7 @@ STAGE_GUIDE: dict[str, dict[str, Any]] = {
 for _stage, _names in reference.STAGE_NAMES.items():
     STAGE_GUIDE[_stage]["plain_name"] = _names["plain"]
     STAGE_GUIDE[_stage]["technical_short"] = _names["technical"]
+    STAGE_GUIDE[_stage]["help"]["technical"] = _names["technical"]
 
 PARAM_HELP: dict[str, dict[str, Any]] = {
     "model": {"simple": True, "help": {"meaning": "Which image model paints the first picture.", "why": "Each has a different look and speed; the suggestion picks one for your style and platform.", "technical": "Diffusion model (the options are the concept models in models.yaml)"}},

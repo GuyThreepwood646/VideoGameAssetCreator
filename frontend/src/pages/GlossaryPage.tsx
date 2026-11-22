@@ -36,10 +36,10 @@ const GROUPS: Group[] = [
   },
   {
     title: 'The six steps',
-    intro: 'Every asset goes through these in order. The technical name is the one in the page address.',
+    intro: 'Every asset goes through these in order. Each shows its industry term.',
     items: [
       { id: 'stage', term: 'term.stage' },
-      ...STAGES.map((s: StageId) => ({ id: 'stage-' + s, term: 'stage.' + s, title: `${STAGE_TEXT[s].plain} (${s})` })),
+      ...STAGES.map((s: StageId, i: number) => ({ id: 'stage-' + s, term: 'stage.' + s, title: `Step ${i + 1}: ${STAGE_TEXT[s].plain}` })),
     ],
   },
   {
