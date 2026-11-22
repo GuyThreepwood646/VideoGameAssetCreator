@@ -44,9 +44,7 @@ LIBRARY_SCRATCH = (_project_root() / "bakeoff" / "t").resolve()
 def _short_library_root() -> Path:
     from vgac import library
 
-    # A short name: the library folder is this folder + name + \library, and it must fit the library limit (63 characters
-    # below the project's bakeoff/t, which is 43 characters on the main checkout).
-    root = LIBRARY_SCRATCH / ("v" + uuid.uuid4().hex[:6])
+    root = LIBRARY_SCRATCH / ("vgac-" + uuid.uuid4().hex[:8])
     if library.library_path_problem(str(root / "library")) is not None:
         pytest.skip("the project folder is too deep for a test library (its library folder would be over the library limit); "
                     "move the project to a shorter folder")

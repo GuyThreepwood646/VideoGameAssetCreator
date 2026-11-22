@@ -126,21 +126,17 @@ def asset_export_name(sc: StageContext) -> str:
     return f"{_cut(sc.asset.name)}_{sc.asset.id[:8]}"
 
 
-def check_export_room(version_dir: Path, export_name: str) -> None:
-    """Before an export writes: refuse, in plain words, when Blender could not open this asset's item file. Blender
-    (equip.py) opens items/<name>/<name>.glb under the version folder, and its Python cannot open a file of 260
-    characters or more (measured on this machine: 259 opens, 260 does not). The backend's own Python and ComfyUI's
-    Python open files of 271 characters, so only the files Blender reads are measured. Raises LibraryPathError."""
-    below = f"items/{export_name}/{export_name}.glb"
+def check_export_room(version_dir: Path) -> None:
+    """Before an export writes: refuse, in plain words, when Blender could not open a held item's GLB under this
+    version folder. Blender (equip.py) opens items/<id8>/<name>.glb, and its Python cannot open a file of 260 characters
+    or more (measured on this machine: 259 opens, 260 does not). The item's name is not known here, so the longest
+    export name is measured: the same bound as the library folder limit (library.max_library_folder_length).
+    Raises LibraryPathError."""
+    below = f"items/{'x' * library.ITEM_FOLDER_CHARS}/{'x' * library.EXPORT_NAME_LONGEST}.glb"
     total = len(os.path.abspath(str(version_dir))) + 1 + len(below)
     if total < library.LONG_PATH_LIMIT:
         return
-    # library folder + separator + projects/<id>/assets/<id>/export/<id> + separator + below: 259 characters or fewer
-    rel = f"projects/{'x' * 36}/assets/{'x' * 36}/export/{'x' * 36}"
-    most = library.LONG_PATH_LIMIT - 3 - len(rel) - len(below)
-    raise library.LibraryPathError(
-        f"The library folder's path is too long for Blender, which cannot open the files of this asset's export: keep it under "
-        f"{most + 1} characters, for example F:\\Games\\VGAC library.")
+    raise library.LibraryPathError(library.library_path_message())
 
 
 # --- Engine texture packs (G01, G02; docs/GREAT-ASSETS-PLAN.md 3.1) ---------------------------------------------------
@@ -1584,7 +1580,7 @@ async def judge(sc: StageContext) -> None:
 async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     # The material category never reaches here: stages.module_for routes its export to stages/material.py.
     name = asset_export_name(sc)
-    check_export_room(sc.dir, name)  # refused before any export file is written
+    check_export_room(sc.dir)  # refused before any export file is written
     sc.set_params(export_name=name, unity=bool(params.get("unity", True)), clips_library=params.get("clips_library", "ual1"),
                   sprites=bool(params.get("sprites", False)), sprite_directions=int(params.get("sprite_directions") or 8),
                   sprite_size=int(params.get("sprite_size") or 128))

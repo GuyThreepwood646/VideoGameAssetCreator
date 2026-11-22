@@ -49,36 +49,33 @@ def test_short_names_keep_their_old_export_name():
 
 
 def test_the_item_file_blender_reads_is_the_deepest_checked_path():
-    name = export.asset_export_name(_sc(LONG))
-    below = f"items/{name}/{name}.glb"
-    assert len(below) == 61  # 2 * 25 + 11: the item file Blender opens under items/<name>/
-    assert len(str(_version_dir(OWNER_LIBRARY))) + 1 + len(below) == 237  # the owner's library: 22 characters to spare under 259
+    # items/<8 characters of the item id>/<export name>.glb: the item file Blender opens (equip.py)
+    below = f"items/{'i' * 8}/{'n' * 25}.glb"
+    assert len(below) == 44  # 6 + 8 + 1 + 25 + 4
+    assert len(str(_version_dir(OWNER_LIBRARY))) + 1 + len(below) == 220  # the owner's library: 39 characters to spare under 259
 
 
 def test_owner_library_passes_for_a_typical_name():
-    name = export.asset_export_name(_sc("Archer"))
-    export.check_export_room(_version_dir(OWNER_LIBRARY), name)
+    export.check_export_room(_version_dir(OWNER_LIBRARY))
 
 
 def test_owner_library_passes_for_a_200_character_name():
-    name = export.asset_export_name(_sc(LONG))
-    export.check_export_room(_version_dir(OWNER_LIBRARY), name)
+    export.check_export_room(_version_dir(OWNER_LIBRARY))
 
 
 def test_owner_library_passes_for_a_42_character_name():
     # the longest asset name in the owner's library copy
-    name = export.asset_export_name(_sc("N" * 42))
-    export.check_export_room(_version_dir(OWNER_LIBRARY), name)
+    export.check_export_room(_version_dir(OWNER_LIBRARY))
 
 
 def test_the_limit_is_exact_and_refuses_in_plain_words():
     # Blender opens a file of 259 characters, not 260: the item file Blender reads must be 259 or fewer.
-    name = export.asset_export_name(_sc(LONG))  # 25 characters with the id: the longest export name
-    export.check_export_room(_version_dir(OWNER_LIBRARY + "x" * 22), name)  # 63 characters: 259 deepest, passes
+    limit = library.max_library_folder_length()  # 80: the folder of this length passes, one more is refused
+    export.check_export_room(_version_dir(OWNER_LIBRARY + "x" * (limit - len(OWNER_LIBRARY))))
     with pytest.raises(library.LibraryPathError) as info:
-        export.check_export_room(_version_dir(OWNER_LIBRARY + "x" * 23), name)  # 64 characters: 260, refused
-    assert "too long for Blender" in str(info.value)
-    assert "keep it under 64 characters" in str(info.value)
+        export.check_export_room(_version_dir(OWNER_LIBRARY + "x" * (limit - len(OWNER_LIBRARY) + 1)))
+    assert "too long for Windows" in str(info.value)
+    assert f"under {limit + 1} characters" in str(info.value)
 
 
 def test_delivery_folder_for_a_200_character_name_is_cut_and_stays_inside_the_export_root(tmp_path: Path):

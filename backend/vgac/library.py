@@ -46,18 +46,20 @@ def version_dir(asset: Asset, version: Version, settings: Settings | None = None
 # its Python is not long-path aware). The backend's own Python and ComfyUI's Python open 271 characters fine. So the
 # folder limit comes from the deepest file Blender opens or writes. Those paths are below, with 36-character ids and the
 # longest export name (stages/export.py cuts the asset name to EXPORT_NAME_MAX characters and adds "_" and the id's
-# first 8). The deepest is the held item GLB under export/<id>/items/<name>/<name>.glb: 195 characters below the library
-# folder, which gives the 63-character folder limit. The export check (stages/export.py) measures the same file.
+# first 8). The deepest is the held item GLB under export/<id>/items/<id8>/<name>.glb: 178 characters below the library
+# folder, which gives the 80-character folder limit. The export check (stages/export.py) measures the same file.
 LONG_PATH_LIMIT = 260
 EXPORT_NAME_MAX = 16  # stages/export.py takes its name cut from here
-_EXPORT_NAME_LONGEST = EXPORT_NAME_MAX + 1 + 8
+EXPORT_NAME_LONGEST = EXPORT_NAME_MAX + 1 + 8
+ITEM_FOLDER_CHARS = 8  # a held item's files go under items/<first 8 characters of the item's id>/ (items.py equip)
 _BELOW_LIBRARY = (
     "projects/{p}/assets/{a}/prep/{v}/face/painted_head_closeup_2_drawn.png",  # the clean-up face picture the rebake reads
     "projects/{p}/assets/{a}/export/{v}/lods/{n}_LOD0.glb",  # an export LOD, written by blender/pack.py
     "projects/{p}/assets/{a}/export/{v}/{n}_unreal.fbx",  # the unreal FBX, written by blender/pack.py
-    "projects/{p}/assets/{a}/export/{v}/items/{n}/{n}.glb",  # a held item's GLB, read by blender/equip.py
+    "projects/{p}/assets/{a}/export/{v}/items/{i}/{n}.glb",  # a held item's GLB, read by blender/equip.py
 )
-DEEPEST_FIXED_LENGTH = max(len(t.format(p="x" * 36, a="x" * 36, v="x" * 36, n="x" * _EXPORT_NAME_LONGEST))
+DEEPEST_FIXED_LENGTH = max(len(t.format(p="x" * 36, a="x" * 36, v="x" * 36, i="x" * ITEM_FOLDER_CHARS,
+                                        n="x" * EXPORT_NAME_LONGEST))
                            for t in _BELOW_LIBRARY)
 _BELOW_VERSION = "face/painted_head_closeup_2_drawn.png"  # the clean-up face picture, below a version folder (guard only)
 
