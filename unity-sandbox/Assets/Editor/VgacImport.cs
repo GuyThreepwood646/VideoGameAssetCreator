@@ -95,6 +95,12 @@
 // filtering 8, so a surface seen at a slant keeps its detail. Normal maps keep the normal-map type; data maps are
 // unchanged. The report's textureSettings lines for the base colour end with the new settings.
 //
+// Version 24 (WP-88): the URP path, rendered and checked in Unity 6000.4.3f1 with URP 17.4.0. The showcase ground took
+// Shader.Find("Standard") whatever the pipeline, and Standard draws magenta under URP, so every snapshot in a URP project had a
+// pink floor; it now takes the pipeline's own Lit shader (PickShader). A URP or HDRP hair fallback has no strand highlight, so
+// its smoothness is cut to HairLitSmoothness (0.35, the share of the map's smoothness VGAC/Hair keeps for its round highlight);
+// before, it sat at full smoothness and read as plastic. Built-in projects are unchanged.
+//
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
 using System;
@@ -110,7 +116,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "23";
+    public const string Version = "24";
     public const string HairShaderName = "VGAC/Hair";
     public const string HairCutoutShaderName = "VGAC/HairCutout";
 
@@ -1361,6 +1367,8 @@ public static class VgacImport
     // ---------------------------------------------------------------------------------------------------------------
     // Textures and material (G01, G02)
 
+    const float HairLitSmoothness = 0.35f;  // VgacHair.shader's _IsoKeep default
+
     static string[] HairTextures(string name) =>
         new[] { "hair_base_color.png", "hair_normal.png", "hair_ao.png", "hair_flow.png", "T_" + name + "_Hair_MetallicSmoothness.png" };
 
@@ -1404,6 +1412,8 @@ public static class VgacImport
             var tmp = new Report { normalMap = report.normalMap };
             mat = BuildMaterialFrom(assetDir, "hair_base_color.png", "hair_normal.png", "hair_ao.png", hs, tmp);
             report.hairTexturesAssigned.AddRange(tmp.texturesAssigned);
+            // Version 24: URP and HDRP Lit have no strand highlight; keep only the share of smoothness the hair shader keeps.
+            if (!builtin && mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", HairLitSmoothness);
             if (cutoutShader) SetLitCutout(mat, a);
         }
         report.hairCutout = a.hairCutout;
@@ -2753,7 +2763,7 @@ public static class VgacImport
                 ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
                 ground.name = "Ground";
             }
-            var gm = ShowcaseMaterial(ShowcaseDir + "/VGAC Ground.mat", Shader.Find("Standard") ?? Shader.Find("Universal Render Pipeline/Lit"));
+            var gm = ShowcaseMaterial(ShowcaseDir + "/VGAC Ground.mat", PickShader());
             gm.color = new Color(0.2f, 0.2f, 0.21f);
             if (gm.HasProperty("_Glossiness")) gm.SetFloat("_Glossiness", 0.15f);
             if (gm.HasProperty("_Smoothness")) gm.SetFloat("_Smoothness", 0.15f);
