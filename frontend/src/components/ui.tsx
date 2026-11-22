@@ -268,11 +268,23 @@ export function Disclosure({
   )
 }
 
+// "Plain label (industry term)" shown as the plain label with the bracket muted and small (UX-25). The words stay the same.
+export function TermText({ text }: { text: ReactNode }) {
+  if (typeof text !== 'string') return <>{text}</>
+  const m = /^(.*?)\s*(\([^()]+\))$/.exec(text)
+  if (!m || !m[1]) return <>{text}</>
+  return (
+    <>
+      {m[1]} <span className="tech-term bracket-term">{m[2]}</span>
+    </>
+  )
+}
+
 export function Field({ label, hint, children, inline = false, term }: { label: ReactNode; hint?: ReactNode; children: ReactNode; inline?: boolean; term?: string }) {
   return (
     <label className={'field' + (inline ? ' field-inline' : '')}>
       <span className="field-label">
-        {label}
+        <TermText text={label} />
         {term && <Info term={term} />}
       </span>
       {children}

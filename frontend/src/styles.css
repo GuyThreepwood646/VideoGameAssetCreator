@@ -454,12 +454,10 @@ input[type='checkbox'] {
   color: var(--text);
 }
 .field-label {
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: var(--fs-md);
   color: var(--muted);
 }
-/* The word to type in the delete dialog shows exactly as it must be typed: the label around it is upper-cased by .field-label. */
+/* The word to type in the delete dialog shows exactly as it must be typed: the label around it is the field label. */
 .confirm-word {
   text-transform: none;
   letter-spacing: 0;
@@ -4966,4 +4964,28 @@ button.preset-card:hover:not(:disabled) {
 }
 .section-title .stage-tech {
   margin-left: var(--s2);
+}
+.tech-term.bracket-term {
+  margin-left: 0;
+}
+
+/* Advanced settings under small headings (UX-15). */
+.adv-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin-top: var(--s3);
+}
+.adv-group-name {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--s1);
+}
+.adv-flags {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
 }
