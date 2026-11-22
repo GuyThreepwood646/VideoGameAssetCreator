@@ -87,7 +87,7 @@ def test_library_folder_at_the_limit_passes_one_more_is_refused():
     message = library.library_path_problem("X:\\" + "a" * (n - 2))
     assert message is not None
     assert f"under {n + 1} characters" in message
-    assert "for example F:\\Games\\VGAC library." in message
+    assert "for example F:\\Games\\VGAC library:" in message
     assert "too long for Windows" in message
 
 

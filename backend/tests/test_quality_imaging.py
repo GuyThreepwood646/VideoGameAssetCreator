@@ -48,7 +48,7 @@ def test_histograms_and_masks(tmp_path):
     o = Image.open(out)
     assert o.getpixel((20, 20))[:3] == (200, 50, 50) and o.getpixel((40, 20))[:3] == (50, 50, 200)
     sheet = imaging.contact_sheet([a, b], tmp_path / "sheet.png", cell=32, columns=2)
-    assert Image.open(sheet).size == (64, 48)
+    assert Image.open(sheet).size == (64, 56)  # a 24 px label bar under each cell
 
 
 def test_quality_checks_shape():
