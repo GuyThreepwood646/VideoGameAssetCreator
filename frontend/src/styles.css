@@ -5002,3 +5002,14 @@ button.preset-card:hover:not(:disabled) {
 .primary .tech-term {
   color: inherit;
 }
+/* The animation frames are a tall sheet, one row per move: it fills the card width and scrolls down (WP-96). */
+.strip-scroll.strip-scroll-sheet {
+  max-height: 520px;
+  overflow: auto;
+}
+.strip-scroll-sheet img {
+  width: 100%;
+  max-width: 1536px;
+  max-height: none;
+  height: auto;
+}

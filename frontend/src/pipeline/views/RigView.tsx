@@ -287,8 +287,8 @@ export function RigView({ version }: { version: Version }) {
             Animation frames
             <Info term="term.clips" />
           </div>
-          <div className="strip-scroll">
-            <img src={animStrip} alt="animation strip" />
+          <div className="strip-scroll strip-scroll-sheet">
+            <img src={animStrip} alt="animation frames, one row per move" />
           </div>
         </div>
       )}
