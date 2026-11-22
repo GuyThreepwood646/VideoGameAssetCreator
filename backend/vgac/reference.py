@@ -369,6 +369,38 @@ def _load_yaml(path) -> Any:
         return yaml.safe_load(f) or {}
 
 
+def _platform_table(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Platform rows by id. Every platform must carry lod_screen_heights (LOD0..LOD3 switch heights, each a fraction in
+    (0, 1], falling as the level gets lighter) and lod_reference_height_px. The last level must still show at least
+    LOD_CULL_MIN_PX on that reference screen, so it never culls an object that is still that tall. A platform without
+    these stops the app from loading."""
+    table: dict[str, dict[str, Any]] = {}
+    for p in rows:
+        pid = p.get("id")
+        heights = p.get("lod_screen_heights")
+        if not isinstance(heights, list) or len(heights) != 4:
+            raise ValueError(f"platform {pid!r} needs lod_screen_heights: four switch heights (LOD0..LOD3) in platforms.yaml")
+        vals = [float(h) for h in heights]
+        if not all(0 < h <= 1 for h in vals) or any(b >= a for a, b in zip(vals, vals[1:])):
+            raise ValueError(f"platform {pid!r} lod_screen_heights must fall from 1 down to 0, each in (0, 1]: {vals}")
+        ref = p.get("lod_reference_height_px")
+        if not isinstance(ref, (int, float)) or ref <= 0:
+            raise ValueError(f"platform {pid!r} needs lod_reference_height_px (the screen height the heights are judged on)")
+        if vals[-1] * ref < LOD_CULL_MIN_PX:
+            raise ValueError(f"platform {pid!r}: the last LOD height {vals[-1]} on {ref:g} px culls below {LOD_CULL_MIN_PX:g} px")
+        table[pid] = p
+    return table
+
+
+def lod_screen_heights(platform_id: str) -> list[float]:
+    """The Unity switch heights for a platform, LOD0..LOD3 (platforms.yaml)."""
+    return [float(h) for h in platform(platform_id)["lod_screen_heights"]]
+
+
+# The smallest on-screen height (pixels, on the platform's reference screen) the last LOD may cull at.
+LOD_CULL_MIN_PX = 32
+
+
 @lru_cache(maxsize=1)
 def _data() -> dict[str, Any]:
     categories: dict[str, dict[str, Any]] = {}
@@ -379,7 +411,7 @@ def _data() -> dict[str, Any]:
         categories[c["id"]] = c
     styles = {s["id"]: {**s, "prompt_block": " ".join(str(s.get("prompt_block", "")).split())}
               for s in _load_yaml(DATA_DIR / "styles.yaml").get("styles", [])}
-    platforms = {p["id"]: p for p in _load_yaml(DATA_DIR / "platforms.yaml").get("platforms", [])}
+    platforms = _platform_table(_load_yaml(DATA_DIR / "platforms.yaml").get("platforms", []))
     models = _load_yaml(DATA_DIR / "models.yaml").get("models", {})
     addon_path = DATA_DIR / "addons.yaml"
     addon_list = (_load_yaml(addon_path).get("addons") or []) if addon_path.is_file() else []
