@@ -416,3 +416,27 @@ def test_a_stopped_version_an_older_row_calls_kept_is_not_shown_kept(client, gat
     with session_factory()() as db:
         assert db.get(Version, vid).selected is False
     assert unkeep_stopped_and_failed(get_engine()) == 0
+
+
+def test_a_set_aside_version_is_not_kept(client, gate):  # noqa: F811
+    """Found after WP-94: "Leave it stopped" set a stopped version aside but left it kept, and the startup repair only
+    looked for the "cancelled" wording. Any rejected or failed version is never kept."""
+    from vgac.db import SET_ASIDE_ERROR, get_engine, unkeep_stopped_and_failed
+
+    p, a = _project_asset(client)
+    aid = a["id"]
+    first = client.post(f"/api/assets/{aid}/stages/concept/run", json={}).json()
+    vid = first["version"]["id"]
+    _until(lambda: client.get(f"/api/jobs/{first['job']['id']}").json()["status"] == "running")
+    client.post(f"/api/assets/{aid}/stop", json={"stage": "concept"})
+    _until(lambda: _versions(client, aid, "concept")[0]["stopped"])
+    with session_factory()() as db:
+        v = db.get(Version, vid)
+        v.selected, v.error = True, SET_ASIDE_ERROR  # an older row: set aside but still kept
+        db.commit()
+    full = client.get(f"/api/assets/{aid}").json()
+    assert full["stages"]["concept"][0]["selected"] is False
+    assert "concept" not in full["selected"]
+    assert unkeep_stopped_and_failed(get_engine()) == 1
+    with session_factory()() as db:
+        assert db.get(Version, vid).selected is False

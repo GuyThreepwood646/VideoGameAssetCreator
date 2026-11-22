@@ -290,7 +290,7 @@ def unkeep_stopped_and_failed(engine) -> int:
     from sqlalchemy import text
     with engine.begin() as conn:
         res = conn.execute(text("UPDATE version SET selected = 0 WHERE selected = 1 AND "
-                                "((status = 'rejected' AND error = :stopped) OR status = 'error')"), {"stopped": STOPPED_ERROR})
+                                "status IN ('rejected', 'error')"))
         return int(res.rowcount or 0)
 
 
@@ -403,6 +403,8 @@ def project_to_dict(p: Project) -> dict[str, Any]:
 # resumed: the same job goes back in the queue with the same settings. Setting it aside changes the error.
 STOPPED_ERROR = "cancelled"
 SET_ASIDE_ERROR = "stopped and set aside"
+# A rejected version (stopped, set aside, replaced or turned down) or a failed one is never the kept version (WP-02).
+UNKEPT_STATUSES = ("rejected", "error")
 
 
 def is_stopped(v: "Version") -> bool:
@@ -433,7 +435,7 @@ def version_to_dict(v: Version) -> dict[str, Any]:
         "job_id": v.job_id,
         "error": v.error,
         "created_at": _iso(v.created_at),
-        "selected": bool(v.selected) and not (is_stopped(v) or v.status == "error"),
+        "selected": bool(v.selected) and v.status not in UNKEPT_STATUSES,
     }
 
 
@@ -469,7 +471,7 @@ def asset_to_dict(a: Asset, with_stages: bool = True) -> dict[str, Any]:
     if with_stages:
         for v in sorted(a.versions, key=lambda x: (x.created_at, x.id)):
             out["stages"].setdefault(v.stage, []).append(version_to_dict(v))
-            if v.selected and not (is_stopped(v) or v.status == "error"):
+            if v.selected and v.status not in UNKEPT_STATUSES:
                 out["selected"][v.stage] = v.id
     return out
 
