@@ -72,7 +72,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import creaturemetal, face, facing, guidance, hairlib, hairmat, headtris, imaging, library, lightfix, normalfix, quality, reference, skinmetal, srcproject, texcolour
+from .. import creaturemetal, face, facing, guidance, hairlib, hairmat, headtris, imaging, library, lightfix, normalfix, quality, reference, skinmetal, srcproject, steptime, texcolour
 from .. import hair as hairfind
 from ..blender import gridfit
 from . import face_detail, hair_detail
@@ -356,8 +356,10 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         args += ["--maps", maps_json, "--tex", tex, "--padding", imaging.unwrap_padding(tex), "--margin", imaging.dilation_px(tex),
                  "--rebake", "always" if params.get("rebake") else "auto", "--category", sc.asset.category]
     sc.progress(0.1, "Blender prep")
-    await sc.blender("prep.py", args, log_name="prep.log")
+    with steptime.part(sc, "blender_prep"):   # waits for the host's Blender; the re-bake below is inside it
+        await sc.blender("prep.py", args, log_name="prep.log")
     report = json.loads((sc.dir / "prep_report.json").read_text())
+    steptime.add(sc, "rebake", report.get("rebake_seconds") or None)
     sc.register("glb", out)
     sc.register("report", sc.dir / "prep_report.json")
     rebaked = bool(report.get("rebaked"))
@@ -393,8 +395,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         # Light is removed after the painting (vgac/lightfix.py) when the pictures are painted on: the projection paints
         # their light back in over a de-light done here. The de-light here stays for models nothing is painted on.
         light_after = surface["delight"] == "remove" and srcproject.on(params, sc.asset.category, look)
-        result = await asyncio.to_thread(texture_pass, out, bake_glb, maps, sc.dir, tex, surface["delight"], surface["pbr_fix"],
-                                         rebaked, look, light_after)
+        result = await steptime.run(sc, "texture_pass", asyncio.to_thread(texture_pass, out, bake_glb, maps, sc.dir, tex, surface["delight"],
+                                                                         surface["pbr_fix"], rebaked, look, light_after))
         for key, p in result["files"].items():
             sc.register(key, p)
         sc.set_metrics(**result["metrics"], delight_mode=surface["delight"], delight_source=surface["delight_source"])
@@ -417,8 +419,10 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         if paint_first or srcproject.on(params, sc.asset.category, look):
             # the facing was decided (or chosen by hand): the front pictures are fitted on the front half only
             front_known = facing_.get("face_best_turn") is not None or facing_.get("facing_source") == "chosen"
-            current = await srcproject.run_stage(sc, out, current, params, keep=body_views, head_yaw=head_yaw,
-                                                 front_known=front_known)
+            with steptime.part(sc, "projection"):   # the picture painted on: pose search, fits and the compose are inside it
+                current = await srcproject.run_stage(sc, out, current, params, keep=body_views, head_yaw=head_yaw,
+                                                     front_known=front_known)
+            steptime.add(sc, "pose_search", pose_search_seconds(sc))   # summed over the views (fitted at the same time)
         if paint_first and tri_limit["limit"] and int(report.get("triangles") or 0) > int(tri_limit["limit"]):
             # the same head (and hands) protection as the budget pass of the normal path (only when the head is weighted)
             head_args = (["--protect-head", headtris.HEAD_SHARE, "--head-gain", headtris.HEAD_GAIN]
@@ -427,7 +431,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
                                                look, surface["delight"], surface["pbr_fix"], light_after, keep_normal, head_args)
 
         async def paint_body_again(glb_: Path, maps_: dict[str, Path]) -> dict[str, Path]:
-            return await srcproject.run_again(sc, glb_, maps_, body_views)
+            with steptime.part(sc, "second_compose"):
+                return await srcproject.run_again(sc, glb_, maps_, body_views)
 
         # "The face matters" off on the asset: the pass is skipped unless this run turns it on
         face_matters = getattr(sc.asset, "face_matters", None) is not False
@@ -451,10 +456,14 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         hf = await hair_detail.find(sc, out, current, rec, params,
                                     skin_metal=(sm["metrics"]["skin_metal"].get("metal_share_before") if sm["metrics"]["skin_metal"].get("ran") else None))
         face_detail_seed = params.get("face_detail_seed")
-        fd = await face_detail.run(sc, out, current, rec, params, hair_plan=hf.get("plan"), face_detail_seed=face_detail_seed,
-                                   after_relayout=paint_body_again if body_views.get("views") else None,
-                                   body_painted=bool(body_views.get("views")),
-                                   head_yaw=head_yaw)
+        with steptime.part(sc, "face_detail"):   # the second compose and the sharpening redraw are inside it
+            fd = await face_detail.run(sc, out, current, rec, params, hair_plan=hf.get("plan"), face_detail_seed=face_detail_seed,
+                                       after_relayout=paint_body_again if body_views.get("views") else None,
+                                       body_painted=bool(body_views.get("views")),
+                                       head_yaw=head_yaw)
+        fdm = (fd.get("metrics") or {}).get("face_detail") or {}
+        steptime.add(sc, "sharpening", fdm.get("redraw_seconds") or None)
+        steptime.add(sc, "face_rebake", (fdm.get("layout") or {}).get("rebake_seconds") or None)
         body_views.clear()  # several large pictures per view: let them go
         for key, p in fd["files"].items():
             sc.register(key, p)
@@ -467,7 +476,7 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
             # the new layout (the face's own texels in particular)
             after_face, sm2 = await clear_skin_metal(sc, out, after_face)
             sc.set_metrics(skin_metal_again=sm2["metrics"]["skin_metal"])
-        hd = await hair_detail.run(sc, out, after_face, rec, params, hf, fd.get("layout"))
+        hd = await steptime.run(sc, "hair_detail", hair_detail.run(sc, out, after_face, rec, params, hf, fd.get("layout")))
         for key, p in hd["files"].items():
             sc.register(key, p)
         sc.set_metrics(**hd["metrics"])
@@ -493,7 +502,25 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         await asyncio.to_thread(imaging.glb_replace_images, out, drop_normal=True)
     if hair is not None:
         await attach_hair(sc, out, hair, mesh_v.metrics if mesh_v else {})
-    await judge(sc)
+    await steptime.run(sc, "judge", judge(sc))
+
+
+def pose_search_seconds(sc: StageContext) -> float | None:
+    """The seconds the pose search took, summed over the views it ran for, from the record the projection pass keeps for
+    each view (metrics.srcproject_views[view].pose_search.seconds: outline, terms, refine, settle, d2). The views are
+    searched at the same time, so this can be longer than the time it held up the step. None: no search ran."""
+    try:
+        total, found = 0.0, False
+        for info in ((sc.version.metrics or {}).get("srcproject_views") or {}).values():
+            rec = info.get("pose_search") if isinstance(info, dict) else None
+            secs = rec.get("seconds") if isinstance(rec, dict) else None
+            if isinstance(secs, dict):
+                for k, v in secs.items():
+                    if k != "fit" and isinstance(v, (int, float)):
+                        total, found = total + float(v), True
+        return round(total, 1) if found else None
+    except Exception:  # noqa: BLE001  (timing never fails a job)
+        return None
 
 
 def late_cap_of(rec: dict[str, Any], look: dict[str, Any], tex: int) -> int | None:

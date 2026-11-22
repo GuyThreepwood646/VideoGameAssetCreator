@@ -18,6 +18,7 @@ from typing import Any
 from ..db import Version, session_factory
 from ..jobs import JobContext, parse_kind
 from ..reference import STAGE_ORDER
+from .. import steptime
 from .base import StageContext
 
 STAGE_MODULES = {s: f"vgac.stages.{s}" for s in STAGE_ORDER}
@@ -86,6 +87,7 @@ async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
             raise ValueError(f"job {ctx.job_id}: version {payload.get('version_id')!r} not found")
         sc = StageContext(ctx, db, version)
         params = dict(payload.get("params") or {})
+        steptime.begin(sc)
         if op == "run":
             await mod.run(sc, params)
         elif op == "refine":
@@ -146,6 +148,8 @@ async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
                     await judge(sc)
         else:
             raise ValueError(f"unknown op {op!r}")
+        if op in ("run", "refine", "adjust"):
+            steptime.finish(sc)   # WP-91: metrics.timing, parts and total
         sc.save()
 
 

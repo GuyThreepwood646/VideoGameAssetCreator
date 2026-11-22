@@ -55,7 +55,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .. import buildpose, colourmatch, facing, guidance, hairlib, headgraft, headtris, imaging, library, meshgeom, normalfix, quality, reference, texcolour, texfidelity
+from .. import buildpose, colourmatch, facing, guidance, hairlib, headgraft, headtris, imaging, library, meshgeom, normalfix, quality, reference, steptime, texcolour, texfidelity
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.pixal3d import FOV_NODE, PIXAL3D_VIEWS, pixal3d_graph
@@ -564,7 +564,9 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
     else:
         graph = convert_graph(name, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps,
                               texture_seed=texture_seed)
-    entry = await sc.comfy(graph, poll=5.0, message=message, base=base, span=span)
+    with steptime.part(sc, "head_graph" if tag else "graph"):   # includes any wait for the card
+        entry = await sc.comfy(graph, poll=5.0, message=message, base=base, span=span)
+    t_after = time.monotonic()
     glb = await sc.download_mesh(entry, out / "model.glb")
     if not keep_normal:
         # The recipe's look: no bump map (the GLB's own copy goes too).
@@ -610,6 +612,7 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
             match = texcolour.compare(picture, await asyncio.to_thread(texcolour.texture_stats, maps.get("base_color"), Path(glb)))
         except Exception as e:  # noqa: BLE001  (not measured: kept as it is, like a build that passes)
             metrics["texture_match_error"] = str(e)[:300]
+    steptime.add(sc, "head_after_graph" if tag else "after_graph", time.monotonic() - t_after)   # download, normal fix, seams, colour match
     return {"seed": seed, "elapsed": entry.get("elapsed_seconds"), "maps": maps, "other": other, "metrics": metrics, "match": match}
 
 
@@ -652,15 +655,18 @@ async def _hy3d(sc: StageContext, params: dict[str, Any]) -> None:
     octree = int(params.get("octree") or HY3D_OCTREE)
     sc.set_params(engine="hy3d", seed=seed, steps=steps, cfg=cfg, octree=octree)
     sc.use_model("hy3d_mv")
-    entry = await sc.comfy(hy3d_graph(names, sc.prefix("model"), steps=steps, cfg=cfg, seed=seed, octree_resolution=octree,
-                                      unwrap_resolution=HY3D_UNWRAP_RESOLUTION, unwrap_padding=imaging.unwrap_padding(HY3D_UNWRAP_RESOLUTION),
-                                      remesh=HY3D_REMESH_RESOLUTION),
-                           poll=5.0, message="Hunyuan3D-2mv", base=0.05, span=0.7)
+    with steptime.part(sc, "graph"):
+        entry = await sc.comfy(hy3d_graph(names, sc.prefix("model"), steps=steps, cfg=cfg, seed=seed, octree_resolution=octree,
+                                          unwrap_resolution=HY3D_UNWRAP_RESOLUTION, unwrap_padding=imaging.unwrap_padding(HY3D_UNWRAP_RESOLUTION),
+                                          remesh=HY3D_REMESH_RESOLUTION),
+                               poll=5.0, message="Hunyuan3D-2mv", base=0.05, span=0.7)
+    t_after = time.monotonic()
     glb = await sc.download_mesh(entry, sc.dir / "model.glb")
     sc.register("glb", glb)
     # The raw mesh is unwrapped at full detail (UnwrapMesh, pec) so prep can paint it and shrink it after (stages/prep.py).
     sc.set_metrics(engine="hy3d", seed=seed, elapsed_seconds=entry.get("elapsed_seconds"), textured=False,
                    unwrap_resolution=HY3D_UNWRAP_RESOLUTION)
+    steptime.add(sc, "after_graph", time.monotonic() - t_after)
 
 
 async def audit(sc: StageContext) -> None:
@@ -985,7 +991,7 @@ async def run(sc: StageContext, params: dict[str, Any]) -> None:
         await _trellis(sc, params)
     else:
         raise ValueError(f"unknown mesh engine {engine!r}")
-    await audit(sc)
+    await steptime.run(sc, "audit", audit(sc))   # silhouette render, geometry and hair checks in Blender, then judge
 
 
 async def upload(sc: StageContext, params: dict[str, Any], view: str | None = None) -> None:

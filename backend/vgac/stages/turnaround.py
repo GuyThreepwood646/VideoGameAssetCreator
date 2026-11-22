@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import bodymarks, buildpose, hair_sides, hairlib, library, quality, reference, side_agree
+from .. import bodymarks, buildpose, hair_sides, hairlib, library, quality, reference, side_agree, steptime
 from ..db import Version
 from ..graphs.qwen_edit import (BACK_HAIR_SENTENCE, BACK_SIDES_SENTENCE, CAMERA_TURNS, CUT_NODE, SHEET_INPUT, SHEET_ORDER, angle_cutout_graph, angle_graph, camera_graph,
                                 edit_graph, sheet_graph, view_prompt)
@@ -951,7 +951,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     if stale:
         keep = {v: info for v, info in (keep or {}).items() if v not in stale}
         views = [*views, *[v for v in stale if v not in views]]  # redrawn with the choice now in force
-    posed = await _pose_ready_picture(sc, params, src)
+    posed = await steptime.run(sc, "pose_ready", _pose_ready_picture(sc, params, src))
     if posed is not None:
         src = posed  # every drawn view starts from the pose-ready picture; the concept stays as it is
     await asyncio.to_thread(_pose_for_3d, sc, source, posed)
@@ -985,7 +985,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
         sheet_seed = int(base_seed) if base_seed else random_seed()
         sc.use_model("qwen_sheet_lora")
         used.add("sheet")
-        sheet = await _draw_sheet(sc, source, src, sheet_seed, loras=view_loras)
+        sheet = await steptime.run(sc, "draw_sheet", _draw_sheet(sc, source, src, sheet_seed, loras=view_loras))
     elif method == "shadow_free" and any(method_draws("shadow_free", v) for v in drawn):
         sc.use_model("qwen_camera_lora")
         used.add("shadow_free")
@@ -1095,7 +1095,8 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
                 sc.progress(at, f"view {view} attempt {attempts + 1}{where}")
                 # The hair words only on a redraw of a back whose hair was found swept (see BACK_HAIR_WORDS).
                 prev = results.get(view) or {}
-                files, drew = await draw(view, seed, attempts, at, card, words=bool(attempts and prev.get("hair_swept")))
+                with steptime.part(sc, f"redraw_{view}" if attempts else f"draw_{view}"):   # WP-91: a card queue wait counts
+                    files, drew = await draw(view, seed, attempts, at, card, words=bool(attempts and prev.get("hair_swept")))
             sc.register(view, files["raw"])
             sc.register(f"{view}_cutout", files["cutout"])
             sc.register(f"{view}_white", files["white"])
@@ -1259,7 +1260,7 @@ async def _run_views(sc: StageContext, views: list[str], params: dict[str, Any],
     _publish_views(sc, results)
     _note_second_quarter(sc, results)
     if BODY_MARKS:
-        await asyncio.to_thread(body_marks, sc, list(views))
+        await steptime.run(sc, "body_marks", asyncio.to_thread(body_marks, sc, list(views)))
 
 
 # Mark the body (bodymarks.py): after the views are in, the marks on the front and both side pictures, in marks.json (file
@@ -1327,7 +1328,7 @@ async def run(sc: StageContext, params: dict[str, Any]) -> None:
         _start_bald(sc, params)
     await _run_views(sc, views, params, sc.parent, supplied=supplied)
     if bald:
-        await _run_bald(sc, sc.parent, params)
+        await steptime.run(sc, "bald", _run_bald(sc, sc.parent, params))
 
 
 async def upload(sc: StageContext, params: dict[str, Any], view: str | None = None) -> None:
