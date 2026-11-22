@@ -106,6 +106,37 @@ none_req = gait.MOTION_ALIASES.get(_req, _req) == "none"
 # Leg chains: leaves whose head sits in the bottom 20 percent of the height, reduced to the lowest leaf per limb
 # cluster (cluster by horizontal distance). Every cluster is kept (G31: spiders move all eight legs).
 leg_leaves = [] if serpent_req else [b for b in leaves if zrel(low[b.name]) < 0.2]
+# A leaf is a limb only if some bone on its branch carries a vertex weight above 0 (rig detection fix, 2026-11-22). The
+# branch is the leaf and the bones above it up to the first junction (an ancestor with more than one child), or up to
+# the root. A helper branch hung off the root with no weights (a pole or IK target) is not a limb; an unweighted toe or
+# _End leaf at the end of a weighted leg is still a leg.
+_weighted = set()
+for _o in meshes:
+    _names = {g.index: g.name for g in _o.vertex_groups}
+    for _v in _o.data.vertices:
+        for _g in _v.groups:
+            if _g.weight > 0 and _g.group in _names:
+                _weighted.add(_names[_g.group])
+
+
+def _branch(b):
+    out = [b]
+    x = b
+    while x.parent is not None and len(x.parent.children) <= 1:
+        x = x.parent
+        out.append(x)
+    return out
+
+
+if _weighted:  # a rig with no weighted mesh at all keeps every leaf, as before
+    leg_leaves = [b for b in leg_leaves if any(x.name in _weighted for x in _branch(b))]
+# A foot bone that hangs off the root (not off the shin) and starts at a leg's ankle is that leg's foot, not a
+# second leg (rig detection fix, 2026-11-22): a leaf no longer than 0.12 x height, whose head sits within 0.05 x height of
+# another leg leaf's low point (the ankle), adds no leg. Long leg chains are the ankle anchors.
+_ankles = [b for b in leg_leaves if (tail[b.name] - head[b.name]).length > 0.12 * height]
+_feet = {b.name for b in leg_leaves if b not in _ankles and (tail[b.name] - head[b.name]).length <= 0.12 * height
+         and any((head[b.name] - low[a.name]).length <= 0.05 * height for a in _ankles)}
+leg_leaves = [b for b in leg_leaves if b.name not in _feet]
 leg_leaves.sort(key=lambda b: low[b.name].z)
 clusters = []
 for b in leg_leaves:
