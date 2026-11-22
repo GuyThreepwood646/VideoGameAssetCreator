@@ -39,7 +39,7 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     gerund: 'Painting the concept art',
     placeholder: 'e.g. make the helmet open-faced and the shield round',
     tech: 'Concept art (text-to-image)',
-    help: H('Describe', 'The first picture of your asset, painted from your description.', 'Everything later is built from this picture, so get the look right here.', 'Concept art (text-to-image)'),
+    help: H('Describe', 'The first picture of your asset, drawn from your description.', 'Everything later is built from this picture, so get the look right here.', 'Concept art (text-to-image)'),
   },
   turnaround: {
     plain: 'Check all sides',
@@ -63,7 +63,7 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     gerund: 'Cleaning up for the game',
     placeholder: 'e.g. more wear on the armour',
     tech: 'Retopology, UV unwrap, texture bake',
-    help: H('Clean up for the game', 'Turns the model to face forward, sets its real-world size (scenery is rounded to the grid), puts the pivot at the base (a corner for scenery), removes stray geometry and checks the textures; it mirrors the two halves only when you ask.', 'Game engines expect models at the right scale, facing the right way, with a clean surface and textures painted for that surface.', 'Retopology, UV unwrap, texture bake'),
+    help: H('Clean up for the game', 'Turns the model to face forward, sets its real size, puts its anchor point at the base, removes stray bits and checks the textures.', 'Game engines expect models at the right scale, facing the right way, with a clean surface and textures painted for that surface.', 'Retopology, UV unwrap, texture bake'),
   },
   rig: {
     plain: 'Make it move',
@@ -71,7 +71,7 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     gerund: 'Adding a skeleton',
     placeholder: 'e.g. smoother bending at the left elbow',
     tech: 'Rigging, skin weights, animation',
-    help: H('Make it move', 'Puts a skeleton inside the model and attaches the surface to it, then tries a walk and an idle.', 'Without a skeleton the model cannot animate.', 'Rigging, skin weights, animation'),
+    help: H('Make it move', 'Puts a skeleton inside the model, joins the surface to it, then makes a walk and a stand-still move to test it.', 'Without a skeleton the model cannot animate.', 'Rigging, skin weights, animation'),
   },
   export: {
     plain: 'Hand off to the game',
@@ -318,8 +318,8 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   negative: H('Things to avoid (negative prompt)', 'Things the model should leave out, such as text or blur.', 'Removes common mistakes before they happen.', 'negative (style_lock.negative)'),
   loras: H('Style add-ons (LoRAs)', 'Small trained files that push the model toward a particular look.', 'Optional; most projects need none.', 'LoRA (low-rank adaptation), style_lock.loras'),
   lora: H('Style add-on (LoRA)', 'A small trained file that pushes the model toward a particular look.', 'Optional; most projects need none.', 'LoRA (low-rank adaptation)'),
-  model: H('Painter (model)', 'The AI image model that paints the picture.', 'Different models are faster, slower or suit different styles.', 'Checkpoint (data/models.yaml)'),
-  concept_model: H('Painter (model)', 'The AI image model that paints the first picture of this asset.', 'We suggest one that suits the look and platform; pick another if you prefer its style. You can change it later under Fine-tune.', 'concept_model'),
+  model: H('Picture model (checkpoint)', 'The AI image model that draws the picture.', 'Different models are faster, slower or suit different styles.', 'Checkpoint (data/models.yaml)'),
+  concept_model: H('Picture model (checkpoint)', 'The AI image model that draws the first picture of this asset.', 'We suggest one that suits the look and platform; pick another if you prefer its style. You can change it later under Fine-tune.', 'concept_model'),
   stage: H('Step', 'One of the six steps every asset goes through: describe, check all sides, build the 3D model, clean up, make it move, hand off.', 'Each step builds on the version you kept in the step before it.', 'stage'),
   // Image generation
   seed: H('Seed', 'A number that picks which of many possible pictures you get.', 'Same seed, same picture; change it to get a different one.', 'seed'),
@@ -540,7 +540,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   gallery: H('Gallery', 'Every finished asset from every project in one place.', 'Find a finished asset, open it, or copy the folder its files were saved to.', 'gallery (GET /api/gallery)'),
   delivered_to: H('Saved to', 'The folder on this computer where the finished files were copied.', 'Open this folder, or point your game engine at it, to use the asset.', 'delivered_to'),
   // Autopilot
-  autopilot: H('Autopilot', 'Runs every step for you, keeps each result that passes its checks, and stops only when something needs you.', 'Press "Create and make it" when you create the asset, or "Make it" on an asset you already started, once and come back to a finished asset; you can still change any step afterwards.', 'autopilot (POST /api/assets/{id}/autopilot)'),
+  autopilot: H('Autopilot', 'Runs every step for you, keeps each result that passes its checks, and stops only when something needs you.', 'Press "Create and make it" when you create an asset, or "Make it" on one you already started. Then come back to a finished asset. You can still change any step afterwards.', 'autopilot (POST /api/assets/{id}/autopilot)'),
   stop_on: H('When to stop', 'Which check failures make the autopilot pause: serious problems only, any warning, or never.', 'Serious problems would break the asset in the game, so the default pauses on those and continues past warnings.', 'stop_on (block | warn | never)'),
   until_stage: H('Run until', 'The last step the autopilot runs before it stops.', 'Usually the hand-off; stop earlier if you only want the picture or the model.', 'until_stage'),
   // Style presets
@@ -598,8 +598,8 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   people_box: H('Box round the person', 'A box round the main person in a photo you give, suggested for you when the app finds people in it.', 'It keeps the other people, and anything else in the picture, off the character. You can drag it, use the keyboard, or use the whole photo instead. With the whole photo and more than one person in it, the form warns you before the build.', 'POST /api/people (MediaPipe pose landmarker, up to 4 people; the largest, most central person is the main one); the box is sent as crop with the photo and cut before the first picture is drawn'),
   start_from: H('Start from', 'Whether the first picture is painted from your words, is a picture you already have, or comes from a 3D model you already have.', 'With your own picture the app skips painting and goes straight to cutting it out and checking it is ready for 3D. With any of the three you can add feature photos (a face, a body, an outfit).', 'POST /api/projects/{id}/assets with image'),
   what_is_it_note: H('What is it?', 'A few words about your picture, such as "a knight in red armour".', 'Optional. Later steps, such as changing something, read these words, so a short description helps them.', 'asset prompt (note)'),
-  own_picture: H('Use my own picture', 'Start this step from a picture you already have instead of painting one.', 'Your picture is cut out and checked like a painted one; then every later step builds on it.', 'POST /api/assets/{id}/stages/concept/upload'),
-  your_picture: H('Your picture', 'A version made from a picture you added, not painted by the app.', 'It goes through the same cutout and checks as a painted picture.', 'params.source = upload'),
+  own_picture: H('Use my own picture', 'Start this step from a picture you already have instead of drawing one.', 'Your picture is cut out and checked like a drawn one; then every later step builds on it.', 'POST /api/assets/{id}/stages/concept/upload'),
+  your_picture: H('Your picture', 'A version made from a picture you added, not drawn by the app.', 'It goes through the same cutout and checks as a painted picture.', 'params.source = upload'),
   ready_for_3d: H('Ready for 3D', 'Checks that the picture suits the 3D step: one subject, all of it in the picture, big enough, and for people arms away from the body.', 'They only warn; you can keep a picture that fails one. "Redraw it ready for 3D" asks the image edit model to redraw it in the standard pose.', 'readiness checks (one_subject, in_frame, big_enough, arms_away)'),
   one_subject: H('One subject', 'Whether the picture shows one thing on its own.', 'Two characters or loose pieces in one picture become one strange 3D model.', 'connected areas of the cutout'),
   in_frame: H('Whole subject in the picture', 'Whether there is space around the subject on every side.', 'A part cut off at the edge is missing from the 3D model.', 'cutout margin on every side, at least 1 percent'),
@@ -1463,8 +1463,8 @@ export function movesSourceLine(metrics: Record<string, unknown>): string {
   const lib = (Array.isArray(metrics.library_clips) ? metrics.library_clips.length : 0) - mine
   const proc = Array.isArray(metrics.procedural_clips) ? metrics.procedural_clips.length : 0
   const yours = mine ? `, ${mine} from your own file${mine > 1 ? 's' : ''}` : ''
-  if (metrics.clips_source === 'library' && lib + mine > 0) return `Where they come from: ${lib} from the move library (free, fine for commercial games)${yours}${proc ? ` and ${proc} built in` : ''}.`
-  if (metrics.clips_source === 'procedural') return 'Where they come from: built in, made for this skeleton.'
+  if (metrics.clips_source === 'library' && lib + mine > 0) return `Where they come from: ${lib} from the move library (free, fine for commercial games)${yours}${proc ? ` and ${proc} made by the app` : ''}.`
+  if (metrics.clips_source === 'procedural') return 'Where they come from: made by the app for this skeleton.'
   return ''
 }
 

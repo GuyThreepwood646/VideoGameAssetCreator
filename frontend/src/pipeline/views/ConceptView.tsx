@@ -41,7 +41,7 @@ export function ConceptView({ version }: { version: Version }) {
             </>
           ) : version.params.model ? (
             <>
-              painted by {modelLabel(String(version.params.model))}
+              drawn by {modelLabel(String(version.params.model))}
               <Info term={'model.' + String(version.params.model)} />
             </>
           ) : null}

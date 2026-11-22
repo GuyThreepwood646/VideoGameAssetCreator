@@ -93,7 +93,7 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
         <div className="guide-happened">{kept}</div>
         <div className="guide-now muted">The whole asset is finished. A change here makes a new version; the finished files stay until you rebuild the steps after it.</div>
         {warns > 0 && (
-          <Disclosure label={`${warns} on the whole asset`} className="finish-bar-warn small">
+          <Disclosure label={`${warns} check${warns === 1 ? '' : 's'} on the whole asset`} className="finish-bar-warn small">
             <div className="muted small">{verdictLine(items)}</div>
             <TieredChecks asset={asset} items={items} stage={stage} />
           </Disclosure>

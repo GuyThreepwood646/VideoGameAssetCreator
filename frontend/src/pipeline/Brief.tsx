@@ -200,7 +200,7 @@ export function BriefCard({ asset, onSaved, onError }: { asset: Asset; onSaved: 
         <span className="muted small">
           {fromModel
             ? 'You started from your own 3D model; the pictures here are taken of it. A painted picture shows the prompt the app sent for it.'
-            : 'Each picture below shows the full prompt the app sent for it, under "Prompt sent to the painter".'}
+            : 'Each picture below shows the full prompt the app sent for it, under "Description sent to the picture model".'}
         </span>
       </div>
     </section>
@@ -232,7 +232,7 @@ export function PromptSent({ version }: { version: Version }) {
     }
   }
   return (
-    <Disclosure label="Prompt sent to the painter" className="prompt-sent">
+    <Disclosure label="Description sent to the picture model" className="prompt-sent">
       {instruction && (
         <div className="small">
           Change you asked for: <span className="brief-text">{instruction}</span>
@@ -240,7 +240,7 @@ export function PromptSent({ version }: { version: Version }) {
       )}
       {sent && (
         <>
-          <pre className="prompt-text" aria-label="Prompt sent to the painter">
+          <pre className="prompt-text" aria-label="Description sent to the picture model">
             {sent}
           </pre>
           {negative && (

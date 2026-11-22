@@ -174,8 +174,9 @@ export function controllerParams(rep: UnityReport | null): string[] {
 }
 
 const TRIGGER_ORDER = ['Attack', 'Hit', 'Die', 'Jump']
+const TRIGGER_WORDS: Record<string, string> = { Attack: 'Attack', Hit: 'Get hit', Die: 'Die', Jump: 'Jump' }
 const LOCO_VERBS: [RegExp, string][] = [
-  [/idle/i, 'idles'],
+  [/idle/i, 'stands still'],
   [/walk/i, 'walks'],
   [/run|trot|jog|sprint/i, 'runs'],
 ]
@@ -187,7 +188,7 @@ export function controllerMoves(rep: UnityReport | null, clipNames: string[]): {
   const names = clipNames.length ? clipNames : unityClips(rep).map((c) => c.name)
   const loco = LOCO_VERBS.filter(([re]) => names.some((n) => re.test(n))).map(([, verb]) => verb)
   const triggers = TRIGGER_ORDER.filter((t) => params.includes(t))
-  return { loco: loco.length ? loco : ['idles', 'walks', 'runs'], triggers }
+  return { loco: loco.length ? loco : ['stands still', 'walks', 'runs'], triggers }
 }
 
 const num = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null)
@@ -264,8 +265,8 @@ function baseFinishLines(asset: Asset): FinishLine[] {
     else if (failed(ctrl)) lines.push(warnFrom('movement', ctrl!, 'animator_controller'))
     else if (moves) {
       const t = moves.triggers
-      const oneOff = t.length ? `; ${joinAnd(t)} ${t.length > 1 ? 'are one line each' : 'is one line'}` : ''
-      lines.push({ id: 'movement', text: `Ready to move: set Speed and it ${joinAnd(moves.loco)}${oneOff}.`, state: 'ok', term: 'animator_controller' })
+      const oneOff = t.length ? `; the ${joinAnd(t.map((x) => TRIGGER_WORDS[x] ?? x))} triggers each play that move once` : ''
+      lines.push({ id: 'movement', text: `Ready to move: in Unity's Animator, set the Speed value and the character ${joinAnd(moves.loco)}${oneOff}.`, state: 'ok', term: 'animator_controller' })
     }
   }
 

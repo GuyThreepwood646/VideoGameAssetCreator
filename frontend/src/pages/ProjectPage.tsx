@@ -559,7 +559,7 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
           onChange={(id, choice) => setCombineLoras((cur) => ({ ...cur, [id]: choice }))}
         />
       )}
-      <Field label="3. Name (optional)" hint={`Optional. We will call it "${fallbackName}" if you leave this empty.`}>
+      <Field label="3. Name (optional)" hint={`We will call it "${fallbackName}" if you leave this empty.`}>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? 'Knight' : fallbackName} />
       </Field>
       {described && (

@@ -805,7 +805,8 @@ def moves_metrics(sidecar: dict[str, Any] | None, rows: list[dict[str, Any]], re
         if c.get("source") == "library":
             src = "mine" if str(lib or "").startswith(MINE_PREFIX) else "library"
             clip = f"{lib}:{c.get('from')}" if lib else (r or {}).get("clip")
-            label = c.get("label") or (r or {}).get("label") or label_for(str(c.get("from") or "")) or n.replace("_", " ").capitalize()
+            # the app's table names its own library moves, so one name shows however old the version is
+            label = (c.get("label") if src == "mine" else label_for(str(c.get("from") or "")) or c.get("label")) or (r or {}).get("label") or n.replace("_", " ").capitalize()
         else:
             src, clip = "built-in", None
             label = BUILT_IN_LABELS.get(n) or n.replace("_", " ").capitalize()

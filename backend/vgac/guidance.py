@@ -18,7 +18,7 @@ STAGE_GUIDE: dict[str, dict[str, Any]] = {
     "concept": {
         # Seconds per candidate.
         "plain_verb": "Make concept art", "estimate_seconds": 25,
-        "help": {"meaning": "The first picture of your asset, painted from your description.",
+        "help": {"meaning": "The first picture of your asset, drawn from your description.",
                  "why": "Everything later is built from this picture, so get the look right here.",
                  "technical": "Concept image (text-to-image), with a background cutout"},
     },
@@ -36,13 +36,13 @@ STAGE_GUIDE: dict[str, dict[str, Any]] = {
     },
     "prep": {
         "plain_verb": "Clean up for the game", "estimate_seconds": 20,
-        "help": {"meaning": "Turns the model to face forward, sets its real-world size (scenery is rounded to the grid), puts the pivot at the base (a corner for scenery), removes stray geometry and checks the textures; it mirrors the two halves only when you ask.",
+        "help": {"meaning": "Turns the model to face forward, sets its real size, puts its anchor point at the base, removes stray bits and checks the textures.",
                  "why": "Game engines expect models at the right scale, facing the right way, with a clean surface and textures painted for that surface.",
                  "technical": "Yaw to face +Z, uniform scale on the category size axis (grid snap and corner pivot for environment), pivot, weld, optional symmetrize with re-bake, manifold cleanup, PBR and baked-light checks"},
     },
     "rig": {
         "plain_verb": "Make it move", "estimate_seconds": 90,
-        "help": {"meaning": "Puts a skeleton inside the model and attaches the surface to it, then tries a walk and an idle.",
+        "help": {"meaning": "Puts a skeleton inside the model, joins the surface to it, then makes a walk and a stand-still move to test it.",
                  "why": "Without a skeleton the model cannot animate.",
                  "technical": "Auto-rigging (SkinToken), skin weights, procedural idle and walk clips"},
     },
@@ -1508,6 +1508,30 @@ def format_check_text(template: str, values: dict[str, Any]) -> str:
         return _FORMATTER.vformat(template, (), values)
     except (ValueError, IndexError, KeyError, AttributeError):
         return template
+
+
+def refresh_check_wording(metrics: dict[str, Any]) -> dict[str, Any]:
+    """The version's metrics with each stored check's sentence and fix button text in today's words. Only the words are
+    taken from describe_check; the measured value, the verdict and the fix's settings stay as the version stored them, so
+    a version made before a wording change reads like one made after it."""
+    checks = metrics.get("checks") if isinstance(metrics, dict) else None
+    if not isinstance(checks, list):
+        return metrics
+    out = []
+    for c in checks:
+        try:
+            d = describe_check(c) if isinstance(c, dict) else c
+            n = dict(c)
+            if "help" in d and "help" in c:
+                n["help"] = d["help"]
+            if isinstance(c.get("fix"), dict) and isinstance(d.get("fix"), dict) and d["fix"].get("label"):
+                n["fix"] = {**c["fix"], "label": d["fix"]["label"]}
+            if c.get("fix_label") and d.get("fix_label"):
+                n["fix_label"] = d["fix_label"]
+            out.append(n)
+        except Exception:  # noqa: BLE001
+            out.append(c)
+    return {**metrics, "checks": out}
 
 
 def describe_check(c: dict[str, Any]) -> dict[str, Any]:

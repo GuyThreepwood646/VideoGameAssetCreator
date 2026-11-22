@@ -11,7 +11,7 @@ import { MovePreview } from './MovePreview'
 import { MyMoveForm, MyMoveUpload, RESPONSIBILITY } from './MyMoves'
 
 // Your own moves carry a Yours mark instead of a word here.
-const SOURCE_WORD: Record<CharacterMove['source'], string> = { library: 'from the move library', mine: '', 'built-in': 'built in' }
+const SOURCE_WORD: Record<CharacterMove['source'], string> = { library: 'from the move library', mine: '', 'built-in': 'made by the app' }
 const BUSY_POLL_MS = 4000
 
 // previewClips: the clips the viewer can play (from the file, named like the move: `clip` is the library id, not the file's name); a move outside it says so. onPlay plays one in the viewer.
@@ -70,7 +70,7 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
     <section className="moves-panel">
       <div className="row-between">
         <div className="field-label">
-          Moves in your files ({data.moves.length})
+          Moves ({data.moves.length}): from the move library, your own files and built in
           <Info term="term.add_move" />
         </div>
         {data.can_add && kept && (
@@ -84,6 +84,7 @@ export function MovesPanel({ version, previewClips = null, onPlay }: { version: 
           </div>
         )}
       </div>
+      <p className="muted small">Library moves are ready-made and copied onto this skeleton. Built-in moves are made by the app itself for this skeleton, so they work on any shape.</p>
       {!data.can_add && (
         <p className="small moves-instead">
           {data.reason}

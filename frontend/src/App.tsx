@@ -74,7 +74,7 @@ function HelpMenu() {
         </label>
         <div className="muted small shortcuts">
           <strong>Keyboard shortcuts on an asset</strong>
-          <div>K keep this version, R try again, C change something</div>
+          <div>K keep this version, R make it again, C change something</div>
           <div>Left and right arrows: previous and next version</div>
           <div>1 to 6: go to a step</div>
         </div>
