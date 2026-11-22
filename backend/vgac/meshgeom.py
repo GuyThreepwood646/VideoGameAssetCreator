@@ -13,8 +13,8 @@ Buildings have bad examples to calibrate on; the other routes have good examples
 set well above the good results and well below the damage seen on buildings.
 
 A failed check never stops an automatic build (decision D23). On a route in REBUILD_ROUTES the 3D step builds again with the
-next seeds (at most REBUILD_MAX more builds), keeps the best (pick_best: lowest folded share, then lowest seed) and, when
-the best still fails, goes on with it and shows the check as "likely to show in the game". Buildings are the first route:
+next seeds (at most REBUILD_MAX more builds), keeps the best (pick_best: among builds whose base colour passes, lowest folded
+share, then lowest seed) and, when the best still fails, goes on with it and shows the check as "likely to show in the game". Buildings are the first route:
 on the WP-44 rerun 2 the 6 percent folded limit had no false block and one miss on 37 blind or checked buildings
 (a local fold the whole-model share cannot see; a local measure was tried and could not be calibrated, so none ships). The other routes have good examples only, so they are not rebuilt yet.
 """
@@ -128,9 +128,12 @@ def rebuilds_wanted(category: str | None) -> bool:
 
 
 def pick_best(builds: list[dict[str, Any]]) -> int:
-    """The build to keep out of the tries: each has "seed" and "folded" (the folded-edge share; None when it could not be
-    measured, which counts as worst). Lowest folded share, then lowest seed, then the earlier build. Never random."""
+    """The build to keep out of the tries: each has "seed", "folded" (the folded-edge share; None when it could not be
+    measured, which counts as worst) and "colour" (texcolour's result, {"ok": ...}; None when it was not measured, which
+    counts as passing). Among the builds whose colour passes: lowest folded share, then lowest seed, then the earlier
+    build. When none passes, the same order over all of them. Never random."""
     def key(i: int) -> tuple[float, int, int]:
         f = builds[i].get("folded")
         return (float("inf") if f is None else float(f), int(builds[i].get("seed") or 0), i)
-    return min(range(len(builds)), key=key)
+    passing = [i for i in range(len(builds)) if (builds[i].get("colour") or {}).get("ok") is not False]
+    return min(passing or range(len(builds)), key=key)

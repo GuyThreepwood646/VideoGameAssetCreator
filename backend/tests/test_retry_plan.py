@@ -19,7 +19,7 @@ def _digest(g: dict) -> str:
 
 
 def test_default_graph_is_byte_identical_to_before():
-    # Hashes taken from the graph before texture_seed existed (master at WP-11 start).
+    # Hashes taken from the graph before the WP-11 removal (master at WP-11 start); the default graph is unchanged.
     assert _digest(convert_graph("in.png", "pfx")) == "dbe6cbb15bb59b3dc716b42e31f9797a1ec5f9c6783f08aeb8da3e76b3c618b2"
     kw = dict(target_faces=30000, tex=2048, upsample=1536, seed=7, padding=16, tex_steps=24)
     assert _digest(convert_graph("in.png", "pfx", **kw)) == "af1971af3956f17b8ef3ca86be2d8d28877a6f43e4bac8dadf9a407d0de9e7b3"
