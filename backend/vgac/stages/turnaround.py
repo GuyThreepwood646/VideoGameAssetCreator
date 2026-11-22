@@ -133,7 +133,7 @@ def hair_check(res: dict[str, Any]) -> dict[str, Any]:
             "width_ratio": res["width_ratio"], **({"sweep": sweep} if sweep else {}), "severity": "warn", "help": text}
 
 
-MAX_REROLLS = 2
+MAX_REROLLS = 1
 # side_agree (vgac/side_agree.py): the left and right views checked against the front and back once all three exist.
 SIDE_CHECKED = ("left", "right")
 # UNTESTED ON A CARD: True: the side views are checked by side_agree after all views exist. False, or `side_agree: false` in a
