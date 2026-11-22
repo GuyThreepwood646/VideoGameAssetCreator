@@ -561,17 +561,29 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": "The surface has {value:n} open edges, so it may show small holes. Harmless for most game uses.",
     },
     # Step 3 geometry (vgac/meshgeom.py): measured in Blender after joining the texture-seam duplicates. Warn only; whether an
-    # automatic build stops on it is meshgeom.BLOCK_ROUTES (empty until calibrated on bad examples from each route).
+    # automatic build stops on it (decision D23: never); on buildings the 3D step builds again first (meshgeom.REBUILD_ROUTES).
     "model_whole": {
         "severity": "warn",
         "ok": "The 3D model is whole: no torn surface, folded edges or loose pieces beyond what a {route_words} normally has.",
-        "fail": "The 3D model looks damaged, like torn paper: {problem_list}. A picture with the texture on can hide this, so look at "
-                "the grey views under the model.",
+        "fail": lambda c: ("The 3D model looks damaged, like torn paper: {problem_list}. The app built it again {rebuilds} more "
+                           "time(s) with new random draws and kept the least damaged, and it is still damaged. A picture with the texture on "
+                           "can hide this, so look at the grey views under the model."
+                           if (_var(c, "rebuilds") or 0) > 0 else
+                           "The 3D model looks damaged, like torn paper: {problem_list}. A picture with the texture on can hide this, so look at "
+                           "the grey views under the model."),
         # Scenery built with the rebuild off is the case seen: it comes out torn and the rebuild on made it whole. Every other
         # case gets the new-draw button from fixnotes.EXTRA_FIXES.
         "fix": lambda c: ({"stage": "mesh", "params": {"seed": None, "remesh": True}}
                           if _var(c, "route") == "buildings" and _var(c, "rebuild") is False else None),
         "fix_label": "Build the 3D model again with Remesh on",
+    },
+    # WP-83: a fold packed into one small spot that the whole-model share hides (warning only; see meshgeom.LOCAL_LIMIT).
+    "local_fold": {
+        "severity": "warn",
+        "ok": "No small area of the surface is folded back on itself.",
+        "fail": "One small area of the 3D model is folded back on itself: {value:pct} of the edges within a hand's breadth of one spot "
+                "(more than {limit:pct} can look like crumpled paper there). The rest of the model may be fine, so look at the grey "
+                "views under the model.",
     },
     "degenerate_faces": {
         "severity": "warn",

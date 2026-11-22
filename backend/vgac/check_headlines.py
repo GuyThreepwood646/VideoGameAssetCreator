@@ -122,6 +122,8 @@ HEADLINES: dict[str, str] = {
     "movement_shape": "The shape used for moving is not the usual one",
     # WP-16 outline check (worth a look)
     "outline_kept": "The clean-up changed the model's outline",
+    # WP-83 local fold warning
+    "local_fold": "One small area of the 3D model is crumpled",
 }
 
 # WP-86 and WP-92 (new entries; the wording above is not touched here).
