@@ -53,6 +53,76 @@ def copy_object(obj, name):
     return dup
 
 
+def _white_material(with_image_node=False):
+    """A material that emits plain white: baked, it paints 1 wherever a ray found the surface and leaves 0 elsewhere. With
+    an image node (returned second) it also gives the bake somewhere to write."""
+    m = bpy.data.materials.new("vgac_unreached_white")
+    m.use_nodes = True
+    nt = m.node_tree
+    for n in list(nt.nodes):
+        nt.nodes.remove(n)
+    emit = nt.nodes.new("ShaderNodeEmission")
+    emit.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+    outn = nt.nodes.new("ShaderNodeOutputMaterial")
+    nt.links.new(emit.outputs["Emission"], outn.inputs["Surface"])
+    node = nt.nodes.new("ShaderNodeTexImage") if with_image_node else None
+    return m, node
+
+
+def measure_unreached(source, target, size):
+    """WP-86: the share of the target's covered texels the re-bake's rays never reached (they stay clear: black colour, flat
+    normal), at `size` pixels square. Two one-sample bakes with the settings the real bakes use (same ray length and cage,
+    no margin): the target's own UV coverage (the target baked onto itself) and the texels the source answered (selected to
+    active). Whether a ray reaches the source depends only on the two surfaces, so this share is the same for every map.
+    Returns {"share", "texels", "covered", "size"}. Call it with the real bakes' settings in place; it restores what it
+    changes (the materials, margin and samples)."""
+    import numpy as np
+
+    scene = bpy.context.scene
+    bake = scene.render.bake
+    old_margin, old_samples = bake.margin, scene.cycles.samples
+    saved_src, saved_tgt = list(source.data.materials), list(target.data.materials)
+    white_src, _ = _white_material()
+    white_tgt, node = _white_material(with_image_node=True)
+    source.data.materials.clear()
+    source.data.materials.append(white_src)
+    target.data.materials.clear()
+    target.data.materials.append(white_tgt)
+    counts = {}
+    try:
+        bake.margin = 0
+        scene.cycles.samples = 1
+        for label, to_active in (("covered", False), ("hit", True)):
+            img = bpy.data.images.new(f"unreached_{label}", int(size), int(size), alpha=False, float_buffer=False)
+            img.colorspace_settings.name = "Non-Color"
+            node.image = img
+            for n in white_tgt.node_tree.nodes:
+                n.select = False
+            node.select = True
+            white_tgt.node_tree.nodes.active = node
+            bpy.ops.object.select_all(action="DESELECT")
+            if to_active:
+                source.select_set(True)
+            target.select_set(True)
+            bpy.context.view_layer.objects.active = target
+            bpy.ops.object.bake(type="EMIT", use_selected_to_active=to_active)
+            buf = np.empty(int(size) * int(size) * 4, dtype=np.float32)
+            img.pixels.foreach_get(buf)
+            counts[label] = int((buf[0::4] > 0.5).sum())
+            bpy.data.images.remove(img)
+    finally:
+        bake.margin, scene.cycles.samples = old_margin, old_samples
+        source.data.materials.clear()
+        for m in saved_src:
+            source.data.materials.append(m)
+        target.data.materials.clear()
+        for m in saved_tgt:
+            target.data.materials.append(m)
+    covered = counts["covered"]
+    missed = max(0, covered - min(counts["hit"], covered))
+    return {"share": round(missed / covered, 4) if covered else None, "texels": missed, "covered": covered, "size": int(size)}
+
+
 def _diag(obj):
     pts = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
     lo = Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts)))
@@ -266,10 +336,16 @@ def rebake(source, target, maps, out_dir, tex, padding_px, margin_px, repack=Fal
         written[key] = path
         new_images[key] = img
 
+    unreached = None
+    try:
+        unreached = measure_unreached(source, target, int(tex))
+    except Exception as e:  # a metric, never a reason to fail the bake
+        print("REBAKE unreached count failed:", e)
     target.data.materials.clear()
     target.data.materials.append(_final_material(new_images))
     bpy.data.objects.remove(source, do_unlink=True)
-    return {"rebaked": True, "rebake_seconds": round(time.time() - t0, 2), "rebake_map_seconds": timings,
+    return {"rebaked": True, "rebake_unreached": unreached,
+            "rebake_unreached_by_map": ({k: unreached["share"] for k in written} if unreached else None), "rebake_seconds": round(time.time() - t0, 2), "rebake_map_seconds": timings,
             "rebake_maps": written, "repacked": bool(repacked),
             "rebake_margin_px": int(margin_px), "rebake_options": opts, "rebake_padding_px": int(padding_px),
             "cage_extrusion_m": round(cage, 5), "max_ray_distance_m": round(0.02 * diag, 5)}

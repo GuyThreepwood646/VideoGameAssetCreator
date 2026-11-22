@@ -112,6 +112,13 @@ SAMPLES = {
     "face_finder": (("mediapipe", "found"), ("the mediapipe package", "found")),
     "picture_projection": ((0.8, None), ("refused", None)),
     "neck_join": ((3.0, 2.0), (0.5, 2.0)),
+    # WP-86 and WP-92: warnings only.
+    "painted_share": ((0.69, 0.2), (0.05, 0.2)),
+    "uv_transfer_offset": ((0.0, 0.02), (0.2, 0.02)),
+    "slivers": ((0.01, 0.15), (0.4, 0.15)),
+    "texel_density_spread": ((1.5, 4.0), (9.0, 4.0)),
+    "flipped_shells": ((0.0, 0.05), (0.5, 0.05)),
+    "unreached_texels": ((0.01, 0.02), (0.17, 0.02)),
     "straight_on": ((1.1, 2.0), (3.5, 2.0)),
     "body_marks": ((0, 0), (3, 0)),  # marks on the body still to check (bodymarks.py)
     "moving_parts": ((2, 2), (1, 2)),  # WP-29: moving parts cut free against the parts declared (stages/rig.py)

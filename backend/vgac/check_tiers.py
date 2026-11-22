@@ -54,8 +54,16 @@ face_drawn items_apart hair_matches_sides mirror_iou height_ratio hist_dist cove
 pictures_sharpened movement_shape
 """
 
+# WP-86 and WP-92 (warnings only; never "likely" until each is calibrated per category).
+_NEW_LOOK = """
+painted_share texel_density_spread flipped_shells unreached_texels
+"""
+_NEW_ADVICE = """
+slivers uv_transfer_offset
+"""
+
 TABLE: dict[str, str] = {}
-for _tier, _ids in (("likely", _LIKELY), ("look", _LOOK), ("advice", _ADVICE)):
+for _tier, _ids in (("likely", _LIKELY), ("look", _LOOK), ("advice", _ADVICE), ("look", _NEW_LOOK), ("advice", _NEW_ADVICE)):
     for _i in _ids.split():
         assert _i not in TABLE, _i
         TABLE[_i] = _tier
