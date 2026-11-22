@@ -423,9 +423,9 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
 # --- The shape gate: build again when the model is torn (WP-83, decision D23) -----------------------------------
 # A broken 3D model never stops an automatic build. On a route in meshgeom.REBUILD_ROUTES the kept build's grey-view measures
 # (mesh_health.py) are judged here; when one is over its limit the model is built again with the next seeds (at most
-# meshgeom.REBUILD_MAX extra builds, each a full build through the same job), the best is kept (meshgeom.pick_best: among
-# the builds whose base colour passes, lowest folded share, then lowest seed; none passing: lowest folded share, then lowest
-# seed) and, when it still fails, the model_whole check says so on the finished page.
+# meshgeom.REBUILD_MAX extra builds, each a full build through the same job), the best is kept (meshgeom.pick_best: whole
+# and colour-passing first, then whole only, then colour only, then neither; lowest folded share, then lowest seed, within
+# each) and, when it still fails, the model_whole check says so on the finished page.
 SHAPE_DIR = "shape_health"
 
 

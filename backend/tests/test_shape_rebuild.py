@@ -123,17 +123,17 @@ def test_tie_break_is_lowest_folded_then_lowest_seed():
     assert meshgeom.pick_best([{"seed": 5, "folded": 0.1}, {"seed": 5, "folded": 0.1}]) == 0
 
 
-def test_gate_keeps_a_colour_passing_build_over_a_lower_folded_dark_one(gate):
+def test_gate_keeps_a_whole_dark_build_over_a_torn_bright_one(gate):
     state, run = gate
     second = texcolour.try_seed(50, 1)
-    state["folded"] = [0.12, 0.002]  # the second build is whole, but its base colour is dark
+    state["folded"] = [0.12, 0.002]  # the first build is torn (colour bright), the second whole (colour dark)
     state["colour"] = {second: False}
     sc = run({"seed": 50})
     rec = sc.version.metrics["shape_rebuild"]
-    assert rec["kept_try"] == 1 and rec["extra_builds"] == 1
+    assert rec["kept_try"] == 2 and rec["extra_builds"] == 1
     assert rec["tries"][1]["colour"] == {"ratio": 0.2, "ok": False}
     assert rec["tries"][0]["colour"] == {"ratio": 0.9, "ok": True}
-    assert (sc.dir / "model.glb").read_text() == "glb 50" and sc.version.params["first_seed"] is None
+    assert (sc.dir / "model.glb").read_text() == f"glb {second}" and sc.version.params["first_seed"] == 50
 
 
 def test_other_routes_and_unmeasured_builds_are_not_rebuilt(gate, monkeypatch):
@@ -160,6 +160,14 @@ def test_pick_among_colour_passes_is_lowest_folded_then_lowest_seed():
     tries = [{"seed": 900, "folded": 0.07, "colour": {"ok": True}}, {"seed": 300, "folded": 0.07, "colour": {"ok": True}},
              {"seed": 100, "folded": 0.07, "colour": {"ok": False}}]
     assert meshgeom.pick_best(tries) == 1  # the lowest seed among the passes, not the dark build with the lowest seed
+
+
+def test_pick_group_boundaries_whole_dark_beats_torn_bright_and_both_pass_beats_both():
+    torn_bright = {"seed": 50, "folded": 0.12, "passed": False, "colour": {"ok": True}}   # group 3: colour only
+    whole_dark = {"seed": 60, "folded": 0.04, "passed": True, "colour": {"ok": False}}   # group 2: geometry only
+    both = {"seed": 70, "folded": 0.09, "passed": True, "colour": {"ok": True}}          # group 1: both pass
+    assert meshgeom.pick_best([torn_bright, whole_dark]) == 1  # a whole dark build beats a torn bright one
+    assert meshgeom.pick_best([torn_bright, whole_dark, both]) == 2  # a both-pass build beats both of those
 
 
 def test_pick_when_no_build_passes_colour_keeps_the_old_order():
