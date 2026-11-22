@@ -68,6 +68,11 @@ for _tier, _ids in (("likely", _LIKELY), ("look", _LOOK), ("advice", _ADVICE), (
         assert _i not in TABLE, _i
         TABLE[_i] = _tier
 
+# WP-16 outline check: the clean-up changed the outline from the sides or the top (worth a look, never advice or likely).
+for _i in ("outline_kept",):
+    assert _i not in TABLE, _i
+    TABLE[_i] = "look"
+
 # Ids that carry a number or a name (quality.py, guidance._pattern_guide): first match wins.
 PATTERNS: list[tuple[str, str]] = [
     # LODs are what people see at a distance, so never advice (UX-01).

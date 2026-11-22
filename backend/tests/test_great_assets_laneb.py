@@ -122,6 +122,7 @@ SAMPLES = {
     "straight_on": ((1.1, 2.0), (3.5, 2.0)),
     "body_marks": ((0, 0), (3, 0)),  # marks on the body still to check (bodymarks.py)
     "moving_parts": ((2, 2), (1, 2)),  # WP-29: moving parts cut free against the parts declared (stages/rig.py)
+    "outline_kept": ((0.99, 0.92), (0.6, 0.92)),  # WP-16: outline overlap before and after the reduction (stages/prep.py)
 }
 
 

@@ -1373,6 +1373,18 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": "The photo looks taken straight on.",
         "fail": "The detail is much finer on one side of the photo than the other, which usually means it was taken at an angle; the texture would look stretched. Take it straight on.",
     },
+    # WP-16 outline check (prep): before and after the budget reduction, drawn as outlines from the sides and the top.
+    "outline_kept": {
+        "severity": "warn",
+        "ok": "The model has the same outline after the clean-up as before it (the least alike view still overlaps {value:pct}).",
+        "fail": lambda c: ("The clean-up changed the model's outline. Seen from the {view} view, the model after the clean-up overlaps only "
+                           "{value:pct} of the outline it had before (it should be at least {limit:pct}), and the biggest patch that was "
+                           "lost or filled in is {region:pct} of the outline (it should stay under {region_limit:pct}). A thin part may have "
+                           "been squeezed away or a hole closed."
+                           if _var(c, "view") and _var(c, "region") is not None and _var(c, "region_limit") is not None else
+                           "The clean-up changed the model's outline: the model after the clean-up overlaps only {value:pct} of the outline "
+                           "it had before (it should be at least {limit:pct}). A thin part may have been squeezed away or a hole closed."),
+    },
 }
 
 
