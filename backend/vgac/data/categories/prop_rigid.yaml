@@ -1,5 +1,5 @@
 id: prop_rigid
-label: Rigid prop
+label: Solid object
 rig_engine: none
 symmetric: false
 size_m: 0.6

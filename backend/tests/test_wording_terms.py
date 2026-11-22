@@ -86,3 +86,10 @@ def test_one_name_per_move_everywhere():
     block = re.search(r"const CLIP_LABELS: Record<string, string> = \{\n(.*?)\n\}", src, re.S).group(1)
     for key, label in re.findall(r"^\s+(\w+): '([^']*)',?$", block, re.M):
         assert label == moves.move_label(key) or key in {"jump_start", "jump_loop", "jump_land", "crouch_idle", "crouch_walk"}, key
+
+
+def test_category_help_names_match_the_category_labels():
+    src = HELP_TS.read_text(encoding="utf-8")
+    for c in reference.categories():
+        m = re.search(r"\n  " + c["id"] + r": H\('([^']*)'", src)
+        assert m and m.group(1) == c["label"], c["id"]

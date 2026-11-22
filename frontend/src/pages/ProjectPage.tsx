@@ -22,7 +22,7 @@ import { differentLook, lookLabelForStyle, presetById, projectStyleFor, syncLook
 import { categoryLabel, useRefData } from '../refdata'
 import { useConfirm } from '../components/Confirm'
 
-// Shown as soon as Tileable material is chosen, so nobody picks it for a rock or a bush and is surprised by a flat swatch.
+// Shown as soon as Repeating surface is chosen, so nobody picks it for a rock or a bush and is surprised by a flat swatch.
 const MATERIAL_NOTE = `${CATEGORY_HELP.material.meaning} ${CATEGORY_HELP.material.why}`
 
 export default function ProjectPage() {

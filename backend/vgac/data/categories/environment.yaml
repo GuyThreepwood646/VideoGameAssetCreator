@@ -1,5 +1,5 @@
 id: environment
-label: Environment piece
+label: Building or scenery piece
 rig_engine: none
 symmetric: false
 # WP-47: pieces closer than this share of the subject's longer side are one subject (a crate by a wall, leaves of one plant).

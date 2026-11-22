@@ -273,17 +273,17 @@ export function platformConsequence(id: string): string {
 }
 
 export const CATEGORY_HELP: Record<string, HelpEntry> = {
-  humanoid: H('Humanoid', 'A person-shaped character: two arms, two legs, standing.', 'Gets a human skeleton with walk, idle and other shared clips.', 'humanoid'),
-  quadruped: H('Quadruped', 'A four-legged animal or creature.', 'Gets a four-legged skeleton; animations are predicted from the shape.', 'quadruped'),
-  winged: H('Winged creature', 'A creature with wings, such as a bird or dragon.', 'Gets a skeleton fitted to its shape; for now it walks and idles but does not flap.', 'winged'),
-  multileg: H('Multi-leg creature', 'A creature with more than four legs, such as a spider.', 'Gets a skeleton fitted to its shape; for now the walk moves up to four legs.', 'multileg'),
-  serpent: H('Serpent or fish', 'A long creature without legs.', 'Gets a spine-chain skeleton; for now it sways rather than slithers.', 'serpent'),
+  humanoid: H('Person or humanoid', 'A person-shaped character: two arms, two legs, standing.', 'Gets a human skeleton with walk, idle and other shared clips.', 'humanoid'),
+  quadruped: H('Four-legged animal', 'A four-legged animal or creature.', 'Gets a four-legged skeleton; animations are predicted from the shape.', 'quadruped'),
+  winged: H('Flying creature', 'A creature with wings, such as a bird or dragon.', 'Gets a skeleton fitted to its shape; for now it walks and idles but does not flap.', 'winged'),
+  multileg: H('Many-legged creature', 'A creature with more than four legs, such as a spider.', 'Gets a skeleton fitted to its shape; for now the walk moves up to four legs.', 'multileg'),
+  serpent: H('Snake or fish', 'A long creature without legs.', 'Gets a spine-chain skeleton; for now it sways rather than slithers.', 'serpent'),
   vehicle: H('Vehicle or mech', 'A car, tank, ship or walking machine.', 'No skeleton; for now it comes out as one solid piece with a collision shape.', 'vehicle'),
-  prop_rigid: H('Rigid prop', 'A solid object that does not bend or open, such as a barrel.', 'No skeleton; just a model with a collision shape.', 'prop_rigid'),
-  prop_articulated: H('Articulated prop', 'An object with a moving part, such as a chest with a lid.', 'For now it comes out as one solid piece; the lid or door does not open yet.', 'prop_articulated'),
-  environment: H('Environment piece', 'A piece of scenery that snaps to a grid, such as a wall or floor tile.', 'No skeleton; sized to the grid with its anchor on a corner, so pieces line up.', 'environment'),
-  foliage: H('Foliage', 'A plant, tree or bush.', 'No skeleton; made to be scattered around a scene.', 'foliage'),
-  material: H('Tileable material', 'A flat, repeating surface such as grass, stone or brick, for floors, walls and ground.', 'Produces a texture only, no 3D model. For a rock, a bush or another object, choose Rigid prop or Foliage.', 'material'),
+  prop_rigid: H('Solid object', 'A solid object that does not bend or open, such as a barrel.', 'No skeleton; just a model with a collision shape.', 'prop_rigid'),
+  prop_articulated: H('Object with moving parts', 'An object with a moving part, such as a chest with a lid.', 'For now it comes out as one solid piece; the lid or door does not open yet.', 'prop_articulated'),
+  environment: H('Building or scenery piece', 'A piece of scenery that snaps to a grid, such as a wall or floor tile.', 'No skeleton; sized to the grid with its anchor on a corner, so pieces line up.', 'environment'),
+  foliage: H('Plant or tree', 'A plant, tree or bush.', 'No skeleton; made to be scattered around a scene.', 'foliage'),
+  material: H('Repeating surface', 'A flat, repeating surface such as grass, stone or brick, for floors, walls and ground.', 'Produces a texture only, no 3D model. For a rock, a bush or another object, choose Rigid prop or Foliage.', 'material'),
 }
 
 export const STYLE_HELP: Record<string, HelpEntry> = {
