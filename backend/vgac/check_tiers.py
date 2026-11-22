@@ -5,7 +5,7 @@ Three tiers, in the order the finished page shows them:
   look    "Worth a look": probably visible up close or at a distance, or it costs performance, or an engine may react.
   advice  "Advice": about how the asset was made; unlikely to be seen in the game.
 
-No tier means the asset failed: nothing blocks shipping today (meshgeom.BLOCK_ROUTES is empty) and several limits are
+No tier means the asset failed: nothing blocks shipping (decision D23: a broken model rebuilds, then warns) and several limits are
 still being calibrated, so the page never says "failed". This table is the only place a tier is decided; the frontend
 reads `tier` off each check (added when a version is served, `annotate_metrics`) and the labels from GET /api/check-tiers.
 tests/test_check_tiers.py fails for any check id the backend can emit that has no entry here.
@@ -35,10 +35,10 @@ DEFAULT_TIER = "look"
 _LIKELY = """
 size_m facing_tests clips_face_forward skin_not_metal materials_connected normal_map_upright baked_light uv_set
 bones single_root weight_coverage legs_moved wings_found clips controller_ready library_missing unity_import
-collider_present limb_joins
+collider_present limb_joins model_whole
 """
 _LOOK = """
-triangle_budget manifold watertight model_whole silhouette_iou seam_error openings_clear grid_fit placement_exact
+triangle_budget manifold watertight silhouette_iou seam_error openings_clear grid_fit placement_exact
 textures_full_size metal_mixed albedo_range texture_padding atlas_used texture_sharp texture_matches_picture
 texture_colour_matches_picture bake_matches picture_projection neck_join look_applied face_matches_picture face_finder
 hair_matches_picture hair_fit hair_skin_through hair_bound hair_off_eyes max_influences weights_normalised fingers
@@ -72,6 +72,9 @@ for _tier, _ids in (("likely", _LIKELY), ("look", _LOOK), ("advice", _ADVICE), (
 for _i in ("outline_kept",):
     assert _i not in TABLE, _i
     TABLE[_i] = "look"
+
+# WP-83: a failed model_whole only reaches the page after the app rebuilt the model (buildings) and kept the best, so it is
+# likely to show (tier likely, above).
 
 # Ids that carry a number or a name (quality.py, guidance._pattern_guide): first match wins.
 PATTERNS: list[tuple[str, str]] = [
