@@ -1377,12 +1377,56 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     "outline_kept": {
         "severity": "warn",
         "ok": "The model has the same outline after the clean-up as before it (the least alike view still overlaps {value:pct}).",
-        "fail": "The clean-up changed the model's outline. Seen from the {view} view, the model after the clean-up overlaps only "
-                "{value:pct} of the outline it had before (it should be at least {limit:pct}), and the biggest patch that was "
-                "lost or filled in is {region:pct} of the outline (it should stay under {region_limit:pct}). A thin part may have "
-                "been squeezed away or a hole closed. Raising the triangle budget keeps more of it.",
+        "fail": lambda c: ("The clean-up changed the model's outline. Seen from the {view} view, the model after the clean-up overlaps only "
+                           "{value:pct} of the outline it had before (it should be at least {limit:pct}), and the biggest patch that was "
+                           "lost or filled in is {region:pct} of the outline (it should stay under {region_limit:pct}). A thin part may have "
+                           "been squeezed away or a hole closed."
+                           if _var(c, "view") and _var(c, "region") is not None and _var(c, "region_limit") is not None else
+                           "The clean-up changed the model's outline: the model after the clean-up overlaps only {value:pct} of the outline "
+                           "it had before (it should be at least {limit:pct}). A thin part may have been squeezed away or a hole closed."),
     },
 }
+
+
+# WP-86 and WP-92: warnings only, each with its measured number and limit in the sentence.
+CHECK_GUIDE.update({
+    "painted_share": {
+        "severity": "warn",
+        "ok": "The picture's colours were painted onto {value:pct} of the model's surface.",
+        "fail": ("The picture's colours were painted onto only {value:pct} of the model's surface (it should be at least {limit:pct}), so "
+                 "most of it keeps the 3D builder's softer colours."),
+    },
+    "uv_transfer_offset": {
+        "severity": "warn",
+        "ok": "The texture layout was copied across to the fitted model without moving any piece.",
+        "fail": ("When the texture layout was copied across to the fitted model, some pieces came from a part {value:pct} of the model's size "
+                 "away (it should be within {limit:pct}), so some texture may sit on the wrong part."),
+    },
+    "slivers": {
+        "severity": "warn",
+        "ok": "Few triangles are long and thin ({value:pct}).",
+        "fail": ("{value:pct} of the triangles are long and thin slivers (it should be at most {limit:pct}); they shade badly and bend badly "
+                 "when the model moves."),
+    },
+    "texel_density_spread": {
+        "severity": "warn",
+        "ok": "The texture is spread fairly evenly: the sharpest pieces carry {value:x} times the detail of the softest.",
+        "fail": ("The sharpest texture pieces carry {value:x} times the detail of the softest (it should be at most {limit:x}), so some "
+                 "parts will look blurry next to others."),
+    },
+    "flipped_shells": {
+        "severity": "warn",
+        "ok": "No separate piece of the surface faces inward.",
+        "fail": ("{flipped:n} of {shells:n} separate pieces of the surface face inward, {value:pct} of the surface (it should be at most "
+                 "{limit:pct}); in the game they may look missing or dark from the front."),
+    },
+    "unreached_texels": {
+        "severity": "warn",
+        "ok": "The texture was filled everywhere it is used ({value:pct} left empty).",
+        "fail": ("{value:pct} of the texture's used area was not reached when it was re-made (it should be at most {limit:pct}), so those "
+                 "patches are empty, black or flat."),
+    },
+})
 
 
 def _map_name(name: str) -> str:

@@ -2009,6 +2009,9 @@ async def judge(sc: StageContext) -> None:
         m = sc.version.metrics
         if m.get("rig_restore") is not None:
             checks.append(quality.check("rig_restore", bool(m["rig_restore"].get("ok")), bool(m["rig_restore"].get("ok")), True))
+            uvc = quality.uv_transfer_check(m["rig_restore"].get("uvs"))  # WP-92: warning only
+            if uvc is not None:
+                checks.append(uvc)
         clips, missing = m.get("clips") or [], m.get("missing_clips") or []
         checks.append(quality.check("clips", bool(clips) and not missing, clips, clips + missing, vars={"missing": missing}))
         # The hand-made library was meant to run (humanoid, automatic or library) but gave no clips.

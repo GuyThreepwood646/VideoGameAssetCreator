@@ -124,6 +124,16 @@ HEADLINES: dict[str, str] = {
     "outline_kept": "The clean-up changed the model's outline",
 }
 
+# WP-86 and WP-92 (new entries; the wording above is not touched here).
+HEADLINES.update({
+    "painted_share": "Little of the model was painted from the picture",
+    "uv_transfer_offset": "Some texture pieces may sit on the wrong part of the model",
+    "slivers": "Many triangles are long and thin",
+    "texel_density_spread": "Some parts of the texture are much blurrier than others",
+    "flipped_shells": "Some pieces of the surface face inward",
+    "unreached_texels": "Patches of the texture were left empty when it was re-made",
+})
+
 # Ids that carry a number or a name.
 PATTERNS: list[tuple[str, str]] = [
     (r"^lod(\d+)_ratio$", "Detail level {n} has the wrong number of triangles"),

@@ -72,7 +72,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import creaturemetal, face, facing, guidance, hairlib, hairmat, headtris, imaging, library, lightfix, normalfix, quality, reference, skinmetal, srcproject, steptime, texcolour
+from .. import creaturemetal, face, facing, guidance, hairlib, hairmat, headtris, imaging, library, lightfix, meshchecks, normalfix, quality, reference, skinmetal, srcproject, steptime, texcolour
 from .. import hair as hairfind
 from ..blender import gridfit
 from . import face_detail, hair_detail
@@ -241,7 +241,7 @@ async def shrink_after_paint(sc: StageContext, out: Path, current: dict[str, Pat
     sc.set_metrics(triangles=report.get("triangles"), vertices=report.get("vertices"), decimated=bool(report.get("decimated")),
                    triangles_before_budget=report.get("triangles_before_budget"), rebaked=True,
                    rebake_reason=report.get("rebake_reason"), rebake_seconds=report.get("rebake_seconds") or 0.0,
-                   shrink_rebaked=True, texture_size=tex)
+                   shrink_rebaked=True, texture_size=tex, rebake_unreached=report.get("rebake_unreached"))
     sc.register("glb", out)
     sc.register("report", sc.dir / "prep_report.json")
     # The maps were baked onto the shrunk model (out), so that is the bake reference the layout check compares against
@@ -378,7 +378,7 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
                    non_manifold_edges=report.get("non_manifold_edges"), boundary_edges=report.get("boundary_edges"),
                    degenerate_faces=report.get("degenerate_faces"), uv_layers=report.get("uv_layers"), bones=report.get("bones"),
                    rebaked=rebaked, rebake_reason=report.get("rebake_reason"), rebake_seconds=report.get("rebake_seconds") or 0.0,
-                   decimated=bool(report.get("decimated")), texture_size=tex, triangles_before_budget=report.get("triangles_before_budget"),
+                   rebake_unreached=report.get("rebake_unreached") if rebaked else None, decimated=bool(report.get("decimated")), texture_size=tex, triangles_before_budget=report.get("triangles_before_budget"),
                    shape_loss=report.get("shape_loss"), outline=report.get("outline"), **head_metrics(report, head))
     if report.get("grid"):
         sc.set_metrics(**grid_metrics(report["grid"]))
@@ -1380,6 +1380,19 @@ async def judge(sc: StageContext) -> None:
         checks.append(pc)
         if m.get("srcproject_applied"):
             checks += srcproject.neck_checks(m)
+            ps = quality.painted_share_check(m.get("srcproject_painted_share"))  # WP-92: warning only
+            if ps is not None:
+                checks.append(ps)
+    # WP-86 and WP-92 (warnings only): the re-bake's unreached texels, slivers, texel-density spread and flipped shells.
+    uc = quality.unreached_check(m.get("rebake_unreached"))
+    if uc is not None:
+        checks.append(uc)
+    if "mesh_measures" not in m and sc.file("glb") is not None:
+        mm = await asyncio.to_thread(meshchecks.measure_glb, sc.file("glb"))
+        if mm is not None:  # a GLB that cannot be read gives no measure and no check (never a pass)
+            sc.set_metrics(mesh_measures=mm)
+            m = sc.version.metrics
+    checks += quality.mesh_measure_checks(m.get("mesh_measures"))
     checks += look_checks(rec, report, m, {k: sc.file(k) for k in TEXTURE_KEYS}, sc.asset.category)
     checks += face_detail.face_checks(m)
     checks += hair_detail.hair_checks(m)
