@@ -769,8 +769,8 @@ const CHECK_TEXT: Record<string, CheckText> = {
         : `The base colour (the colour texture) keeps ${pct(v)} of the picture's brightness.`
     return `The base colour (the colour texture) came out much darker than the picture: ${pct(v)} of its brightness, it needs ${pct(l)}. ${vars.rebuilt ? `It was built ${n0(vars.tries)} times and this is the closest. ` : ''}Build it again, or use a picture with some soft light and shadow on the character.`
   },
-  texture_padding: (v, _l, ok) => (ok ? `Texture pieces have ${n0(v)} px of space around them, enough for distant views.` : `Texture pieces have only ${n0(v)} px of space, so thin dark seams may show at a distance.`),
-  atlas_used: (v, _l, ok) => (ok ? `The model uses ${pct(v)} of its texture.` : `The model uses only ${pct(v)} of its texture, so it looks less sharp than it could.`),
+  texture_padding: (v, _l, ok) => (ok ? `Texture pieces (UV islands) have ${n0(v)} px of space around them (UV padding), enough for distant views.` : `Texture pieces (UV islands) have only ${n0(v)} px of space (UV padding), so thin dark seams may show at a distance.`),
+  atlas_used: (v, _l, ok) => (ok ? `The model uses ${pct(v)} of its texture (UV space usage).` : `The model uses only ${pct(v)} of its texture (UV space usage), so it looks less sharp than it could.`),
   face_matches_picture: (_v, _l, ok, _ctx, vars) => {
     if (ok) return 'The face was painted from the picture and is sharp.'
     const eye = str(vars.eye_words)
@@ -938,7 +938,7 @@ function sizeSentence(v: unknown, l: unknown, ok: boolean, axis: string): string
 function checkTextFor(id: string): CheckText | null {
   if (CHECK_TEXT[id]) return CHECK_TEXT[id]
   const lod = id.match(/^lod(\d+)_ratio$/)
-  if (lod) return (v, l, ok) => (ok ? `Detail level ${lod[1]} keeps ${pct(v)} of the triangles.` : `Detail level ${lod[1]} keeps ${pct(v)} of the triangles; ${pct(l)} expected.`)
+  if (lod) return (v, l, ok) => (ok ? `Detail level ${lod[1]} (LOD${lod[1]}) keeps ${pct(v)} of the triangles.` : `Detail level ${lod[1]} (LOD${lod[1]}) keeps ${pct(v)} of the triangles; ${pct(l)} expected.`)
   if (/^texture_.+_pow2$/.test(id)) return (v, _l, ok) => (ok ? `The ${mapName(id)} is a power-of-two size.` : `The ${mapName(id)} is ${Array.isArray(v) ? v.join(' x ') : String(v)} px; it must be a power of two.`)
   if (/^texture_.+_square$/.test(id)) return (v, _l, ok) => (ok ? `The ${mapName(id)} is square.` : `The ${mapName(id)} is ${Array.isArray(v) ? v.join(' x ') : String(v)} px; it must be square.`)
   if (/^texture_.+_budget$/.test(id)) return (v, l, ok) => (ok ? `The ${mapName(id)} is ${n0(v)} px, within the ${n0(l)} px budget.` : `The ${mapName(id)} is ${n0(v)} px; the platform allows ${n0(l)} px.`)

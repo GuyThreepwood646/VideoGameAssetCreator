@@ -283,12 +283,12 @@ function baseFinishLines(asset: Asset): FinishLine[] {
   const hb = hitboxSummary(asset)
   if (hb) {
     const shape = movementShapeWord(exp.params.movement_shape, hb.movement_default)
-    const boxes = hb.mode === 'simple' ? 'hit boxes for the head and body' : `${hb.count} hit boxes that follow the animation`
+    const boxes = hb.mode === 'simple' ? 'hit boxes (hitboxes) for the head and body' : `${hb.count} hit boxes (hitboxes) that follow the animation`
     const cover = findCheck(asset, 'hitbox_cover')
     const over = findCheck(asset, 'hitbox_overreach')
     const bad = failed(cover) ? cover : failed(over) ? over : null
     if (bad) lines.push(warnFrom('collision', bad, 'hitboxes'))
-    else lines.push({ id: 'collision', text: shape ? `Bumps into things: a ${shape} for moving and ${boxes}.` : `Bumps into things: ${boxes}.`, state: 'ok', term: 'hitboxes' })
+    else lines.push({ id: 'collision', text: shape ? `Bumps into things (collision): a ${shape} for moving and ${boxes}.` : `Bumps into things (collision): ${boxes}.`, state: 'ok', term: 'hitboxes' })
   }
   // 4b. Props and scenery: the collision shapes the export chose (3.4), or the first failing collision check.
   const cp = findCheck(asset, 'collider_present')
@@ -396,7 +396,7 @@ export function hitboxSummary(asset: Asset): HitboxMetrics | null {
 // "standing capsule", "lying capsule" or "box"; null for none.
 function movementShapeWord(chosen: unknown, fallback: string | undefined): string | null {
   const k = typeof chosen === 'string' && chosen !== 'auto' ? chosen : (fallback ?? 'upright')
-  return k === 'none' ? null : k === 'along' ? 'lying capsule' : k === 'box' ? 'box' : 'standing capsule'
+  return k === 'none' ? null : k === 'along' ? 'lying capsule' : k === 'box' ? 'box' : 'standing capsule (capsule collider)'
 }
 
 // The Fix for a warn line: its named check, else the check with the line's id, when that check failed.

@@ -967,15 +967,15 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     },
     "texture_padding": {
         "severity": "warn",
-        "ok": "Texture pieces have {value:n} px of space around them, enough for distant views.",
-        "fail": "Texture pieces have only {value:n} px of space, so thin dark seams may show at a distance.",
+        "ok": "Texture pieces (UV islands) have {value:n} px of space around them (UV padding), enough for distant views.",
+        "fail": "Texture pieces (UV islands) have only {value:n} px of space (UV padding), so thin dark seams may show at a distance.",
         "fix": _padding_fix,
         "fix_label": "Add more space",
     },
     "atlas_used": {
         "severity": "warn",
-        "ok": "The model uses {value:pct} of its texture.",
-        "fail": "The model uses only {value:pct} of its texture, so it looks less sharp than it could.",
+        "ok": "The model uses {value:pct} of its texture (UV space usage).",
+        "fail": "The model uses only {value:pct} of its texture (UV space usage), so it looks less sharp than it could.",
         "fix": _atlas_fix,
         "fix_label": "Repaint the surface",
     },
@@ -1390,8 +1390,8 @@ def _pattern_guide(name: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
     """Entries for check ids that carry a number or a map name: lodN_ratio and texture_<map>_<kind>."""
     m = re.match(r"^lod(\d+)_ratio$", name)
     if m:
-        return ({"severity": "warn", "ok": "Detail level {level} keeps {value:pct} of the triangles.",
-                 "fail": "Detail level {level} keeps {value:pct} of the triangles; {limit:pct} expected."}, {"level": m.group(1)})
+        return ({"severity": "warn", "ok": "Detail level {level} (LOD{level}) keeps {value:pct} of the triangles.",
+                 "fail": "Detail level {level} (LOD{level}) keeps {value:pct} of the triangles; {limit:pct} expected."}, {"level": m.group(1)})
     if name.startswith("texture_"):
         tmap = {"map": _map_name(name)}
         if name.endswith("_pow2"):

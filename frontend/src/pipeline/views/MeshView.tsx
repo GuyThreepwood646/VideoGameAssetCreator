@@ -28,6 +28,19 @@ const TEXTURE_NAMES: Record<string, string> = {
   emissive: 'glow',
 }
 
+// The industry term shown muted after the plain name (UX-04).
+const TEXTURE_TECH: Record<string, string> = {
+  base_color: 'base colour',
+  normal: 'normal map',
+  orm: 'ORM pack',
+  metallic_roughness: 'metallic-roughness',
+  occlusion: 'ambient occlusion',
+  ao: 'ambient occlusion',
+  roughness: 'roughness, inverse of shine',
+  metallic: 'metallic',
+  emissive: 'emissive',
+}
+
 // Hair from the library at Clean up (metrics.hair_library on the prep version).
 
 export function MeshView({ version, category, asset, hairFocus, onFix, onChanged }: { version: Version; category?: string; asset?: Asset; hairFocus?: number | null; onFix?: (fix: FixAction) => void; onChanged?: () => void }) {
@@ -339,7 +352,10 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
               {textures.map((k) => (
                 <a key={k} href={libraryUrl(version.files[k])} target="_blank" rel="noreferrer" className="texture-thumb" title={k}>
                   <img src={libraryUrl(version.files[k])} alt={k} />
-                  <span className="small">{TEXTURE_NAMES[k] ?? k.replace(/_/g, ' ')}</span>
+                  <span className="small">
+                    {TEXTURE_NAMES[k] ?? k.replace(/_/g, ' ')}
+                    {TEXTURE_TECH[k] && <span className="tech-term"> {TEXTURE_TECH[k]}</span>}
+                  </span>
                 </a>
               ))}
             </div>

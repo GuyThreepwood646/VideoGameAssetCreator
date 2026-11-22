@@ -40,9 +40,9 @@ function selectedIn(html: string, group: string): { label: string; styled: boole
   assert.ok(start >= 0, `group ${group} is shown`)
   const end = html.indexOf('</span>', start)
   const part = html.slice(start, end)
-  const buttons = [...part.matchAll(/<button[^>]*aria-checked="true"[^>]*>([^<]*)<\/button>/g)]
+  const buttons = [...part.matchAll(/<button[^>]*aria-checked="true"[^>]*>([\s\S]*?)<\/button>/g)]
   const styled = [...part.matchAll(/<button[^>]*aria-checked="true"[^>]*class="([^"]*)"/g)].map((m) => m[1])
-  return { label: buttons[0]?.[1] ?? '', styled: styled.some((c) => c.split(' ').includes('seg-on')), count: buttons.length }
+  return { label: (buttons[0]?.[1] ?? '').replace(/<[^>]*>/g, '').split(' ')[0], styled: styled.some((c) => c.split(' ').includes('seg-on')), count: buttons.length }
 }
 
 test('the What to paint choice shows the picture in use, whichever one was picked last', () => {

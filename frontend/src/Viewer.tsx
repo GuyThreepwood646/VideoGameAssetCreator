@@ -56,6 +56,8 @@ export type HitboxDoc = {
 // One row of the clip sidecar (anim_clips.json).
 export type ClipInfo = { name: string; loop?: boolean; seconds?: number; hold_last?: boolean; label?: string }
 export type Shading = 'textured' | 'wireframe' | 'normals'
+// Plain word first, the industry term in brackets (UX-04): the normals view paints the surface direction as colour.
+const SHADING_LABEL: Record<Shading, string> = { textured: 'Textured', wireframe: 'Wireframe', normals: 'Bumps (normals)' }
 // 'gltf': segments already in glTF axes (rig_info bone_segments_gltf).
 // 'unknown': older rig_info without them; may be Blender Z-up, so that is tried too.
 export type BonesSpace = 'gltf' | 'unknown'
@@ -1403,7 +1405,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         <div className="segmented">
           {(['textured', 'wireframe', 'normals'] as Shading[]).map((s) => (
             <button key={s} type="button" aria-pressed={shading === s} onClick={() => changeShading(s)}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
+              {SHADING_LABEL[s]}
             </button>
           ))}
         </div>
