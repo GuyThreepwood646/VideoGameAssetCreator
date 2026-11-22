@@ -468,7 +468,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
           </h2>
           <span className="muted small">
             {versions.length ? `${versions.length} version${versions.length > 1 ? 's' : ''}` : 'no versions yet'}
-            {canRun && prevSelected ? ` / built from "${stagePlain(prev!, ref?.stages.find((s) => s.id === prev) ?? null)}" version ${shortId(prevSelected.id)}` : ''}
+            {canRun && prevSelected ? ` / built from "${stagePlain(prev!, ref?.stages.find((s) => s.id === prev) ?? null)}" version ${versionsOf(asset, prev!).findIndex((v) => v.id === prevSelected.id) + 1}` : ''}
             {stageInfo?.estimate_note ? ` / ${stageInfo.estimate_note}` : ''}
           </span>
           {startOverControl}

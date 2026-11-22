@@ -46,7 +46,7 @@ def test_arms_down_touch_the_body_and_the_fix_is_the_pose_redraw():
     assert {a["state"] for a in m["arms"].values()} == {"touching"}
     c = buildpose.pose_check(m)
     assert not c["passed"] and c["value"] == "touching"
-    assert c["fix"] == {"stage": "turnaround", "params": {"pose_ready": True}, "label": "Pose it for 3D, then draw the sides"}
+    assert c["fix"] == {"stage": "turnaround", "params": {"pose_ready": True}, "label": "Open the pose, then redraw the side views (Pose for 3D first)"}
     assert "Both arms hang close to the body" in c["help"] and "web" in c["help"]
 
 

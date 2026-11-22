@@ -148,7 +148,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "moves": {"simple": True, "help": {"meaning": "Animation clips: the moves made for this character or creature.",
                                        "why": "Leave out moves your game will never use to keep the file smaller.",
                                        "technical": "Library clips retargeted in Blender (retarget.py) for human shapes, else the procedural set (procanim.py)"},
-              "options": {"idle": "Standing still", "walk": "Walk", "run": "Run", "turn": "Turn on the spot", "attack": "Attack", "hit": "Get hit", "death": "Die",
+              "options": {"idle": "Stand still", "walk": "Walk", "run": "Run", "turn": "Turn on the spot", "attack": "Attack", "hit": "Get hit", "death": "Die",
                           "jump": "Jump", "crouch": "Crouch", "roll": "Roll", "interact": "Use or pick up",
                           "flap": "Fly", "glide": "Glide", "takeoff": "Take off", "land": "Land", "slither": "Slither or swim"}},
     "clips_source": {"simple": True, "help": {"meaning": "Where the character's moves come from.",
@@ -1252,7 +1252,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "severity": "warn",
         "ok": lambda c: ("You moved or checked the marks on the body." if _var(c, "state") == "edited"
                          else "The app placed the marks on the body (chin, shoulders, elbows, wrists, groin, knees, ankles) and is confident."),
-        "fail": lambda c: "Please check the marks on the body under Mark the body: " + (_var(c, "words") or "some marks are unsure") + ".",
+        "fail": lambda c: "Please check the marks on the body (the dots that show where each joint is) under Mark the body: " + (_var(c, "words") or "some marks are unsure") + ".",
     },
     # The three-quarter view the 3D step builds from (stages/mesh.choose_build_view): fails only when both views lost the pose.
     "pose_held_build": {
@@ -1280,7 +1280,7 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "fail": lambda c: _braces(" ".join([_var(c, "words") or "The pose will join parts of the 3D model.",
                                             *((_var(c, "cautions") or []) if _var(c, "offer") else [])])),
         "fix": lambda c: {"stage": "turnaround", "params": {"pose_ready": True}} if _var(c, "offer") else None,
-        "fix_label": "Pose it for 3D, then draw the sides",
+        "fix_label": "Open the pose, then redraw the side views (Pose for 3D first)",
     },
     # The guard after the pose redraw (buildpose.guard): refused redraws keep the person's picture; the fix keeps the
     # refused redraw anyway (vars.version: the step 2 version holding it).

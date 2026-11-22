@@ -174,10 +174,10 @@ def test_the_pose_check_is_a_warning_and_asks_under_block_with_a_plain_message()
     assert c["severity"] == "warn" and not c["passed"] and c["vars"]["offer"]
     r = autopilot.attention_reason(_v(stage="concept", checks=[c]), "block")
     assert "skeleton" in r and "finger bones" in r and "never redraws the pose on its own" in r
-    assert "Pose it for 3D, then draw the sides" in r and "Continue anyway" in r and "not asked again" in r
+    assert "Open the pose, then redraw the side views (Pose for 3D first)" in r and "Continue anyway" in r and "not asked again" in r
     assert "hangs close to the body" in r  # the check's own words about what failed
     r2 = autopilot.attention_reason(_v(stage="concept", checks=[pose_fail(offer=False)]), "block")
-    assert "No pose redraw is offered" in r2 and "Pose it for 3D, then draw the sides" not in r2
+    assert "No pose redraw is offered" in r2 and "Open the pose, then redraw the side views (Pose for 3D first)" not in r2
 
 
 def test_the_pose_question_is_only_for_a_measured_failure_at_step_1_under_block():

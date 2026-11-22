@@ -97,7 +97,7 @@ HEADLINES: dict[str, str] = {
     "springs": "The swaying parts could not be set up",
     "springs_shipped": "The swaying parts are not in the shipped files",
     "added_moves": "Some moves you added could not be made",
-    "body_marks": "Some body marks are unsure: look at them under Mark the body",
+    "body_marks": "Some joint markers on the body (elbows, knees, wrists) may be misplaced",
     "side_agree": "A side view is a different height from the front and back",
     "pose_held_build": "The three-quarter views do not hold the pose from your picture",
     "pose_for_3d": "The pose may join parts of the 3D model together",

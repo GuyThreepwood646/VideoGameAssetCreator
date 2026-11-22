@@ -1324,7 +1324,7 @@ export const OPTION_LABELS: Record<string, Record<string, string>> = {
   face_yaw: { auto: 'Automatic', '0': 'As built', '90': 'Turned a quarter to the left', '180': 'Turned around', '270': 'Turned a quarter to the right' },
   motion: { legs: 'Walks on its legs', wings: 'Flies, and walks when it lands', wave: 'Slithers or swims', none: 'Does not move by itself' },
   clips_source: { auto: 'Automatic', library: 'Hand-made library', procedural: 'Built-in moves' },
-  moves: { idle: 'Standing still', walk: 'Walk', run: 'Run', turn: 'Turn on the spot', attack: 'Attack', hit: 'Get hit', death: 'Die', jump: 'Jump', crouch: 'Crouch', roll: 'Roll', interact: 'Use or pick up', flap: 'Fly', glide: 'Glide', takeoff: 'Take off', land: 'Land', slither: 'Slither or swim' },
+  moves: { idle: 'Stand still', walk: 'Walk', run: 'Run', turn: 'Turn on the spot', attack: 'Attack', hit: 'Get hit', death: 'Die', jump: 'Jump', crouch: 'Crouch', roll: 'Roll', interact: 'Use or pick up', flap: 'Fly', glide: 'Glide', takeoff: 'Take off', land: 'Land', slither: 'Slither or swim' },
   move_size: { small: 'Small', normal: 'Normal', big: 'Big' },
   move_speed: { slow: 'Slow', normal: 'Normal', fast: 'Fast' },
   hitboxes: { detailed: 'One per body part', simple: 'Just head and body', none: 'None' },
@@ -1447,7 +1447,7 @@ export function libraryMissingLine(): string {
 
 // A clip's name in the viewer's clip picker: "Walk", "Turn left", "Get hit", "Die".
 const CLIP_LABELS: Record<string, string> = {
-  idle: 'Standing still',
+  idle: 'Stand still',
   attack: 'Sword attack',
   jump_start: 'Jump (take off)',
   jump_loop: 'Jump (in the air)',
