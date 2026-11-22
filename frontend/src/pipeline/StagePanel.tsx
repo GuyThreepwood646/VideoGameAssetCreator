@@ -27,7 +27,7 @@ import { firstStaleStage, isRemovable, isSetAside, isStopped, laterVersions, STA
 import { ResumeButton } from '../components/ui'
 import { ChecksList, Disclosure, isCheckList, MetricChips, PlainChecks, StatusBadge, SubmitTextarea, timeAgo, type FixRequest } from '../components/ui'
 import { conceptCountDefault, conceptCountLabel, preferredConceptModel, rememberConceptCount } from '../guide'
-import { FIX_TOOLS, humanError, modelLabel, paramPlain, PLAIN_VIEW_REDRAW, redrawViewsSeconds, redrawViewsWarning, stageEstimate, stagePlaceholder, stagePlain, stageTech, stageVerb } from '../help'
+import { FIX_TOOLS, humanError, modelLabel, paramPlain, PLAIN_VIEW_REDRAW, redrawViewsSeconds, redrawViewsWarning, stageEstimate, stagePlaceholder, stagePlain, stageTech, stageVerb, tryAgainLabel } from '../help'
 import { useRefData, type RefData } from '../refdata'
 import { isAutopilotActive, isFinished, type AutopilotActions } from './AutopilotPanel'
 import { attentionItems } from './finish'
@@ -107,6 +107,8 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   const prevSelected = prev ? selectedVersion(asset, prev) : undefined
   const canRun = !prev || !!prevSelected
   const [count, setCount] = useState(conceptCountDefault)
+  // The Try again label names what it will make; none for a picture the person brought and no description (UX-11).
+  const tryLabel = tryAgainLabel(stage, { count, fromPicture: active?.params?.source === 'upload', hasDescription: !!asset.prompt?.trim() })
   const [busy, setBusy] = useState(false)
   const [changeOpen, setChangeOpen] = useState(false)
   // Settings chosen for the first build of this step (shown while it has no versions); the build buttons send them.
@@ -626,9 +628,11 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 <div className="error-sentence">{state === 'error' ? 'Did not finish.' : humanError(active.error)}</div>
                 <div className="row-gap">
                   {state !== 'error' && (
-                    <button type="button" className="try-again" disabled={busy} onClick={() => tryAgain(active)}>
-                      Try again
-                    </button>
+                    tryLabel && (
+                      <button type="button" className="try-again" data-try-again disabled={busy} onClick={() => tryAgain(active)}>
+                        {tryLabel}
+                      </button>
+                    )
                   )}
                   {active.error && (
                     <Disclosure label="Show details">
@@ -663,6 +667,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 changeOpen={changeOpen}
                 setChangeOpen={setChangeOpen}
                 onKeep={() => act(() => api.select(active.id))}
+                tryLabel={tryLabel}
                 onTryAgain={() => tryAgain(active)}
                 onReject={() => act(() => api.reject(active.id))}
                 onFeedbackSaved={onChanged}
@@ -875,6 +880,7 @@ function HappyBlock({
   changeOpen,
   setChangeOpen,
   onKeep,
+  tryLabel,
   onTryAgain,
   onReject,
   onFeedbackSaved,
@@ -890,6 +896,7 @@ function HappyBlock({
   changeOpen: boolean
   setChangeOpen: (b: boolean) => void
   onKeep: () => void
+  tryLabel: string | null
   onTryAgain: () => void
   onReject: () => void
   onFeedbackSaved: () => void
@@ -904,14 +911,16 @@ function HappyBlock({
           {isSelected ? 'Kept' : 'Yes, keep it'}
         </button>
         <span className="answer-group">
-          <button type="button" disabled={busy || paintLock !== null} onClick={onTryAgain} title={paintLock ?? 'Make a fresh attempt with the same settings'}>
-            Try again
-          </button>
-          {stage === 'concept' && (
+          {tryLabel && (
+            <button type="button" data-try-again disabled={busy || paintLock !== null} onClick={onTryAgain} title={paintLock ?? 'Make a fresh attempt with the same settings'}>
+              {tryLabel}
+            </button>
+          )}
+          {stage === 'concept' && tryLabel && (
             <select value={count} onChange={(e) => setCount(Number(e.target.value))} aria-label="How many new pictures" disabled={busy}>
               {[1, 2, 3, 4].map((n) => (
                 <option key={n} value={n}>
-                  {n} new picture{n > 1 ? 's' : ''}
+                  {n}
                 </option>
               ))}
             </select>

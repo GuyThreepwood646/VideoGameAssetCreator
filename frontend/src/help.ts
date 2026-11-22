@@ -108,6 +108,17 @@ export function stageTech(stage: StageId, info?: StageInfo | null): string {
   return info?.technical_short || STAGE_TEXT[stage].tech
 }
 
+// What the Try again button will do, said on the button (UX-11). Null where it could do nothing useful: a step 1 made
+// from a picture the person brought has no description to paint new pictures from.
+export function tryAgainLabel(stage: StageId, opts: { count?: number; fromPicture?: boolean; hasDescription?: boolean } = {}): string | null {
+  if (stage === 'concept') {
+    if (opts.fromPicture && !opts.hasDescription) return null
+    const n = opts.count ?? 1
+    return `Paint ${n} new picture${n > 1 ? 's' : ''} from the description`
+  }
+  return { turnaround: 'Draw all sides again', mesh: 'Build the 3D model again', prep: 'Clean up for the game again', rig: 'Make it move again', export: 'Make the files again' }[stage]
+}
+
 export function stageVerb(stage: StageId, info?: StageInfo | null): string {
   return info?.plain_verb || STAGE_TEXT[stage].verb
 }

@@ -9,7 +9,7 @@ import { Disclosure, ResumeButton, StopButton, type FixRequest } from '../compon
 import { conceptCountLabel } from '../guide'
 import { attentionItems, verdictLine } from './finish'
 import { TieredChecks } from './TieredChecks'
-import { failingTier, fmtDuration, humanError, looksGood, MODEL_IMPORT_SECONDS, plainJargon, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
+import { failingTier, fmtDuration, humanError, looksGood, MODEL_IMPORT_SECONDS, plainJargon, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb, tryAgainLabel } from '../help'
 import { mergeStepParams } from './stepSettings'
 import { AutopilotCard, FinishCard, isAutopilotActive, isFinished, MakeItAction, type AutopilotActions } from './AutopilotPanel'
 
@@ -256,8 +256,8 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       happened = humanError(failed.error)
       now = 'Try again, or change the description.'
       action = (
-        <button type="button" className="primary try-again" disabled={busy} onClick={() => onRetry(failed)}>
-          Try again
+        <button type="button" className="primary try-again" disabled={busy} onClick={() => onRetry(failed)} data-try-again>
+          {tryAgainLabel(stage, { count: 1 }) ?? 'Run this step again'}
           <span className="btn-est">{fmtDuration(est)}</span>
         </button>
       )
@@ -318,7 +318,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
           <>
             {failedLater === next ? (
               <button type="button" className="primary" disabled={busy} onClick={() => onRunNext(next!)}>
-                Try again on step {STAGES.indexOf(failedLater) + 1}
+                {tryAgainLabel(failedLater, { count: 1 }) ?? 'Run this step again'}
                 <span className="btn-est">{fmtDuration(stageEstimate(failedLater, fi, estimates))}</span>
               </button>
             ) : null}

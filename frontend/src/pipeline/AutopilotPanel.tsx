@@ -358,7 +358,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
                 ? `"${firstFix.label} and continue" fixes ${firstFixCheck?.message ? `"${firstFixCheck.message}"` : 'the first problem listed'} and carries on. You can also keep this result as it is.`
                 : 'No automatic fix is known for this. Change something below, keep a result, then continue; or continue anyway.'
               : versionFailed
-                ? 'Try again runs this step once more and carries on.'
+                ? 'Run this step again makes it once more and carries on.'
                 : 'Continue when you are ready; everything made so far is kept.'
             : 'Start again to continue from where it stopped.'}{' '}
           {elsewhere}
@@ -377,7 +377,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
         )}
         {paused && (versionFailed || !version) && (
           <button type="button" className="primary" disabled={busy} onClick={() => actions.start()}>
-            Try again and continue
+            Run this step again and continue
           </button>
         )}
         {!paused && (

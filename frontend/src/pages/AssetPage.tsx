@@ -75,7 +75,7 @@ export default function AssetPage() {
       const byText = (txt: string) => [...document.querySelectorAll<HTMLButtonElement>('.happy-answers button, button.try-again')].find((b) => b.innerText.trim().toLowerCase().startsWith(txt))
       const k = e.key.toLowerCase()
       if (k === 'k') byText('yes, keep')?.click()
-      else if (k === 'r') byText('try again')?.click()
+      else if (k === 'r') document.querySelector<HTMLButtonElement>('[data-try-again]')?.click()
       else if (k === 'c') byText('change something')?.click()
       else if (k === 'arrowleft' || k === 'arrowright') {
         const list = [...document.querySelectorAll<HTMLButtonElement>('.candidate')]
