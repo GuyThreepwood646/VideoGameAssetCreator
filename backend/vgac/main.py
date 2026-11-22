@@ -473,7 +473,7 @@ def categories() -> list[dict[str, Any]]:
              "views": c.get("views"), "lod_ratios": c.get("lod_ratios"), "topology": c.get("topology"), "input_view_default": c.get("input_view_default"),
              "skips": list(c.get("skips") or []), "noun": reference.CATEGORY_NOUNS.get(c["id"]) or str(c["label"]).lower(),
              "group": reference.category_group(c["id"])}
-            for c in reference.categories()]
+            for c in sorted(reference.categories(), key=lambda c: reference.category_order(c["id"]))]
 
 
 @app.get("/api/models")

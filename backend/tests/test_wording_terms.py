@@ -60,3 +60,9 @@ def test_one_name_for_the_stand_still_move():
     src = HELP_TS.read_text(encoding="utf-8")
     assert "idle: 'Standing still'" not in src
     assert "Standing still (loops)" not in src
+
+
+def test_category_list_comes_in_picker_order():
+    order = [reference.category_order(c["id"]) for c in sorted(reference.categories(), key=lambda c: reference.category_order(c["id"]))]
+    assert order == sorted(order)
+    assert reference.category_order("humanoid") < reference.category_order("vehicle") < reference.category_order("environment") < reference.category_order("material")

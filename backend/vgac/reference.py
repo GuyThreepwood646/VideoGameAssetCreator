@@ -790,6 +790,12 @@ def category_group(category_id: str) -> str:
     return CATEGORY_GROUPS[-1][0]
 
 
+def category_order(category_id: str) -> int:
+    """Where a category sits in the picker: by group, then in the order the group lists it."""
+    flat = [i for _name, ids in CATEGORY_GROUPS for i in ids]
+    return flat.index(category_id) if category_id in flat else len(flat)
+
+
 CATEGORY_NOUNS = {"humanoid": "character", "quadruped": "creature", "winged": "flying creature", "multileg": "creature",
                   "serpent": "creature", "vehicle": "vehicle", "prop_rigid": "prop", "prop_articulated": "prop",
                   "environment": "scenery piece", "foliage": "plant", "material": "material"}
