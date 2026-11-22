@@ -773,6 +773,23 @@ SURFACE_SWITCHES = ("face_layout", "colour_per_face", "face_keeps_texture")
 # them to the resolved recipe only when set, so a look without them keeps its recipe and digest).
 RECIPE_OPTIONAL: dict[str, tuple[str, ...]] = {"mesh": ("triangle_cap", "bake_texture"), "surface": SURFACE_SWITCHES}
 # The noun of the recipe's plain sentence, per category.
+# The picker's headings (UX-08), in order. The category keys and labels are unchanged; only the grouping is new.
+CATEGORY_GROUPS = (
+    ("Characters and creatures", ("humanoid", "quadruped", "multileg", "winged", "serpent")),
+    ("Objects and vehicles", ("prop_rigid", "prop_articulated", "vehicle")),
+    ("Places and plants", ("environment", "foliage")),
+    ("Surfaces", ("material",)),
+)
+
+
+def category_group(category_id: str) -> str:
+    """The heading a category sits under in the picker; a category in no group goes under the last one."""
+    for name, ids in CATEGORY_GROUPS:
+        if category_id in ids:
+            return name
+    return CATEGORY_GROUPS[-1][0]
+
+
 CATEGORY_NOUNS = {"humanoid": "character", "quadruped": "creature", "winged": "flying creature", "multileg": "creature",
                   "serpent": "creature", "vehicle": "vehicle", "prop_rigid": "prop", "prop_articulated": "prop",
                   "environment": "scenery piece", "foliage": "plant", "material": "material"}

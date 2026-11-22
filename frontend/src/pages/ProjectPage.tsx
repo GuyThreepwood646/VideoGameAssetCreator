@@ -1,7 +1,7 @@
 import { openFolderAndSay } from '../notify'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type EditChoice, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
+import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type Category, type EditChoice, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
 import { ImageDrop, nameFromFile, type PickedImage } from '../components/ImageDrop'
 import { FeaturePhotos } from '../components/FeaturePhotos'
 import { featureCrop, foundPeople, usedFeatures, type FeatureSlot, type StartFrom } from '../featurePhotos'
@@ -124,7 +124,7 @@ export default function ProjectPage() {
           )}
         </div>
       </section>
-      <aside className="col col-side">{project && <CreateAssetForm project={project} />}</aside>
+      <aside className="col col-side">{project && <CreateAssetForm project={project} assets={assets ?? null} />}</aside>
     </div>
   )
 }
@@ -261,7 +261,28 @@ export function autoName(prompt: string): string {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : ''
 }
 
-function CreateAssetForm({ project }: { project: Project }) {
+// The kind the project has most of; null for an empty project (UX-08).
+export function mostUsedCategory(assets: AssetSummary[]): string | null {
+  const counts = new Map<string, number>()
+  for (const a of assets) counts.set(a.category, (counts.get(a.category) ?? 0) + 1)
+  let best: string | null = null
+  for (const [id, n] of counts) if (best === null || n > (counts.get(best) ?? 0)) best = id
+  return best
+}
+
+// The picker's categories under their headings, in the backend's order.
+export function groupCategories(list: Category[]): Array<{ name: string; items: Category[] }> {
+  const out: Array<{ name: string; items: Category[] }> = []
+  for (const c of list) {
+    const name = c.group ?? 'Other'
+    const g = out.find((x) => x.name === name)
+    if (g) g.items.push(c)
+    else out.push({ name, items: [c] })
+  }
+  return out
+}
+
+function CreateAssetForm({ project, assets }: { project: Project; assets: AssetSummary[] | null }) {
   const navigate = useNavigate()
   const { ref, error: refError } = useRefData()
   const [name, setName] = useState('')
@@ -307,12 +328,13 @@ function CreateAssetForm({ project }: { project: Project }) {
 
   useEffect(() => {
     if (!ref) return
-    if (!category && ref.categories[0]) {
-      const first = ref.categories.find((c) => c.id === 'humanoid') ?? ref.categories[0]
+    // Wait for the project's assets, so the default is its most-used kind, not a guess that then jumps.
+    if (!category && ref.categories[0] && assets) {
+      const first = ref.categories.find((c) => c.id === mostUsedCategory(assets)) ?? ref.categories.find((c) => c.id === 'humanoid') ?? ref.categories[0]
       setCategory(first.id)
       setParts(first.parts_default ?? [])
     }
-  }, [ref, category])
+  }, [ref, category, assets])
 
   // The look follows the project's unless the person has picked one; it is set when the looks arrive, not before.
   useEffect(() => {
@@ -500,10 +522,17 @@ function CreateAssetForm({ project }: { project: Project }) {
       {fromPicture && sizeNote(picture) && <div className="tool-note small">{sizeNote(picture)}</div>}
       <Field label="1. What are you making?" term={'category.' + category} hint={cat ? (cat.id === 'material' ? MATERIAL_NOTE : cat.rig_engine === 'none' ? 'No skeleton; it will not animate.' : 'It will get a skeleton and can be animated.') : undefined}>
         <div className="category-tiles" role="radiogroup" aria-label="What are you making?">
-          {ref?.categories.map((c) => (
-            <button key={c.id} type="button" role="radio" aria-checked={category === c.id} aria-pressed={category === c.id} className="category-tile" onClick={() => changeCategory(c.id)}>
-              {c.label}
-            </button>
+          {groupCategories(ref?.categories ?? []).map((g) => (
+            <div key={g.name} className="category-group" role="group" aria-label={g.name}>
+              <div className="category-group-name">{g.name}</div>
+              <div className="category-group-tiles">
+                {g.items.map((c) => (
+                  <button key={c.id} type="button" role="radio" aria-checked={category === c.id} aria-pressed={category === c.id} className="category-tile" onClick={() => changeCategory(c.id)}>
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </Field>

@@ -334,6 +334,8 @@ export type Category = {
   label: string
   // The app's plain word for this kind of asset ("character", "prop"; backend reference.CATEGORY_NOUNS).
   noun?: string
+  // The heading it sits under in the picker (backend reference.CATEGORY_GROUPS).
+  group?: string
   rig_engine: string
   symmetric: boolean
   pose_block: string
