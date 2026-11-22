@@ -5,9 +5,10 @@
 import { Link } from 'react-router'
 import { api, libraryUrl, previousStage, selectedVersion, STAGES, stoppedVersions, versionsOf, type Asset, type AutopilotState, type Job, type StageId, type StageInfo, type Version } from '../api'
 import { Info } from '../components/Info'
-import { Disclosure, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
+import { Disclosure, ResumeButton, StopButton, type FixRequest } from '../components/ui'
 import { conceptCountLabel } from '../guide'
-import { attentionItems } from './finish'
+import { attentionItems, verdictLine } from './finish'
+import { TieredChecks } from './TieredChecks'
 import { fmtDuration, humanError, looksGood, MODEL_IMPORT_SECONDS, plainJargon, stageEstimate, stageGerund, stageHelp, stagePlain, stageVerb } from '../help'
 import { mergeStepParams } from './stepSettings'
 import { AutopilotCard, FinishCard, isAutopilotActive, isFinished, MakeItAction, type AutopilotActions } from './AutopilotPanel'
@@ -89,18 +90,10 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
         <div className="guide-happened">{kept}</div>
         <div className="guide-now muted">The whole asset is finished. A change here makes a new version; the finished files stay until you rebuild the steps after it.</div>
         {warns > 0 && (
-          <div className="finish-bar-warn small">
-            <TrafficDot state="warn" />
-            {warns === 1 ? '1 check on the finished asset needs a look:' : `${warns} checks on the finished asset need a look:`}
-            <ul className="finish-bar-list">
-              {items.map((a, i) => (
-                <li key={a.stage + a.id + i}>
-                  <span className="muted">Step {STAGES.indexOf(a.stage) + 1}, {stagePlain(a.stage, null)}: </span>
-                  {a.text} {a.stage !== stage && <Link to={`/assets/${asset.id}/${a.stage}`}>Go there</Link>}
-                </li>
-              ))}
-            </ul>
-          </div>
+          <Disclosure label={`${warns} on the whole asset`} className="finish-bar-warn small">
+            <div className="muted small">{verdictLine(items)}</div>
+            <TieredChecks asset={asset} items={items} stage={stage} />
+          </Disclosure>
         )}
       </div>
       <div className="guide-action finish-bar-actions">

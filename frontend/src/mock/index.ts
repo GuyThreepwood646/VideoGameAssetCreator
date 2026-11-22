@@ -437,6 +437,7 @@ on('GET', '/api/categories', () => categories)
 on('GET', '/api/styles', () => styles)
 on('GET', '/api/platforms', () => platforms)
 on('GET', '/api/stages', () => stages)
+on('GET', '/api/check-tiers', () => ({ tiers: [{ id: 'likely', label: 'Likely to show in the game' }, { id: 'look', label: 'Worth a look' }, { id: 'advice', label: 'Advice' }], table: {}, default: 'look', near_miss: 0.05 }))
 on('GET', '/api/models', () => [
   { id: 'zturbo', label: 'Z-Image Turbo', description: 'fast painted look', default_steps: 8, licence: 'Apache-2.0' },
   { id: 'zbase', label: 'Z-Image Base', description: 'higher quality, slower', default_steps: 30, licence: 'Apache-2.0' },

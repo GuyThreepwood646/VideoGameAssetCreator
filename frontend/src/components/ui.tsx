@@ -193,7 +193,7 @@ export function PlainChecks({
     const sev = checkSeverity(c)
     const fix = ok ? null : checkFix(c)
     const key = checkHelpKey(c)
-    const state: TrafficState = ok ? 'ok' : sev === 'warn' ? 'warn' : 'bad'
+    const state: TrafficState = ok ? 'ok' : c.tier === 'advice' || c.tier === 'look' || sev === 'warn' ? 'warn' : 'bad'
     return (
       <li key={c.id ?? c.name} className={'plain-check ' + state}>
         <TrafficDot state={state} title={ok ? 'passed' : sev === 'warn' ? 'warning' : 'needs attention'} />

@@ -415,8 +415,8 @@ def _with_fix_notes(metrics: dict[str, Any], params: dict[str, Any] | None = Non
     """The version's metrics with each failed check saying what a person can do about it (fixnotes), also for versions
     stored before that existed. Never raises: a note is a courtesy."""
     try:
-        from . import fixnotes
-        return fixnotes.after_fix_notes(fixnotes.annotate_checks(metrics), params)
+        from . import check_tiers, fixnotes
+        return check_tiers.annotate_metrics(fixnotes.after_fix_notes(fixnotes.annotate_checks(metrics), params))
     except Exception:  # noqa: BLE001
         return metrics
 
