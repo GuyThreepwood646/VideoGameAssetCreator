@@ -2172,7 +2172,9 @@ def _death_build():
             return limb_lowest_parts(Q, {"head": hset}).get("head", g) - g
 
         best, best_cost = 0.0, None
-        for d_ in (range(0, 1) if _TF[0] else range(-35, 36, 2)):
+        # WP-78 follow-up (PREREG section 11): the standard rung keeps the head flat. Its head bend (up to 35 degrees)
+        # stretched the torso of blacksmith and mage. The torso-first rung sets its own head bend in _torso_first_search.
+        for d_ in range(0, 1):
             z = head_low(d_)
             if z < -0.003:
                 continue
