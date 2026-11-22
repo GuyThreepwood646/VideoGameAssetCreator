@@ -10,9 +10,15 @@ edges under FLOOR_M (5 mm) at rest skipped too, so sliver-length edges cannot do
 dominate its two ends (see region_of_bone and edge_region):
   hips  the hips bone (the pelvis and the hip joints where they meet it)
   legs  thigh, calf, foot and toe bones
-  arms  shoulder-to-hand bones
+  hands hand, finger and thumb bones (Hand, Finger, Thumb, and the Mixamo fingers and thumbs)
+  arms  shoulder, clavicle, upper arm and forearm bones; no hand or finger bone is an arm
   torso spine, neck, head
   other anything else
+
+A bone name is lower-cased, with the 'mixamorig:' prefix dropped, and tested in this order: hips or pelvis, then the
+legs words, then the hands words (hand, finger, thumb), then the arms words, then the torso words. The first match is
+the bone's region. An edge takes the region that comes first in REGION_PRIORITY from its two ends, so the wrist edge
+(forearm to hand) counts as hands, and an upper arm to torso edge counts as arms.
 
 Output JSON: {"threshold", "rest_edges", "regions": {name: edges}, "clips": {clip: {"frames", "regions": {name:
 {"edges", "over_share", "p95_ratio", "max_ratio"}}, "all": {...}}}}. over_share is the share of the region's edges
@@ -29,7 +35,7 @@ import numpy as np
 THRESHOLD = 1.3
 MIN_REST_M = 0.001  # edges shorter than this at rest are skipped in every figure
 FLOOR_M = 0.005  # the second set of figures also skips edges shorter than this at rest (sliver-length edges)
-REGION_PRIORITY = ("hips", "legs", "arms", "torso", "other")
+REGION_PRIORITY = ("hips", "legs", "hands", "arms", "torso", "other")
 
 
 def region_of_bone(name):
@@ -39,7 +45,9 @@ def region_of_bone(name):
         return "hips"
     if any(k in n for k in ("upleg", "leg", "foot", "toe", "thigh", "calf", "ankle")):
         return "legs"
-    if any(k in n for k in ("arm", "hand", "shoulder", "finger", "thumb", "clavicle")):
+    if any(k in n for k in ("hand", "finger", "thumb")):
+        return "hands"
+    if any(k in n for k in ("arm", "shoulder", "clavicle")):
         return "arms"
     if any(k in n for k in ("spine", "neck", "head", "chest")):
         return "torso"
