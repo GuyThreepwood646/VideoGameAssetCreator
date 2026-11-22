@@ -3124,14 +3124,10 @@ button.btn-lg {
   line-height: 1.25;
 }
 .front-chosen {
-  position: absolute;
-  top: 4px;
-  right: 4px;
   font-size: var(--fs-xs);
-  padding: 0 4px;
-  border-radius: var(--radius);
-  background: var(--accent);
-  color: var(--accent-ink);
+  line-height: 1.25;
+  color: var(--muted);
+  font-style: italic;
 }
 .front-picker:disabled .front-option {
   opacity: 0.6;
