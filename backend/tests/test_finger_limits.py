@@ -42,7 +42,7 @@ def test_the_cap_comes_from_the_rigs_setting():
 
 def _sc(tmp_path, params):
     rig_v = SimpleNamespace(metrics={"bones": 52}, params=params)
-    return SimpleNamespace(dir=tmp_path, category={"rig_engine": "skintoken", "size_m": 1.7}, stage_version=lambda s: rig_v,
+    return SimpleNamespace(dir=tmp_path, platform="pc_mid", category={"rig_engine": "skintoken", "size_m": 1.7}, stage_version=lambda s: rig_v,
                            settings=SimpleNamespace(clips_libraries={}))
 
 

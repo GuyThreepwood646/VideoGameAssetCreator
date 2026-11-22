@@ -217,7 +217,7 @@ def test_collider_checks_exact_shape_none_and_legacy():
 # --- what the importer is asked to do ----------------------------------------------------------------------------------
 
 def _sc(tmp_path, category):
-    return SimpleNamespace(dir=tmp_path, asset=SimpleNamespace(category=category), category={}, settings=SimpleNamespace(clips_libraries={}),
+    return SimpleNamespace(platform="pc_mid", dir=tmp_path, asset=SimpleNamespace(category=category), category={}, settings=SimpleNamespace(clips_libraries={}),
                            stage_version=lambda s: None)
 
 

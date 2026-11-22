@@ -4,6 +4,7 @@ folder setting warns (never refuses) when the folder path is long. Nothing here 
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -75,10 +76,25 @@ def test_unc_path_is_checked(no_blender):
         tools.check_blender_paths([unc])
 
 
-def test_deepest_fixed_file_length_is_the_clean_up_face_picture():
-    # projects/<36>/assets/<36>/prep/<36>/face/painted_head_closeup_2_drawn.png, relative to the library folder
-    assert library.DEEPEST_FIXED_LENGTH == len("projects/") + 36 + len("/assets/") + 36 + len("/prep/") + 36 + len("/face/painted_head_closeup_2_drawn.png")
-    assert library.DEEPEST_FIXED_LENGTH == 169
+def test_limit_is_the_deepest_real_path_at_the_shortest_export_name():
+    # The folder limit is set by the deepest path the app writes with the shortest export name (a 4-character cut, "_",
+    # and 8 id characters): the item's texture pack under items/<id8>/ (71 characters). The clean-up face picture (169
+    # below the folder) is shallower than the item files at that name.
+    assert library.name_length(library.MIN_NAME_CUT) == 13
+    assert library.max_library_folder_length() == 71
+
+
+def test_deep_library_gets_a_shorter_name_and_every_real_path_stays_under_260():
+    from vgac.stages import export
+    sc = SimpleNamespace(asset=SimpleNamespace(name="N" * 200, id=str(uuid.uuid4())))
+    folder_len = 70
+    name = export.asset_export_name(sc, folder_length=folder_len)
+    assert name == "NNNNN_" + sc.asset.id[:8]  # cut to 5 at this depth, never refused
+    folder = "X:\\" + "a" * (folder_len - 3)
+    assert len(folder) == folder_len
+    for template in library.NAMED_TEMPLATES + library._FIXED:
+        rel = template.format(p="p" * 36, a="a" * 36, v="v" * 36, i="i" * 8, n=name)
+        assert len(folder) + 1 + len(rel) < library.LONG_PATH_LIMIT  # Blender refuses 260 characters or more
 
 
 def test_library_folder_at_the_limit_passes_one_more_is_refused():
@@ -89,6 +105,26 @@ def test_library_folder_at_the_limit_passes_one_more_is_refused():
     assert f"under {n + 1} characters" in message
     assert "for example F:\\Games\\VGAC library:" in message
     assert "too long for Windows" in message
+
+
+def test_refused_folder_names_the_number_and_the_shortest_name_is_refused_too():
+    from vgac.stages import export
+    n = library.max_library_folder_length()
+    sc = SimpleNamespace(asset=SimpleNamespace(name="N" * 200, id=str(uuid.uuid4())))
+    with pytest.raises(library.LibraryPathError) as info:
+        export.asset_export_name(sc, folder_length=n + 1)
+    assert f"under {n + 1} characters" in str(info.value)
+
+
+def test_export_check_agrees_with_the_folder_limit_at_the_shortest_name():
+    # The room check (stages/export.py check_export_room) passes the shortest name at the limit and refuses one more.
+    from vgac.stages import export
+    n = library.max_library_folder_length()
+    name = "x" * library.name_length(library.MIN_NAME_CUT)
+    rel = Path(*f"projects/{'p' * 36}/assets/{'a' * 36}/export/{'v' * 36}".split("/"))
+    export.check_export_room(Path("X:\\" + "a" * (n - 3)) / rel, name)  # at the limit: passes
+    with pytest.raises(library.LibraryPathError):
+        export.check_export_room(Path("X:\\" + "a" * (n - 2)) / rel, name)  # one more: refused
 
 
 def test_plain_example_folder_passes_the_library_check():

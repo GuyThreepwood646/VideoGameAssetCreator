@@ -96,7 +96,7 @@ def test_lod_param_parsing():
     assert parse_lods("1.0, 0.5, 0.25, 0.1") == [0.5, 0.25, 0.1]
     assert parse_lods([0.5, 0.25]) == [0.5, 0.25]
     assert parse_lods("") is None and parse_lods(None) is None
-    lods = lod_list({"LOD0": 100, "LOD1": 50, "LOD2": 25})
+    lods = lod_list({"LOD0": 100, "LOD1": 50, "LOD2": 25}, "pc_mid")
     assert lods == [{"level": 0, "triangles": 100, "screen_height": 0.6}, {"level": 1, "triangles": 50, "screen_height": 0.3}, {"level": 2, "triangles": 25, "screen_height": 0.12}]
 
 

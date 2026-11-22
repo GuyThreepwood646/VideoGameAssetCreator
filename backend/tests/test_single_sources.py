@@ -246,7 +246,7 @@ def test_unity_args_one_helper(tmp_path):
     lib = tmp_path / "clips.fbx"
     lib.write_bytes(b"x")
     rig = SimpleNamespace(metrics={"bones": 30})
-    sc = SimpleNamespace(dir=tmp_path, category={"rig_engine": "skintoken_mixamo"}, stage_version=lambda s: rig,
+    sc = SimpleNamespace(dir=tmp_path, platform="pc_mid", category={"rig_engine": "skintoken_mixamo"}, stage_version=lambda s: rig,
                          settings=SimpleNamespace(clips_libraries={"ual1": lib}))
     args, flags, warnings = export._unity_args(sc, {"clips_library": "ual1"}, "knight")
     assert flags == ["-nographics", "-vgacHumanoid"] and args["-vgacClips"] == lib and args["-vgacName"] == "knight" and not warnings
