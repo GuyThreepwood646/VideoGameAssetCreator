@@ -5086,3 +5086,6 @@ textarea::placeholder {
   border-radius: 3px;
   background: rgba(32, 32, 32, 0.85);
 }
+.face-sheet-band {
+  min-height: 18px;
+}
