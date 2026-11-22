@@ -19,6 +19,7 @@ A bone name is lower-cased, with the 'mixamorig:' prefix dropped, and tested in 
 legs words, then the hands words (hand, finger, thumb), then the arms words, then the torso words. The first match is
 the bone's region. An edge takes the region that comes first in REGION_PRIORITY from its two ends, so the wrist edge
 (forearm to hand) counts as hands, and an upper arm to torso edge counts as arms.
+Arms figures before this change include hand and finger edges, so compare arm over-edge counts, not shares, with older stored metrics.
 
 Output JSON: {"threshold", "rest_edges", "regions": {name: edges}, "clips": {clip: {"frames", "regions": {name:
 {"edges", "over_share", "p95_ratio", "max_ratio"}}, "all": {...}}}}. over_share is the share of the region's edges
