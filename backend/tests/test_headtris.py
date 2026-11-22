@@ -179,10 +179,10 @@ def test_the_clean_up_sentence_says_how_many_triangles_the_head_has():
     assert plain["help"] == "Your full model has 19,594 triangles (the flat pieces it is made of), inside your platform's limit of 20,000."
 
 
-def test_the_option_is_in_advanced_with_the_real_term_first():
+def test_the_option_is_in_advanced_with_the_plain_label_first():
     spec = {p["id"] if "id" in p else p["name"]: p for p in reference.STAGE_SCHEMAS["prep"]}
     p = spec[headtris.PARAM]
     assert p["default"] is True and p["categories"] == ["humanoid"]
-    assert p["label"] == "Weighted decimation (more triangles on the head)"
+    assert p["label"] == "More triangles on the head (weighted decimation)"
     assert guidance.PARAM_HELP[headtris.PARAM]["simple"] is False
     assert headtris.on({}) and not headtris.on({"head_triangles": False})
