@@ -405,6 +405,7 @@ export type StageInfo = {
   adjust_schema: AdjustParam[]
   plain_name?: string
   plain_verb?: string
+  technical_short?: string
   help?: HelpText
   estimate_seconds?: number
   // Set when the time with both cards and with one differ by 30 percent: "about 5 minutes with both cards, about 17 minutes with one".

@@ -4944,3 +4944,19 @@ button.preset-card:hover:not(:disabled) {
   line-height: 1.25;
   text-align: left;
 }
+
+/* The industry term after a plain label (UX-25): muted and small, never the only text. */
+.tech-term {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  margin-left: var(--s2);
+}
+.rail-label .rail-tech {
+  display: block;
+  margin-left: 0;
+  line-height: 1.3;
+}
+.section-title .stage-tech {
+  margin-left: var(--s2);
+}

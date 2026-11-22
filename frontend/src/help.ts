@@ -20,7 +20,7 @@ const H = (plain: string, meaning: string, why: string, technical: string): Help
 
 // placeholder: the example shown in the empty "Describe the change" box of this step.
 // Time estimates are not kept here: they come from GET /api/stages (see stageEstimate).
-export type StageText = { plain: string; verb: string; gerund: string; help: HelpEntry; placeholder: string }
+export type StageText = { plain: string; tech: string; verb: string; gerund: string; help: HelpEntry; placeholder: string }
 
 export const STAGE_TEXT: Record<StageId, StageText> = {
   concept: {
@@ -28,42 +28,48 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     verb: 'Make concept art',
     gerund: 'Painting the concept art',
     placeholder: 'e.g. make the helmet open-faced and the shield round',
-    help: H('Describe', 'Concept art: the first picture of your asset, painted from your description.', 'Everything that follows is built from this picture, so get the look right here.', 'concept'),
+    tech: 'Concept art (text-to-image)',
+    help: H('Describe', 'The first picture of your asset, painted from your description.', 'Everything later is built from this picture, so get the look right here.', 'Concept image (text-to-image), with a background cutout'),
   },
   turnaround: {
     plain: 'Check all sides',
     verb: 'Check all sides',
     gerund: 'Drawing the other sides',
     placeholder: 'e.g. the back view should show the cloak',
-    help: H('Check all sides', 'We look at your character from the front, sides and back so the 3D model gets the back right.', 'If a view looks wrong, regenerate just that view before building the model.', 'turnaround'),
+    tech: 'Multi-view turnaround',
+    help: H('Check all sides', 'Views of your asset from the front, sides and back.', 'The 3D builder guesses the sides it cannot see; checking them now avoids surprises later.', 'Turnaround views (multi-angle image editing), consistency checks per view'),
   },
   mesh: {
     plain: 'Build the 3D model',
     verb: 'Build the 3D model',
     gerund: 'Building the 3D model',
     placeholder: 'e.g. hands apart from the backpack arms, thicker sword',
-    help: H('Build the 3D model', 'Turns the pictures into a 3D shape with painted surfaces.', 'This is the raw model; the next step tidies it for the game.', 'mesh'),
+    tech: 'Image-to-3D mesh generation',
+    help: H('Build the 3D model', 'Turns the picture into a textured 3D model sized for your platform.', 'This is the model your game will use.', 'Image-to-3D (TRELLIS.2 shape and texture), remesh, decimate, unwrap, bake'),
   },
   prep: {
     plain: 'Clean up for the game',
     verb: 'Clean up for the game',
     gerund: 'Cleaning up for the game',
     placeholder: 'e.g. more wear on the armour',
-    help: H('Clean up for the game', 'Shrinks the model to the platform budget, fixes holes, sets its size and makes a tidy texture.', 'Game engines need a clean, light model; this step makes it one.', 'prep'),
+    tech: 'Retopology, UV unwrap, texture bake',
+    help: H('Clean up for the game', 'Turns the model to face forward, sets its real-world size (scenery is rounded to the grid), puts the pivot at the base (a corner for scenery), removes stray geometry and checks the textures; it mirrors the two halves only when you ask.', 'Game engines expect models at the right scale, facing the right way, with a clean surface and textures painted for that surface.', 'Yaw to face +Z, uniform scale on the category size axis (grid snap and corner pivot for environment), pivot, weld, optional symmetrize with re-bake, manifold cleanup, PBR and baked-light checks'),
   },
   rig: {
     plain: 'Make it move',
     verb: 'Make it move',
     gerund: 'Adding a skeleton',
     placeholder: 'e.g. smoother bending at the left elbow',
-    help: H('Make it move', 'Adds a skeleton and attaches the surface to it so the model can be animated.', 'Without this the model is a statue; with it, walk and idle animations work.', 'rig'),
+    tech: 'Rigging, skin weights, animation',
+    help: H('Make it move', 'Puts a skeleton inside the model and attaches the surface to it, then tries a walk and an idle.', 'Without a skeleton the model cannot animate.', 'Auto-rigging (SkinToken), skin weights, procedural idle and walk clips'),
   },
   export: {
     plain: 'Hand off to the game',
     verb: 'Hand off to the game',
     gerund: 'Packing the files for the game',
     placeholder: 'e.g. drop the sprite sheet, add another detail level',
-    help: H('Hand off to the game', 'Packs the model, textures, skeleton and animations into files a game engine can load.', 'This is the finished asset you drop into your game.', 'export'),
+    tech: 'Export: FBX / GLB, LODs, colliders, Unity prefab',
+    help: H('Hand off to the game', 'Packages the model with detail levels, a collider, textures and animations, and checks it in Unity.', 'This is what you drop into your game project.', 'LOD chain, convex collider, FBX and GLB export, Unity prefab build'),
   },
 }
 
@@ -95,6 +101,11 @@ export function plainJargon(text: string | null | undefined): string {
 
 export function stagePlain(stage: StageId, info?: StageInfo | null): string {
   return info?.plain_name || STAGE_TEXT[stage].plain
+}
+
+// The industry term shown muted under the step name (UX-03). The backend's technical_short is the one source.
+export function stageTech(stage: StageId, info?: StageInfo | null): string {
+  return info?.technical_short || STAGE_TEXT[stage].tech
 }
 
 export function stageVerb(stage: StageId, info?: StageInfo | null): string {

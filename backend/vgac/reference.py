@@ -18,14 +18,17 @@ import yaml
 from .config import DATA_DIR
 
 STAGE_ORDER = ("concept", "turnaround", "mesh", "prep", "rig", "export")
-STAGE_LABELS = {
-    "concept": "Concept",
-    "turnaround": "Preview turnaround",
-    "mesh": "Mesh and texture",
-    "prep": "Game-ready prep",
-    "rig": "Rig",
-    "export": "Export",
+# The one source of step names (UX-03). The plain name leads; the technical line is the industry term, three to six words.
+# guidance.py reads it for the help text and /api/stages sends both; the frontend has no copy of its own.
+STAGE_NAMES = {
+    "concept": {"plain": "Describe", "technical": "Concept art (text-to-image)"},
+    "turnaround": {"plain": "Check all sides", "technical": "Multi-view turnaround"},
+    "mesh": {"plain": "Build the 3D model", "technical": "Image-to-3D mesh generation"},
+    "prep": {"plain": "Clean up for the game", "technical": "Retopology, UV unwrap, texture bake"},
+    "rig": {"plain": "Make it move", "technical": "Rigging, skin weights, animation"},
+    "export": {"plain": "Hand off to the game", "technical": "Export: FBX / GLB, LODs, colliders, Unity prefab"},
 }
+STAGE_LABELS = {s: n["plain"] for s, n in STAGE_NAMES.items()}
 TURNAROUND_VIEWS = ("front", "left", "back", "right", "quarter", "quarter2", "top")
 
 # Knobs that apply to some categories only carry `categories` (docs/GREAT-ASSETS-PLAN.md 2.3). Material has no mesh
@@ -502,7 +505,7 @@ def stages() -> list[dict[str, Any]]:
             if labels and entry["type"] in ("select", "multiselect"):
                 item["option_labels"] = {str(k): v for k, v in labels.items()}
             schema.append(item)
-        out.append({"id": s, "label": STAGE_LABELS[s], "plain_name": g.get("plain_name", STAGE_LABELS[s]),
+        out.append({"id": s, "label": STAGE_LABELS[s], "plain_name": g.get("plain_name", STAGE_LABELS[s]), "technical_short": g.get("technical_short", ""),
                     "plain_verb": g.get("plain_verb", "Run"), "help": g.get("help", {}),
                     "estimate_seconds": g.get("estimate_seconds", 60), "adjust_schema": schema})
     return out

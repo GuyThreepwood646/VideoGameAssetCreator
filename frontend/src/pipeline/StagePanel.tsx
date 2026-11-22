@@ -27,7 +27,7 @@ import { firstStaleStage, isRemovable, isSetAside, isStopped, laterVersions, STA
 import { ResumeButton } from '../components/ui'
 import { ChecksList, Disclosure, isCheckList, MetricChips, PlainChecks, StatusBadge, SubmitTextarea, timeAgo, type FixRequest } from '../components/ui'
 import { conceptCountDefault, conceptCountLabel, preferredConceptModel, rememberConceptCount } from '../guide'
-import { FIX_TOOLS, humanError, modelLabel, paramPlain, PLAIN_VIEW_REDRAW, redrawViewsSeconds, redrawViewsWarning, stageEstimate, stagePlaceholder, stagePlain, stageVerb } from '../help'
+import { FIX_TOOLS, humanError, modelLabel, paramPlain, PLAIN_VIEW_REDRAW, redrawViewsSeconds, redrawViewsWarning, stageEstimate, stagePlaceholder, stagePlain, stageTech, stageVerb } from '../help'
 import { useRefData, type RefData } from '../refdata'
 import { isAutopilotActive, isFinished, type AutopilotActions } from './AutopilotPanel'
 import { attentionItems } from './finish'
@@ -461,6 +461,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         <div className="section-head">
           <h2 className="section-title">
             {stagePlain(stage, stageInfo)}
+            <span className="tech-term stage-tech">{stageTech(stage, stageInfo)}</span>
             <Info term={'stage.' + stage} />
           </h2>
           <span className="muted small">

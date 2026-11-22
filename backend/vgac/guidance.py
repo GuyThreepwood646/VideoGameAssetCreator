@@ -17,42 +17,47 @@ from .reference import STAGE_ORDER
 STAGE_GUIDE: dict[str, dict[str, Any]] = {
     "concept": {
         # Seconds per candidate.
-        "plain_name": "Describe", "plain_verb": "Make concept art", "estimate_seconds": 25,
+        "plain_verb": "Make concept art", "estimate_seconds": 25,
         "help": {"meaning": "The first picture of your asset, painted from your description.",
                  "why": "Everything later is built from this picture, so get the look right here.",
                  "technical": "Concept image (text-to-image), with a background cutout"},
     },
     "turnaround": {
-        "plain_name": "Check all sides", "plain_verb": "Show it from all sides", "estimate_seconds": 180,
+        "plain_verb": "Check all sides", "estimate_seconds": 180,
         "help": {"meaning": "Views of your asset from the front, sides and back.",
                  "why": "The 3D builder guesses the sides it cannot see; checking them now avoids surprises later.",
                  "technical": "Turnaround views (multi-angle image editing), consistency checks per view"},
     },
     "mesh": {
-        "plain_name": "Build the 3D model", "plain_verb": "Build the 3D model", "estimate_seconds": 200,
+        "plain_verb": "Build the 3D model", "estimate_seconds": 200,
         "help": {"meaning": "Turns the picture into a textured 3D model sized for your platform.",
                  "why": "This is the model your game will use.",
                  "technical": "Image-to-3D (TRELLIS.2 shape and texture), remesh, decimate, unwrap, bake"},
     },
     "prep": {
-        "plain_name": "Clean up for the game", "plain_verb": "Clean it up", "estimate_seconds": 20,
+        "plain_verb": "Clean up for the game", "estimate_seconds": 20,
         "help": {"meaning": "Turns the model to face forward, sets its real-world size (scenery is rounded to the grid), puts the pivot at the base (a corner for scenery), removes stray geometry and checks the textures; it mirrors the two halves only when you ask.",
                  "why": "Game engines expect models at the right scale, facing the right way, with a clean surface and textures painted for that surface.",
                  "technical": "Yaw to face +Z, uniform scale on the category size axis (grid snap and corner pivot for environment), pivot, weld, optional symmetrize with re-bake, manifold cleanup, PBR and baked-light checks"},
     },
     "rig": {
-        "plain_name": "Make it move", "plain_verb": "Add a skeleton", "estimate_seconds": 90,
+        "plain_verb": "Make it move", "estimate_seconds": 90,
         "help": {"meaning": "Puts a skeleton inside the model and attaches the surface to it, then tries a walk and an idle.",
                  "why": "Without a skeleton the model cannot animate.",
                  "technical": "Auto-rigging (SkinToken), skin weights, procedural idle and walk clips"},
     },
     "export": {
-        "plain_name": "Hand off to the game", "plain_verb": "Finish and package", "estimate_seconds": 120,
+        "plain_verb": "Hand off to the game", "estimate_seconds": 120,
         "help": {"meaning": "Packages the model with detail levels, a collider, textures and animations, and checks it in Unity.",
                  "why": "This is what you drop into your game project.",
                  "technical": "LOD chain, convex collider, FBX and GLB export, Unity prefab build"},
     },
 }
+
+# The step names come from reference.STAGE_NAMES, the one source: the plain name leads, the industry term follows.
+for _stage, _names in reference.STAGE_NAMES.items():
+    STAGE_GUIDE[_stage]["plain_name"] = _names["plain"]
+    STAGE_GUIDE[_stage]["technical_short"] = _names["technical"]
 
 PARAM_HELP: dict[str, dict[str, Any]] = {
     "model": {"simple": True, "help": {"meaning": "Which image model paints the first picture.", "why": "Each has a different look and speed; the suggestion picks one for your style and platform.", "technical": "Diffusion model (the options are the concept models in models.yaml)"}},
