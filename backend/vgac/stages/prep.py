@@ -88,6 +88,8 @@ TEXTURE_KEYS = ("base_color", "normal", "metallic", "roughness", "ao")
 LIGHT_SCORE_LIMIT = 0.2
 ATLAS_USED_MIN = 0.35  # the unwrap normally lands between 0.45 and 0.6; a mirrored, un-rebaked model sat at 0.28
 BAKE_MATCH_MIN = 0.99
+OUTLINE_IOU_MIN = 0.92  # outline_kept: lowest outline overlap (IoU) over the views between the model before and after the budget reduction
+OUTLINE_REGION_MAX = 0.02  # outline_kept: largest lost or filled patch of an outline, as a share of the outline's area
 ALBEDO_CLIPPED_MAX = 0.05  # albedo_range: share of non-metal texels that are pure black (under 4 sRGB) or pure white (over 250)
 ALBEDO_DARK_LOOK_FAULT = 0.5  # in a kept look, more than this share outside 30..240 while darker than the picture fails
 ALBEDO_DARK_NOTE = 0.15  # and the share of dark texels (under 30) over which the passing sentence says so; black cloth and dark hair are not a fault
@@ -377,7 +379,7 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
                    degenerate_faces=report.get("degenerate_faces"), uv_layers=report.get("uv_layers"), bones=report.get("bones"),
                    rebaked=rebaked, rebake_reason=report.get("rebake_reason"), rebake_seconds=report.get("rebake_seconds") or 0.0,
                    decimated=bool(report.get("decimated")), texture_size=tex, triangles_before_budget=report.get("triangles_before_budget"),
-                   shape_loss=report.get("shape_loss"), **head_metrics(report, head))
+                   shape_loss=report.get("shape_loss"), outline=report.get("outline"), **head_metrics(report, head))
     if report.get("grid"):
         sc.set_metrics(**grid_metrics(report["grid"]))
         tiling = report.get("tiling_png")
@@ -1163,10 +1165,29 @@ def prep_checks(report: dict[str, Any], params: dict[str, Any], metrics: dict[st
     up = upscale_check(metrics.get("srcproject_upscale"))
     if up is not None:
         checks.append(up)
+    oc = outline_check(report)
+    if oc is not None:
+        checks.append(oc)
     ff = (metrics.get("srcproject_face_finder") or {}).get("missing")
     if ff:  # the processor finder was asked for and is not there (nothing asked for: nothing said)
         checks.append(quality.check("face_finder", False, ff, "found", vars={"reason": ff}))
     return checks
+
+
+def outline_check(report: dict[str, Any]) -> dict[str, Any] | None:
+    """outline_kept (WP-16 follow-up, warning only): the model before the budget reduction and the final model drawn as
+    outlines from seven fixed views (vgac/blender/outline.py). Fails when the worst view overlaps less than
+    OUTLINE_IOU_MIN, or a lost or filled-in patch is bigger than OUTLINE_REGION_MAX of the outline. None when prep did
+    not try; not measured when it tried and could not."""
+    o = report.get("outline")
+    if not isinstance(o, dict):
+        err = report.get("outline_error")
+        return quality.not_measured("outline_kept", "whether the outline survived the clean-up", str(err)) if err else None
+    iou, region = float(o["iou_min"]), float(o["region_max"])
+    view = o.get("region_max_view") if region > OUTLINE_REGION_MAX else o.get("iou_min_view")
+    return quality.check("outline_kept", iou >= OUTLINE_IOU_MIN and region <= OUTLINE_REGION_MAX, round(iou, 4), OUTLINE_IOU_MIN,
+                         vars={"region": round(region, 4), "region_limit": OUTLINE_REGION_MAX, "kind": o.get("region_max_kind"),
+                               "view": view})
 
 
 def facing_check(metrics: dict[str, Any], category_id: str | None = None) -> dict[str, Any] | None:

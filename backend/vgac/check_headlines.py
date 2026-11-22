@@ -120,6 +120,8 @@ HEADLINES: dict[str, str] = {
     "pose_held": "The pose was not held in the view",
     "pictures_sharpened": "The pictures were sharpened before use",
     "movement_shape": "The shape used for moving is not the usual one",
+    # WP-16 outline check (worth a look)
+    "outline_kept": "The clean-up changed the model's outline",
 }
 
 # Ids that carry a number or a name.

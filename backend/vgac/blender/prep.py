@@ -51,6 +51,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common  # noqa: E402  (shared helpers next to this script)
 import gridfit  # noqa: E402  (pure maths next to this script)
 import headweight  # noqa: E402
+import outline  # noqa: E402  (pure maths next to this script)
 import rebake  # noqa: E402
 import shapeloss  # noqa: E402  (pure maths next to this script)
 from mathutils import Matrix, Vector
@@ -162,6 +163,18 @@ def measure_shape_loss(pre_obj, fin_obj):
     block = shapeloss.measure(pre_v, pre_t, fin_v, fin_t,
                               lambda p: nearest_distances(tree_fin, p),
                               lambda p: nearest_distances(tree_pre, p))
+    block["seconds"] = round(time.perf_counter() - t0, 2)
+    return block
+
+
+def measure_outline(pre_obj, fin_obj):
+    """The outline block (WP-16 follow-up): both meshes drawn as silhouettes from fixed views and compared."""
+    t0 = time.perf_counter()
+    pre_v, pre_t = mesh_arrays(pre_obj)
+    fin_v, fin_t = mesh_arrays(fin_obj)
+    tree_pre = BVHTree.FromPolygons(pre_v.tolist(), pre_t.tolist(), all_triangles=True)
+    tree_fin = BVHTree.FromPolygons(fin_v.tolist(), fin_t.tolist(), all_triangles=True)
+    block = outline.measure(tree_pre, tree_fin, pre_v, fin_v)
     block["seconds"] = round(time.perf_counter() - t0, 2)
     return block
 
@@ -377,6 +390,10 @@ try:
     shape_report["shape_loss"] = measure_shape_loss(shape_source, mesh)
 except Exception as exc:  # a metric, never a reason to fail prep
     shape_report["shape_loss_error"] = str(exc)[:300]
+try:
+    shape_report["outline"] = measure_outline(shape_source, mesh)
+except Exception as exc:  # a warning-only check: never a reason to fail prep
+    shape_report["outline_error"] = str(exc)[:300]
 drop_object(shape_source)
 
 mesh.data.calc_loop_triangles()
