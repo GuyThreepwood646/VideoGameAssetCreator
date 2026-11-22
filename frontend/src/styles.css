@@ -8,7 +8,7 @@
   --border: #3a3e46;
   --border-strong: #4d525c;
   --text: #e4e6ea;
-  --muted: #9aa0a8;
+  --muted: #a3a9b1;
   --ok: #5fbf7a;
   --bad: #f08a84;
   --warn: #d8a84a;
@@ -20,7 +20,7 @@
   --s4: 24px;
   --s5: 32px;
   --radius: 4px;
-  /* UI-35 token set. Type scale: nothing readable below 12 px (UI-10). */
+  /* UI-35 token set. Type scale: nothing readable below 12 px (UI-10); body text and hints are 14 px (--fs-md), 12 px is for metadata and technical terms (UX-16). */
   --fs-xs: 12px;
   --fs-sm: 13px;
   --fs-md: 14px;
@@ -242,11 +242,11 @@ input[type='checkbox'] {
   color: var(--muted);
 }
 .small {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
 }
 .error {
   color: var(--bad);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
 }
 .bad-text {
   color: var(--bad);
@@ -470,7 +470,7 @@ input[type='checkbox'] {
   border-radius: var(--radius-sm, 3px);
 }
 .field-hint {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
   color: var(--muted);
 }
 .placeholder-box {
@@ -485,7 +485,7 @@ input[type='checkbox'] {
   border-radius: var(--radius);
   padding: var(--s2);
   color: var(--warn);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
 }
 
 .chips {
@@ -550,13 +550,13 @@ input[type='checkbox'] {
   margin: 0;
   padding: 0;
   width: 100%;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
 }
 .checks {
   list-style: none;
   margin: 0;
   padding: 0;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -628,7 +628,7 @@ input[type='checkbox'] {
 
 .table {
   border-collapse: collapse;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
 }
 .table th,
 .table td {
@@ -2009,7 +2009,7 @@ button.btn-lg {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-1);
   color: var(--text);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
   font-weight: 400;
   line-height: 1.4;
   text-transform: none;
@@ -2223,7 +2223,7 @@ button.btn-lg {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
 }
 .traffic-line.ok {
   color: var(--ok);
@@ -2400,7 +2400,7 @@ button.btn-lg {
   background: none;
   border: 1px dashed var(--border-strong);
   color: var(--muted);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
   padding: 2px var(--s2);
   white-space: normal;
   text-align: left;
@@ -2412,7 +2412,7 @@ button.btn-lg {
   padding: var(--s2);
   border-left: 3px solid var(--accent);
   background: rgba(110, 164, 232, 0.08);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
 }
 
 /* Empty state */
@@ -2505,7 +2505,7 @@ button.btn-lg {
   flex: none;
 }
 .variant-of {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
   color: var(--muted);
 }
 
@@ -2529,7 +2529,7 @@ button.btn-lg {
   gap: 2px;
 }
 .make-it-stop select {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
   padding: 2px var(--s1);
 }
 .guide-action-col {
@@ -2542,7 +2542,7 @@ button.btn-lg {
   display: inline-flex;
   align-items: center;
   gap: var(--s1);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
   color: var(--muted);
 }
 .or-just::before {
@@ -2931,7 +2931,7 @@ button.btn-lg {
 }
 .gpu-advanced {
   grid-column: 1 / -1;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
 }
 .gpu-advanced summary {
   cursor: pointer;
@@ -2997,7 +2997,7 @@ button.btn-lg {
 }
 .unity-lines {
   margin: var(--s2) 0;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
 }
 .unity-howto ol {
   margin: var(--s1) 0 0;
@@ -3118,11 +3118,11 @@ button.btn-lg {
   object-fit: cover;
 }
 .front-label {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
   line-height: 1.25;
 }
 .front-chosen {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
   line-height: 1.25;
   color: var(--muted);
   font-style: italic;
@@ -3318,7 +3318,7 @@ button.btn-lg {
 /* Unity hand-off to the person's own project. */
 .unity-handoff {
   margin: var(--s2) 0;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
 }
 .unity-handoff-line {
   display: flex;
@@ -3412,7 +3412,7 @@ button.small-btn .resume-icon {
   text-align: right;
 }
 .resume-from select {
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
   padding: 2px var(--s1);
 }
 .stale-note {
@@ -4074,7 +4074,7 @@ button.small-btn .resume-icon {
 }
 .category-group-name {
   color: var(--muted);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-md);
   margin-bottom: var(--s1);
 }
 .category-group-tiles {
