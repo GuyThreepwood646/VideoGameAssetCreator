@@ -38,7 +38,7 @@ function paintWith(settings: PaintSettings): PaintState {
 function selectedIn(html: string, group: string): { label: string; styled: boolean; count: number } {
   const start = html.indexOf(`aria-label="${group}"`)
   assert.ok(start >= 0, `group ${group} is shown`)
-  const end = html.indexOf('</span>', start)
+  const end = html.indexOf('</button></span>', start)
   const part = html.slice(start, end)
   const buttons = [...part.matchAll(/<button[^>]*aria-checked="true"[^>]*>([\s\S]*?)<\/button>/g)]
   const styled = [...part.matchAll(/<button[^>]*aria-checked="true"[^>]*class="([^"]*)"/g)].map((m) => m[1])
