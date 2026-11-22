@@ -1,6 +1,7 @@
 import { openFolderAndSay } from '../notify'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
+import { assetAttention } from '../pipeline/finish'
 import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type Category, type EditChoice, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
 import { ImageDrop, nameFromFile, type PickedImage } from '../components/ImageDrop'
 import { FeaturePhotos } from '../components/FeaturePhotos'
@@ -135,7 +136,11 @@ const FILTER_LABEL: Record<AssetFilter, string> = { all: 'All', progress: 'In pr
 function assetStatus(a: AssetSummary): Exclude<AssetFilter, 'all'> {
   const sts = STAGES.map((x) => stageState(a, x))
   if (sts.includes('error')) return 'needs'
-  if (sts.every((x) => x === 'done')) return 'ready'
+  if (sts.every((x) => x === 'done')) {
+    // Finished, but a check the app counts against it (likely to show, or worth a look) means it needs a look.
+    const att = assetAttention(a)
+    return att.likely + att.look > 0 ? 'needs' : 'ready'
+  }
   return 'progress'
 }
 
@@ -175,8 +180,13 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
         {(() => {
           const sts = STAGES.map((x) => stageState(asset, x))
           const failedAt = sts.indexOf('error')
-          const label = failedAt >= 0 ? `Needs a look: ${stagePlain(STAGES[failedAt])}` : sts.some((x) => x === 'running') ? 'Working' : sts.every((x) => x === 'done') ? 'Ready' : sts.every((x) => x === 'none') ? 'Not started' : 'In progress'
-          return <div className={'small ' + (failedAt >= 0 ? 'bad-text' : 'muted')}>{label}</div>
+          const att = sts.every((x) => x === 'done') ? assetAttention(asset) : { likely: 0, look: 0 }
+          const label = failedAt >= 0 ? `Needs a look: ${stagePlain(STAGES[failedAt])}`
+            : sts.some((x) => x === 'running') ? 'Working'
+            : att.likely ? `Not ready to use yet: ${att.likely} likely to show in the game`
+            : att.look ? `Needs a look: ${att.look} worth a look`
+            : sts.every((x) => x === 'done') ? 'Ready' : sts.every((x) => x === 'none') ? 'Not started' : 'In progress'
+          return <div className={'small ' + (failedAt >= 0 || att.likely || att.look ? 'bad-text' : 'muted')}>{label}</div>
         })()}
         <div className="stage-dots" role="img" aria-label={`${doneSteps} of ${STAGES.length} steps done`} title={`${doneSteps} of ${STAGES.length} steps done`}>
           {STAGES.map((s) => {
