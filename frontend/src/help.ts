@@ -12,6 +12,16 @@ export type HelpEntry = {
   technical: string // the technical name, for people who want to search for it
 }
 
+// A help entry's technical line split into the industry term and the name in the files (UX-24). "variant
+// (base_asset_id)" is the term "variant" and the field base_asset_id; a bare snake_case name is a field only.
+export function splitTechnical(technical: string): { industry: string | null; file: string | null } {
+  const t = technical.replace(/\s*\((?:GET|POST|PUT|DELETE|PATCH) [^)]*\)/g, '').trim()
+  if (/^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/.test(t) || /^[a-z]+\.[a-z_.]+$/.test(t)) return { industry: null, file: t }
+  const m = /^([^()]+?) \(([^()]*)\)$/.exec(t)
+  if (m && /(_|\.yaml|\.json|metrics\.|data\/)/.test(m[2])) return { industry: m[1], file: m[2] }
+  return { industry: t, file: null }
+}
+
 const H = (plain: string, meaning: string, why: string, technical: string): HelpEntry => ({ plain, meaning, why, technical })
 
 // ---------------------------------------------------------------------------
@@ -76,13 +86,16 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
 // Internal words that leak into running text (job messages, reasons from the backend) swapped for plain ones (UI-08).
 // Technical names stay in Details and help; this only touches sentences a person reads.
 const JARGON: Array<[RegExp, string]> = [
-  [/pc[ _]mid/gi, 'PC and console'],
-  [/mobile[ _]low/gi, 'phones'],
+  [/pc[ _]mid/gi, 'PC and console'],
+  [/mobile[ _]low/gi, 'phones'],
   [/waiting for a free machine/gi, 'waiting for the graphics card'],
-  [/texture voxel/gi, 'painting the textures'],
-  [/sparse structure/gi, 'shaping the model'],
-  [/uv unwrap(ping)?/gi, 'laying out the textures'],
-  [/consistency checks?/gi, 'comparing the views'],
+]
+// Industry terms are kept, in brackets after the plain words, so the job log teaches the word (UX-25).
+const TERMS: Array<[RegExp, string]> = [
+  [/texture voxel/gi, 'painting the textures'],
+  [/sparse structure/gi, 'shaping the model'],
+  [/uv unwrap(ping)?/gi, 'laying out the textures'],
+  [/consistency checks?/gi, 'comparing the views'],
 ]
 const STEP_QUOTED: Record<string, string> = {
   concept: 'step 1, Describe',
@@ -96,6 +109,7 @@ export function plainJargon(text: string | null | undefined): string {
   if (!text) return ''
   let out = text.replace(/"(concept|turnaround|mesh|prep|rig|export)"/g, (_m, k: string) => STEP_QUOTED[k])
   for (const [re, to] of JARGON) out = out.replace(re, to)
+  for (const [re, to] of TERMS) out = out.replace(re, (m) => `${to} (${m.toLowerCase().replace('uv ', 'UV ')})`)
   return out
 }
 

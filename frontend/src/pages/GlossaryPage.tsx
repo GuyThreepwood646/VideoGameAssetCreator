@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { STAGES, type StageId } from '../api'
-import { helpFor, STAGE_TEXT, type HelpEntry } from '../help'
+import { helpFor, splitTechnical, STAGE_TEXT, type HelpEntry } from '../help'
 
 type Item = { id: string; term: string; title?: string; also?: string }
 type Group = { title: string; intro: string; items: Item[] }
@@ -99,6 +99,24 @@ function matches(r: Row, q: string): boolean {
     .every((w) => hay.includes(w))
 }
 
+function TechnicalLines({ technical }: { technical: string }) {
+  const { industry, file } = splitTechnical(technical)
+  return (
+    <>
+      {industry && (
+        <div className="muted">
+          Industry term: <span className="mono">{industry}</span>
+        </div>
+      )}
+      {file && (
+        <div className="muted small">
+          In the files: <span className="mono">{file}</span>
+        </div>
+      )}
+    </>
+  )
+}
+
 export default function GlossaryPage() {
   const [q, setQ] = useState('')
   const groups = useMemo(() => GROUPS.map((g) => ({ ...g, rows: rowsOf(g).filter((r) => matches(r, q.trim())) })), [q])
@@ -108,8 +126,8 @@ export default function GlossaryPage() {
     <div className="page-narrow glossary">
       <h1 className="page-title">Glossary</h1>
       <p className="muted">
-        The words this app uses, in plain language. The same explanations appear when you hover any "i" next to a label. Each entry ends with the technical name, in case you
-        want to look it up.
+        The words this app uses, in plain language. The same explanations appear when you hover any "i" next to a label. Each entry ends with the industry term, in case you
+        want to look it up, and the field name where the term is different.
       </p>
       <label className="field glossary-search">
         <span className="field-label">Find a word</span>
@@ -141,9 +159,7 @@ export default function GlossaryPage() {
                   <dd>
                     <div>{r.entry.meaning}</div>
                     <div className="muted">Why it matters: {r.entry.why}</div>
-                    <div className="muted small">
-                      Technical name: <span className="mono">{r.entry.technical.replace(/\s*\((?:GET|POST|PUT|DELETE|PATCH) [^)]*\)/g, '')}</span>
-                    </div>
+                    <TechnicalLines technical={r.entry.technical} />
                   </dd>
                 </div>
               ))}

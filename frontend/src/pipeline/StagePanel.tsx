@@ -933,7 +933,7 @@ function HappyBlock({
         <span className="grow" />
         <FeedbackButtons fb={fb} />
         <details className="more-menu">
-          <summary aria-label="More actions" title="More actions">...</summary>
+          <summary aria-label="More actions for this version" title="More actions for this version">...</summary>
           <div className="status-pop more-pop">
             <button type="button" className="link small" disabled={busy || active.status !== 'done'} onClick={onReject} title="Hide this version; it stays in the history">
               Reject this version
@@ -1029,6 +1029,7 @@ function FeedbackButtons({ fb }: { fb: FeedbackState }) {
         <ThumbIcon down />
         <span>Thumbs down</span>
       </button>
+      <span className="muted small feedback-note">Helps the app suggest settings. Stays on this computer.</span>
     </span>
   )
 }
