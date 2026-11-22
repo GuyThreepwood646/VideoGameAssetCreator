@@ -627,6 +627,16 @@ def find_clip(clip_id: str, settings: Settings | None = None) -> dict[str, Any] 
 # --- A character's moves -----------------------------------------------------------------------------------------------
 
 
+def relabel_moves(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The stored moves with each library move under the table's name, so one name shows however old the version is.
+    A move from the person's own file keeps the name they gave it."""
+    out = []
+    for m in rows:
+        new = label_for(str(m.get("from") or str(m.get("clip") or "").rpartition(":")[2])) if isinstance(m, dict) and m.get("source") == "library" else None
+        out.append({**m, "label": new} if new else m)
+    return out
+
+
 def label_for(action: str) -> str | None:
     for table in CLIP_TABLE.values():
         if action in table:
@@ -889,7 +899,7 @@ def asset_moves(db: Session, asset: Any, settings: Settings | None = None) -> di
     out["added"], out["removed"] = added_list(params), removed_list(params)
     out["idle_source"] = idle_source(params)
     if isinstance(metrics.get("moves"), list):
-        out["moves"] = metrics["moves"]
+        out["moves"] = relabel_moves(metrics["moves"])
     else:
         # Versions made before "Add a move": from the sidecar.
         from . import library

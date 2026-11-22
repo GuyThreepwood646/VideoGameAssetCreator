@@ -112,3 +112,13 @@ def test_a_library_move_keeps_the_tables_name_whatever_the_version_stored():
                       {"name": "hit", "source": "library", "library": "ual1", "from": "Hit_Chest", "label": "Get hit in the chest", "loop": False}]}
     got = {m["name"]: m["label"] for m in moves.moves_metrics(side, [], [])}
     assert got == {"attack": "Attack", "hit": "Get hit"}
+
+
+def test_stored_move_rows_are_relabelled_when_served():
+    from vgac import moves
+
+    rows = [{"name": "attack", "clip": "ual1:Sword_Attack", "label": "Sword attack", "source": "library"},
+            {"name": "mine", "clip": "mine:abc:Wave", "label": "My wave", "source": "mine"},
+            {"name": "walk", "clip": None, "label": "Walk", "source": "built-in"}]
+    got = [m["label"] for m in moves.relabel_moves(rows)]
+    assert got == ["Attack", "My wave", "Walk"]
