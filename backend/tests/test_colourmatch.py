@@ -86,7 +86,7 @@ def _box_glb(tmp_path, level=0.30):
     return glb, png, tex
 
 
-def _picture_of(glb, tex, tmp_path, l_shift, extra_share=0.0, shadow=0.0):
+def _picture_of(glb, tex, tmp_path, l_shift, extra_share=0.0, shadow=0.0, name="picture.png"):
     """The box seen from the front with its lightness moved by l_shift, a slab added beside it (extra_share of its
     width, so the outline fit drops), and the right half darkened by `shadow` L (a painted shadow side)."""
     from PIL import Image
@@ -109,7 +109,7 @@ def _picture_of(glb, tex, tmp_path, l_shift, extra_share=0.0, shadow=0.0):
         right = mask & (np.arange(512)[None, :] > (xs.min() + xs.max()) / 2)
         img[right] = colourmatch.apply(img[right], {"mode": "l_shift", "shift": [-shadow, 0, 0]})
     rgba = np.dstack([face.to_uint8(img), (mask * 255).astype(np.uint8)])
-    p = tmp_path / "picture.png"
+    p = tmp_path / name
     Image.fromarray(rgba).save(p)
     return p
 
@@ -163,3 +163,23 @@ def test_the_colour_stage_leaves_lightness_alone_when_asked():
     render, rm, pic, pm = _scene(brighten=1.12)
     p = colourmatch.plan(render, rm, pic, pm, lightness=False)
     assert p.get("shift") is None or p["shift"][0] == 0.0
+
+
+def test_a_step2_picture_whose_tone_drifted_from_step1_leaves_the_texture_alone(tmp_path):
+    # The build view came out 10 L brighter than the step-1 picture, which the texture already matches: matching the
+    # build view would carry the redraw's drift into the model, so the lightness stage is skipped.
+    glb, png, tex = _box_glb(tmp_path)
+    step1 = _picture_of(glb, tex, tmp_path, l_shift=0.0, name="step1.png")
+    build = _picture_of(glb, tex, tmp_path, l_shift=10.0, name="build.png")
+    before = face.read_rgb(png)
+    rec = colourmatch.match_base_colour(glb, build, png, view="front", step1=step1)
+    assert rec["lightness"]["reason"] == "step2_tone_drift" and rec["lightness"]["drift"] > colourmatch.DRIFT_MAX
+    assert np.array_equal(face.read_rgb(png), before)
+
+
+def test_a_step2_picture_that_kept_the_tone_is_still_matched(tmp_path):
+    glb, png, tex = _box_glb(tmp_path)
+    step1 = _picture_of(glb, tex, tmp_path, l_shift=12.0, name="step1.png")
+    build = _picture_of(glb, tex, tmp_path, l_shift=12.0, extra_share=0.7, name="build.png")
+    rec = colourmatch.match_base_colour(glb, build, png, view="front", step1=step1)
+    assert rec["lightness"]["mode"] == "l_shift" and abs(rec["lightness"]["drift"]) <= colourmatch.DRIFT_MAX

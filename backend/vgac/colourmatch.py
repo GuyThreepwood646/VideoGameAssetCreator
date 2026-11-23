@@ -14,6 +14,10 @@ searched only around that view and its mirror) with the mean L* over the picture
 sides. No pixel fit is needed, so it runs down to an outline IoU of L_IOU_MIN, and it has its own cap, L_CAP. Then
 plan() corrects the remaining colour only (lightness term off), as before.
 
+When the build-view picture's own lightness differs from the step-1 picture's by more than DRIFT_MAX (the step-2 redraw
+changed the tone), the lightness stage is skipped ("step2_tone_drift"): matching the build view would carry the redraw's
+drift into the texture and move the model away from step 1.
+
 lightness_plan(), plan() and apply() are pure; match_base_colour() does the file work.
 """
 from __future__ import annotations
@@ -37,6 +41,7 @@ L_IOU_MIN = 0.5       # below this outline IoU the render is not taken to show t
 L_SIZE = 512          # render size for the lightness stage
 L_MASK_MIN_PX = 1500  # each side's mask, after the border is left out, at L_SIZE
 L_SEARCH = (-30, -15, 0, 15, 30)  # turns tried around the view (and its mirror)
+DRIFT_MAX = 4.0       # build view against step-1 picture, mean L* over each cut-out: past this the lightness stage is skipped
 # The turn the build view's picture shows, in face.Camera yaw (as bakeoff/scorecard/sc_measure.INTENDED).
 VIEW_TURN = {"concept": 0.0, "front": 0.0, "quarter": 45.0, "quarter2": -45.0, "left": 90.0, "right": -90.0, "back": 180.0}
 
@@ -140,6 +145,26 @@ def _turn_gap(a: float, b: float) -> float:
     return min(d, 360.0 - d)
 
 
+def cutout_lightness(pic: np.ndarray, pic_mask: np.ndarray) -> float | None:
+    """Mean L* over a picture's cut-out with the border left out (scaled from texfidelity.BORDER_PX at L_SIZE), the
+    mask rule lightness_plan() uses. None for an empty cut-out."""
+    border = max(1, int(round(texfidelity.BORDER_PX * max(pic.shape[:2]) / L_SIZE)))
+    m = face.erode(pic_mask, border)
+    if m.sum() < 100:
+        return None
+    return float(face.to_lab(pic)[m][:, 0].mean())
+
+
+def step2_drift(build_picture: Path | str, step1_picture: Path | str | None) -> float | None:
+    """Build-view picture's mean L* minus the step-1 picture's (positive: the redraw came out lighter). None when there
+    is no step-1 picture, it is the build picture itself, or either cut-out is empty."""
+    if step1_picture is None or Path(step1_picture).resolve() == Path(build_picture).resolve():
+        return None
+    a = cutout_lightness(*texfidelity.load_picture(build_picture))
+    b = cutout_lightness(*texfidelity.load_picture(step1_picture))
+    return None if a is None or b is None else round(a - b, 2)
+
+
 def lightness_plan(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, pic_mask: np.ndarray,
                    view: str | None = None, cap: float = L_CAP) -> dict[str, Any]:
     """The lightness stage: the L* shift that brings the mean of the model's flat render, at the build view's turn, to
@@ -187,16 +212,22 @@ def lightness_plan(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray
 
 
 def match_base_colour(glb: Path | str, picture: Path | str, base_png: Path | str, cap: float = MAX_MOVE_DE,
-                      view: str | None = None) -> dict[str, Any]:
+                      view: str | None = None, step1: Path | str | None = None) -> dict[str, Any]:
     """Measure the model against its picture and correct base_png: first its lightness (lightness_plan(), at the build
-    view `view`'s turn), then, when the outline fit is good and a correction closes the gap, its colour without
-    lightness (plan()). -> metrics {applied, lightness: {...}, mode, de_before, de_after, moved_de, iou, reason, ...}."""
+    view `view`'s turn; skipped when the build view's tone drifted from the step-1 picture `step1` by more than
+    DRIFT_MAX), then, when the outline fit is good and a correction closes the gap, its colour without lightness
+    (plan()). -> metrics {applied, lightness: {...}, mode, de_before, de_after, moved_de, iou, reason, ...}."""
     rec: dict[str, Any] = {"applied": False}
     mesh = face.load_mesh(glb)
-    if mesh is not None:
+    drift = step2_drift(picture, step1)
+    if drift is not None and abs(drift) > DRIFT_MAX:
+        rec["lightness"] = {"mode": "none", "reason": "step2_tone_drift", "drift": drift}
+    elif mesh is not None:
         tex = face.read_rgb(base_png)
         pic, pic_mask = texfidelity.load_picture(picture)
         lp = lightness_plan(mesh, tex, pic, pic_mask, view)
+        if drift is not None:
+            lp["drift"] = drift
         rec["lightness"] = lp
         if lp.get("mode") == "l_shift":
             Image.fromarray(face.to_uint8(apply(tex, lp))).save(base_png)
