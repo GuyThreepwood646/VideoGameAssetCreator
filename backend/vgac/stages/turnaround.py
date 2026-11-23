@@ -856,7 +856,10 @@ async def _borrow_for_sides(sc: StageContext, method: str, left: list[str], righ
     borrow = getattr(getattr(sc, "ctx", None), "borrow", None)
     if borrow is None:
         return None, "this step cannot ask for a second card"
-    return await borrow()
+    import inspect
+
+    kw = {"step": "turnaround side"} if "step" in inspect.signature(borrow).parameters else {}
+    return await borrow(**kw)
 
 
 async def _both_sides(sc: StageContext, lease: Any, left: list[str], right: list[str], do_view) -> str | None:

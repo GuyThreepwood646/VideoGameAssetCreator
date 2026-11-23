@@ -38,7 +38,10 @@ def _project_root() -> Path:
         return BACKEND.parent
 
 
-LIBRARY_SCRATCH = (_project_root() / "bakeoff" / "t").resolve()
+# VGAC_TEST_LIBRARY_ROOT gives a shorter folder where the checkout itself is too deep, as on the GitHub runner
+# (its checkout is D:\a\VideoGameAssetCreator\VideoGameAssetCreator, so bakeoff/t would be over the limit there).
+LIBRARY_SCRATCH = (Path(os.environ["VGAC_TEST_LIBRARY_ROOT"]) if os.environ.get("VGAC_TEST_LIBRARY_ROOT")
+                   else _project_root() / "bakeoff" / "t").resolve()
 
 
 def _short_library_root() -> Path:
