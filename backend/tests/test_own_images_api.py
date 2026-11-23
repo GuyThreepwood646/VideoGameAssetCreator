@@ -111,6 +111,7 @@ def test_upload_creates_a_concept_the_turnaround_builds_on(client, engine, setti
     assert v["status"] == "done" and v["selected"] is True
     assert {"image", "original", "cutout", "cutout_white"} <= set(v["files"])
     assert v["metrics"]["source"] == "upload" and v["metrics"]["gate_ok"] is True
+    assert "total" in v["metrics"]["timing"]   # F20: an uploaded step 1 picture has its time record
     assert {c["name"] for c in v["metrics"]["checks"]} == {"one_subject", "in_frame", "big_enough", "detail_size", "pose_for_3d"}
     # The stored picture is a plain PNG on light grey, no metadata.
     img = Image.open(settings.library_path / v["files"]["image"])

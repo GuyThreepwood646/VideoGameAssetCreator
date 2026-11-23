@@ -227,9 +227,9 @@ export function TurnaroundView({ version, onRedraw, words = '', onWords, busy, l
                   )}
                 </strong>
                 {m && m.passed !== undefined && (
-                  <span className={'traffic-line ' + (m.passed ? 'ok' : 'bad')}>
-                    <TrafficDot state={m.passed ? 'ok' : 'bad'} />
-                    {m.passed ? 'matches' : 'needs attention'}
+                  <span className={'traffic-line ' + (m.passed ? 'ok' : 'warn')}>
+                    <TrafficDot state={m.passed ? 'ok' : 'warn'} />
+                    {m.passed ? 'matches' : 'worth a look'}
                   </span>
                 )}
               </div>
@@ -289,7 +289,7 @@ export function TurnaroundView({ version, onRedraw, words = '', onWords, busy, l
           <div className="redraw-actions">
             {untickedFlagged.length > 0 && (
               <button type="button" className="link small" onClick={() => setPicked((list) => [...new Set([...list, ...flagged])])}>
-                {untickedFlagged.length === 1 ? 'Tick the one that needs attention' : `Tick the ${untickedFlagged.length} that need attention`}
+                {untickedFlagged.length === 1 ? 'Tick the one worth a look' : `Tick the ${untickedFlagged.length} worth a look`}
               </button>
             )}
             {ticked.length > 0 && (
