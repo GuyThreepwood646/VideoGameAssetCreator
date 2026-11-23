@@ -11,6 +11,8 @@ size_label: "How tall is it?"
 size_hint: "In metres, from the ground to the top of the head. A person is about 1.8 m."
 parts_default: []
 topology: quad
+# The step 1 wording below asks for a level, square-on front (vgac/picture_view.py).
+picture_view: front
 input_view_default: quarter
 # Hair-friendly pictures (vgac/hairpic.py): head means the concept prompt gets the look's hair sentence.
 hair: head

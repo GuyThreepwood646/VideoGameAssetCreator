@@ -97,6 +97,14 @@ def _description(sc: StageContext, params: dict[str, Any]) -> str:
 
 
 def build_prompt(sc: StageContext, params: dict[str, Any]) -> str:
+    return prompt_and_view(sc, params)[0]
+
+
+def prompt_and_view(sc: StageContext, params: dict[str, Any]) -> tuple[str, str | None]:
+    """The step 1 prompt, and the view it asks the picture to be seen from (picture_view.asked: the category's
+    picture_view when the category's own wording is in the prompt, else None)."""
+    from .. import picture_view
+
     lock = sc.project.style_lock or {}
     # Items (vgac/items.py): a character with its items set aside is painted empty-handed; a held item gets its own
     # pose block instead of the rigid prop's.
@@ -114,17 +122,19 @@ def build_prompt(sc: StageContext, params: dict[str, Any]) -> str:
     pal = palette_sentence(lock.get("palette")) if params.get("palette_block", True) else ""
     if pal:
         parts.append(pal)
+    category_wording = False
     if params.get("readiness_block", True) and (held or {}).get("pose_block"):
         parts.append(held["pose_block"])
     elif params.get("readiness_block", True) and sc.category.get("pose_block"):
         parts.append(sc.category["pose_block"])
+        category_wording = True
     if (held or {}).get("sentence"):
         parts.append(held["sentence"])
     if sc.asset.parts:  # the names of the declared parts (declared_parts.py); the picture is asked to draw them apart
         parts.append("The following parts are clearly separate pieces: " + ", ".join(p["name"] for p in sc.asset.parts) + ".")
     # Last: placed after the style block it changed the character more (runtime/tmp/celface).
     parts.append(face_sentence(sc, params, base))
-    return " ".join(p for p in parts if p)
+    return " ".join(p for p in parts if p), picture_view.asked(sc.category, category_wording)
 
 
 def resolve_model(sc: StageContext, params: dict[str, Any]) -> str:
@@ -174,7 +184,7 @@ async def _generate(sc: StageContext, params: dict[str, Any]) -> None:
     steps = params.get("steps") or rec["concept"].get("steps")
     adds = resolve_concept_addons(sc, model, params, rec)
     applied = adds["applied"]
-    prompt = build_prompt(sc, params)
+    prompt, view = prompt_and_view(sc, params)
     negative = (sc.project.style_lock or {}).get("negative") or rec["concept"].get("negative") or None
     from .. import items
 
@@ -189,7 +199,7 @@ async def _generate(sc: StageContext, params: dict[str, Any]) -> None:
     if aside.get("set_aside"):
         sc.set_metrics(items_set_aside=aside["set_aside"])
     sc.set_params(model=model, seed=seed, width=width, height=height, steps=steps, prompt=prompt, negative=negative or "",
-                  addons_applied={a["id"]: a["strength"] if a["strength"] != "custom" else a["value"] for a in applied})
+                  picture_view=view, addons_applied={a["id"]: a["strength"] if a["strength"] != "custom" else a["value"] for a in applied})
     sc.set_metrics(recipe=reference.recipe_record(rec, "concept", "addons"), addons=applied, addons_ignored=adds["ignored"],
                    addons_unknown=adds["unknown"], prompt_final=prompt_with_triggers(prompt, applied))
     missing = await missing_look_addons(sc, applied)
