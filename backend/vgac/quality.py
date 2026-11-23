@@ -257,6 +257,36 @@ def lod_checks(report: dict[str, Any], expected_ratios: list[float] | None, tole
     return out
 
 
+# LOD outline (step 6, warning only): each level's outline against LOD0, from the seven views of blender/outline.py
+# (the same measure as step 4's outline_kept). The lowest IoU a category's level may show. Each mark is the lowest level
+# of the reference subjects that shows no visible loss, minus 0.01, rounded down to 0.01; the foliage LOD2 levels that
+# lost a branch mass are left out of that calibration. Environment is set to 0.90 rather than the rule's 0.88: at 0.90 it
+# flags the stone arch level whose cornice was shredded in review, and no level that review judged unchanged. The region mark
+# stays at the step 4 value.
+LOD_OUTLINE_IOU_MIN = {"humanoid": 0.97, "quadruped": 0.96, "prop_rigid": 0.97, "vehicle": 0.98, "environment": 0.90,
+                       "foliage": 0.90}
+LOD_OUTLINE_REGION_MAX = 0.02
+
+
+def lod_outline_checks(report: dict[str, Any], category_id: str | None) -> list[Check]:
+    """One check per level that pack.py measured ("lod_outline" in its report): the lowest view IoU against the category's
+    mark, and the largest lost or filled patch against LOD_OUTLINE_REGION_MAX. Nothing for a category with no mark or a
+    pack that measured no outline (LOD0 only, or an older report)."""
+    levels = report.get("lod_outline") or {}
+    iou_min = LOD_OUTLINE_IOU_MIN.get(category_id or "")
+    if not levels or iou_min is None:
+        return []
+    out: list[Check] = []
+    for level, o in sorted(levels.items(), key=lambda kv: int(kv[0].removeprefix("LOD"))):
+        iou, region = float(o["iou_min"]), float(o["region_max"])
+        ok = iou >= iou_min and region <= LOD_OUTLINE_REGION_MAX
+        out.append(check(f"lod_outline_kept_{level}", ok, round(iou, 4), iou_min,
+                         vars={"level": level.removeprefix("LOD"), "region": round(region, 4),
+                               "region_limit": LOD_OUTLINE_REGION_MAX, "kind": o.get("region_max_kind"),
+                               "view": o.get("region_max_view") if region > LOD_OUTLINE_REGION_MAX else o.get("iou_min_view")}))
+    return out
+
+
 def collider_checks(report: dict[str, Any], expected: bool = True) -> list[Check]:
     verts = report.get("collider_verts", 0)
     if not expected:

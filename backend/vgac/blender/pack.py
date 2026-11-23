@@ -68,10 +68,12 @@ import sys
 
 import bmesh
 import bpy
+from mathutils.bvhtree import BVHTree
 from mathutils.kdtree import KDTree
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common  # noqa: E402  (shared helpers next to this script)
+import outline  # noqa: E402  (the step 4 outline measure, shared with prep.py)
 
 argv = _common.after_double_dash()
 src, out_dir, name = os.path.abspath(argv[0]), os.path.abspath(argv[1]), argv[2]
@@ -441,6 +443,32 @@ for i, ratio in enumerate(lods, start=1):
     report["lods"][f"LOD{i}"] = tri_count(lod)
     lod_objs.append(lod)
 
+
+# LOD outline (warning only, step 6): every level drawn against LOD0 from the seven views of outline.py, the same measure
+# as step 4's outline_kept. The judge in stages/export.py marks a level that loses its outline.
+def _world_tree(o):
+    """A ray tree and the world-space vertices of one level, for outline.measure. Only the vertices a face uses count:
+    decimation leaves unused vertices behind (some far outside the model), and the export drops them, so the outline's
+    view grid must not be sized by them."""
+    me, mw = o.data, o.matrix_world
+    verts = [tuple(mw @ v.co) for v in me.vertices]
+    polys = [tuple(p.vertices) for p in me.polygons]
+    used = sorted({i for p in polys for i in p})
+    return BVHTree.FromPolygons(verts, polys), [verts[i] for i in used]
+
+
+def lod_outline_report(levels):
+    """{"LODn": {iou_min, region_max, ...}} for each level against LOD0 (the first object)."""
+    base_tree, base_verts = _world_tree(levels[0])
+    out = {}
+    for i, lod in enumerate(levels[1:], start=1):
+        fin_tree, fin_verts = _world_tree(lod)
+        m = outline.measure(base_tree, fin_tree, base_verts, fin_verts)
+        out[f"LOD{i}"] = {k: m[k] for k in ("iou_min", "iou_min_view", "region_max", "region_max_kind", "region_max_view")}
+    return out
+
+
+report["lod_outline"] = lod_outline_report(lod_objs) if len(lod_objs) > 1 else {}
 
 # Each moving piece gets its own levels, under its moving node, named <asset>_<part>_<n>_LOD<i>.
 piece_lods = [[o for o, _ in pieces]]
