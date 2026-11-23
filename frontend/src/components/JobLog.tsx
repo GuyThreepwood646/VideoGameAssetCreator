@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Job } from '../api'
 import { useEventMode } from '../events'
+import { cardUseLines } from '../cardUse'
 import { jobKindPlain } from '../help'
 import { duration, StatusBadge, StopButton, timeAgo } from './ui'
 
@@ -43,6 +44,9 @@ export function JobLog({ jobs, onCancel }: { jobs: Job[]; onCancel: (id: string)
               {j.message}
               {j.error ? <span className="error"> {j.error}</span> : null}
             </div>
+            {cardUseLines(j.result, Date.now()).map((line) => (
+              <div key={line} className="job-cards small muted">{line}</div>
+            ))}
             <div className="row-between small muted">
               <span>
                 {timeAgo(j.created_at)}
