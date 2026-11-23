@@ -35,6 +35,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from .. import face, facecloseup, facemarks, imaging, quality, srcproject
+from ..tools import ToolError
 from ..comfy import ComfyClient, ComfyError
 from ..graphs.qwen_edit import compose_graph, edit_graph
 from ..jobs import JobCancelled
@@ -1731,13 +1732,17 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
         (out_dir / "face_maps.json").write_text(json.dumps({k: str(p) for k, p in maps.items()}), encoding="utf-8")
         new_glb = out_dir / "face.glb"
         hair_args: list[Any] = ["--hair-points", hair_plan["points"], "--hair-gain", hair_plan["gain"]] if hair_wants else []
-        await sc.blender("faceuv.py", [glb, new_glb, "--points", out_dir / "face_points.json", "--maps", out_dir / "face_maps.json",
-                                       "--gain", round(gain, 3) if gain >= GAIN_MIN else 1.0, "--tex", atlas,
-                                       "--padding", imaging.unwrap_padding(atlas),
-                                       "--margin", imaging.dilation_px(atlas), "--max-loss", MAX_LOSS, *hair_args], log_name="faceuv.log")
+        try:
+            await sc.blender("faceuv.py", [glb, new_glb, "--points", out_dir / "face_points.json", "--maps", out_dir / "face_maps.json",
+                                           "--gain", round(gain, 3) if gain >= GAIN_MIN else 1.0, "--tex", atlas,
+                                           "--padding", imaging.unwrap_padding(atlas),
+                                           "--margin", imaging.dilation_px(atlas), "--max-loss", MAX_LOSS, *hair_args], log_name="faceuv.log")
+            faceuv_error = None
+        except ToolError as e:  # a script error keeps the texture layout as it is, as a missing report did; recorded
+            faceuv_error = str(e)[-500:]
         rep_path = out_dir / "face_report.json"
-        relayout = json.loads(rep_path.read_text()) if rep_path.is_file() else None
-        layout_report = relayout
+        relayout = json.loads(rep_path.read_text()) if rep_path.is_file() and faceuv_error is None else None
+        layout_report = relayout if faceuv_error is None else {"layout_mode": "unchanged", "error": faceuv_error}
         if relayout and relayout.get("layout_mode") != "unchanged" and new_glb.is_file():
             work_glb = new_glb
             work_maps = {k: Path(p) for k, p in (relayout.get("rebake_maps") or {}).items() if Path(p).is_file()}
@@ -1851,9 +1856,13 @@ async def layout_only(sc: StageContext, glb: Path, maps: dict[str, Path], head_y
     (out_dir / "face_maps.json").write_text(json.dumps({k: str(p) for k, p in maps.items()}), encoding="utf-8")
     new_glb = out_dir / "face.glb"
     sc.progress(None, "Giving the face more of the texture")
-    await sc.blender("faceuv.py", [glb, new_glb, "--points", out_dir / "face_points.json", "--maps", out_dir / "face_maps.json",
-                                   "--gain", FACE_LAYOUT_GAIN, "--tex", atlas, "--padding", padding,
-                                   "--margin", max(imaging.dilation_px(atlas), 2 * padding), "--max-loss", MAX_LOSS], log_name="faceuv.log")
+    try:
+        await sc.blender("faceuv.py", [glb, new_glb, "--points", out_dir / "face_points.json", "--maps", out_dir / "face_maps.json",
+                                       "--gain", FACE_LAYOUT_GAIN, "--tex", atlas, "--padding", padding,
+                                       "--margin", max(imaging.dilation_px(atlas), 2 * padding), "--max-loss", MAX_LOSS], log_name="faceuv.log")
+    except ToolError as e:  # a script error leaves the layout unchanged, as a missing report did; recorded
+        record.update(error=str(e)[-500:], skipped="unchanged", seconds=round(time.time() - t0, 1))
+        return {"maps": maps, "relayout": False, "metrics": {"face_layout": record}}
     rep_path = out_dir / "face_report.json"
     rep = json.loads(rep_path.read_text()) if rep_path.is_file() else {}
     record["layout"] = {k: rep.get(k) for k in ("layout_mode", "gain", "rest_scale", "island_scale", "islands", "rebake_seconds")}

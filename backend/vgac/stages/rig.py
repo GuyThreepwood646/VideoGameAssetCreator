@@ -988,6 +988,11 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
         sc.progress(0.75, "making the moves")
         await sc.blender("procanim.py", args, log_name="procanim.log", timeout=sc.settings.blender_timeout_seconds)
         report_path, clips_path = sc.dir / "anim_anim.json", sc.dir / "anim_clips.json"
+        if not anim_glb.is_file():
+            # F14: Blender exits 0 when the script stops on an error, so a missing anim.glb is the only sign of it.
+            # Every chosen move is then missing, so the step's clips check names them.
+            sc.set_metrics(clips=[], missing_clips=list(moves) if isinstance(moves, (list, tuple)) else [])
+            raise RuntimeError("the moves script stopped before writing anim.glb: " + _log_error(sc.dir / "procanim.log"))
         sc.register("anim_glb", anim_glb)
         if clips_path.is_file():
             sc.register("anim_clips", clips_path)
@@ -1003,6 +1008,17 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
         await _after_moves(sc, anim_glb, params)
     except Exception as e:
         sc.set_metrics(anim_error=str(e)[:500])
+
+
+def _log_error(log: Path) -> str:
+    """The end of the last Python traceback in a Blender log (its last 3 lines), or a note that there is none."""
+    from ..tools import traceback_tail
+
+    try:
+        text = log.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "no log"
+    return traceback_tail(text) or "no error in the log"
 
 
 async def _after_moves(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> None:
@@ -2020,7 +2036,7 @@ async def judge(sc: StageContext) -> None:
                                     group_per_vertex=sc.version.params.get("group_per_vertex"))
     else:
         checks = quality.rig_checks({"bones": sc.version.metrics.get("bones", 0)}, rig_expected=True)
-    if sc.version.metrics.get("anim_glb") or sc.file("anim_glb"):
+    if sc.version.metrics.get("anim_glb") or sc.file("anim_glb") or sc.version.metrics.get("anim_error"):
         m = sc.version.metrics
         if m.get("rig_restore") is not None:
             checks.append(quality.check("rig_restore", bool(m["rig_restore"].get("ok")), bool(m["rig_restore"].get("ok")), True))
