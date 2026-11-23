@@ -8,7 +8,7 @@ the mesh stage dilates the downloaded maps instead (imaging.dilate).
 
 tex_steps is the texture sampler's step count, 24 by default (12 before). 24 steps gives a much richer texture
 (sharpness ratio against the picture 0.37 to 0.56 on the knight) but its tone drifts (about 7 percent brighter); the mesh
-stage shifts the mean colour back towards the picture afterwards (vgac/colourmatch.py; bakeoff/out/bake_chain/results.md).
+stage moves the lightness back towards the picture afterwards (vgac/colourmatch.py; bakeoff/out/bake_chain/results.md).
 12 stays selectable.
 """
 

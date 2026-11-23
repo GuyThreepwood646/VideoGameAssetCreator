@@ -284,7 +284,8 @@ async def borrow_card(sc: StageContext, home: str | None) -> tuple[Any, str]:
         return None, "this step cannot ask for a second card"
     try:
         wanted = inspect.signature(ask).parameters
-        lease, why = await (ask(kind=LEND_KIND, avoid=home) if "kind" in wanted and "avoid" in wanted else ask())
+        kw = {"step": "face redraw"} if "step" in wanted else {}
+        lease, why = await (ask(kind=LEND_KIND, avoid=home, **kw) if "kind" in wanted and "avoid" in wanted else ask(**kw))
         if lease is not None and lease.instance == home:
             await lease.end()
             return None, "the only card free is the one drawing the first close-up"
@@ -308,7 +309,8 @@ async def claim_card(sc: StageContext, home: str | None) -> Any:
     try:
         if "only" not in inspect.signature(ask).parameters:
             return None
-        lease, _ = await ask(kind=LEND_KIND, only=home)
+        kw = {"step": "face redraw", "claimed": True} if "claimed" in inspect.signature(ask).parameters else {}
+        lease, _ = await ask(kind=LEND_KIND, only=home, **kw)
         return lease
     except (JobCancelled, asyncio.CancelledError):
         raise
