@@ -433,6 +433,8 @@ ADDED_ON = {
 for _stage, _part, _keys in (("turnaround", "files", ["quarter2", "quarter2_cutout", "quarter2_white"]),
                              ("mesh", "metrics", ["texture_fidelity"]), ("prep", "params", ["source_project_mode"]),
                              ("prep", "metrics", ["srcproject_applied", "srcproject_reason", "srcproject_upscale", "texture_fidelity"]),
+                             # whether the step 1 picture's turn may be expected (srcproject.picture_known_of)
+                             ("prep", "metrics", ["srcproject_picture_known"]),
                              # Shape loss (WP-16, 2026-11-19): how far the budget reduction moved the surface, a metric only.
                              ("prep", "metrics", ["shape_loss"]),
                              # WP-16 outline check: before and after the reduction as outlines from seven views.

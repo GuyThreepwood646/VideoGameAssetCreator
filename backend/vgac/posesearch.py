@@ -266,9 +266,9 @@ LENS_TOP = 12  # the best orthographic coarse poses that are also tried with eac
 
 def coarse(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, n: int = COARSE_N,
            lenses: list[float | None] | None = None, turns: list[float] | None = None,
-           tilts: list[float] | None = None) -> list[Pose]:
+           tilts: list[float] | None = None, lens_top: int = LENS_TOP) -> list[Pose]:
     """The coarse poses scored on the outline (after alignment), best first. turns and tilts default to the full grid.
-    With the default lens set, the whole turn and tilt grid is scored orthographic, and only its LENS_TOP best are tried
+    With the default lens set, the whole turn and tilt grid is scored orthographic, and only its lens_top best are tried
     with each lens (a lens changes the outline far less than the turn and tilt do)."""
     t = target(alpha, n)
     lens_set = LENSES if lenses is None else lenses
@@ -277,7 +277,7 @@ def coarse(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, n: i
     out = [score_pose(mesh, t, centre, scale, (tu, ti, first)) for tu, ti in grid]
     if len(lens_set) > 1:
         out.sort(key=lambda p: -p.score)
-        out += [score_pose(mesh, t, centre, scale, (p.turn, p.tilt, lens)) for p in out[:LENS_TOP] for lens in lens_set[1:]]
+        out += [score_pose(mesh, t, centre, scale, (p.turn, p.tilt, lens)) for p in out[:lens_top] for lens in lens_set[1:]]
     out.sort(key=lambda p: -p.score)
     return out
 
@@ -317,21 +317,24 @@ def refine(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, star
 def search(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, keep: int = 3,
            turns: list[float] | None = None, tilts: list[float] | None = None, rgb: np.ndarray | None = None,
            tex: np.ndarray | None = None, timings: dict | None = None,
-           lenses: list[float | None] | None = None, turn_limit: tuple[float, float] | None = None) -> list[Pose]:
-    """Coarse outline grid, the edge and colour terms on its best KEEP_FULL, then a local refinement of the `keep` best.
+           lenses: list[float | None] | None = None, turn_limit: tuple[float, float] | None = None,
+           keep_full: int = KEEP_FULL, lens_top: int = LENS_TOP) -> list[Pose]:
+    """Coarse outline grid, the edge and colour terms on its best keep_full, then a local refinement of the `keep` best.
     Best first. turns and tilts restrict the coarse grid (paint's view searches use the turn the view is meant to be seen
     from, plus or minus 20 degrees). rgb is the picture and tex the model's built colour; without them only the outline
     is scored. timings, when given, gets the seconds of each part: outline, terms, refine. turn_limit (centre, half
-    width): the refinement keeps the turn within it, so a search restricted to a window answers inside it."""
+    width): the refinement keeps the turn within it, so a search restricted to a window answers inside it. keep_full and
+    lens_top (coarse) are sized for a window of about 90 degrees: a search over more turns takes more of its outline
+    poses on (a boxy model's outline repeats every quarter turn, so the right pose can rank far down on outline alone)."""
     import time
 
     t0 = time.time()
-    grid = coarse(mesh, alpha, centre, scale, turns=turns, tilts=tilts, lenses=lenses)
+    grid = coarse(mesh, alpha, centre, scale, turns=turns, tilts=tilts, lenses=lenses, lens_top=lens_top)
     t1 = time.time()
     full = tex is not None and rgb is not None
     if full:
         tc = target(alpha, COARSE_N, rgb)
-        grid = sorted((score_pose(mesh, tc, centre, scale, (p.turn, p.tilt, p.lens), tex) for p in grid[:KEEP_FULL]),
+        grid = sorted((score_pose(mesh, tc, centre, scale, (p.turn, p.tilt, p.lens), tex) for p in grid[:keep_full]),
                       key=lambda p: -p.score)
     t2 = time.time()
     tr = target(alpha, REFINE_N, rgb if full else None)

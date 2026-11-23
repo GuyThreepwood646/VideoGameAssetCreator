@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import dataclasses
 import math
 import os
 import time
@@ -49,7 +50,7 @@ from typing import Any, Callable
 import numpy as np
 from PIL import Image
 
-from . import face, imaging
+from . import face, imaging, picture_view
 
 SIZE = 2048              # working render size; the picture is sampled bicubic (Catmull-Rom) once, at this size
 PIC_N = 1024            # side the pictures are worked at when they come as they are
@@ -59,6 +60,11 @@ FIT_N = 256              # size the camera and silhouette search runs at
 FLOW_N = 512             # size the optical flow runs at
 MIN_IOU = 0.85           # silhouette match below this refuses a view
 COS_CUT = math.cos(math.radians(75.0))
+# Props and buildings (OBJECT_CATEGORIES): a view paints only up to about 53 degrees off square, in full by about 43. The
+# original painting of a building or a crate is fitted at 45 to 60 degrees to every wall it sees, and there it smeared
+# (bakeoff/paint-default: the shop's vending machine stretched across the front wall, the crate's dark slat gaps across
+# its side, render brightness -0.062 against the bake); past this the model's own colour stays.
+OBJECT_COS_CUT = 0.6
 MAX_FLOW = 0.02          # of the frame
 FLOW_ALPHA = 2.0         # Horn-Schunck smoothness (higher: a stiffer field)
 FLOW_SMOOTH = 8.0        # Gaussian sigma of the field in flow pixels
@@ -576,6 +582,7 @@ def hs_flow(ref: np.ndarray, mov: np.ndarray, region: np.ndarray, max_px: float,
 class View:
     def __init__(self, name: str, weight: float):
         self.name, self.weight = name, weight
+        self.cos_cut = COS_CUT  # the steepest angle it paints at (cos_weight); OBJECT_COS_CUT for props and buildings
         self.ok = False
         self.info: dict[str, Any] = {"name": name}
 
@@ -897,9 +904,9 @@ class Atlas:
             self.cover_ext = ext.reshape(T, T)
 
 
-def cos_weight(cosv: np.ndarray) -> np.ndarray:
-    """cos^4 of the angle between surface and view, zero past 75 degrees (feathered over the next 0.12 of cosine)."""
-    return np.clip(cosv, 0.0, 1.0) ** 4 * face.smoothstep(COS_CUT, COS_CUT + 0.12, cosv)
+def cos_weight(cosv: np.ndarray, cut: float = COS_CUT) -> np.ndarray:
+    """cos^4 of the angle between surface and view, zero past `cut` (75 degrees; feathered over the next 0.12 of cosine)."""
+    return np.clip(cosv, 0.0, 1.0) ** 4 * face.smoothstep(cut, cut + 0.12, cosv)
 
 
 def project_view(atlas: Atlas, v: View, size: int | None = None, pitch_m: float | None = None) -> dict[str, np.ndarray]:
@@ -922,7 +929,7 @@ def project_view(atlas: Atlas, v: View, size: int | None = None, pitch_m: float 
     foot = v.pic_px_m / np.maximum(cosv, 0.05) / pitch_m
     st = 1.0 - face.smoothstep(STRETCH[0], STRETCH[1], foot) if GATES.get("stretch") else np.ones_like(foot)
     fd = np.clip(f1 / np.maximum(f0, 1e-6), 0.0, 1.0)
-    base = v.weight * cos_weight(cosv) * f0 * visible
+    base = v.weight * cos_weight(cosv, getattr(v, "cos_cut", COS_CUT)) * f0 * visible
     if v.name.startswith(HEAD_VIEW):
         base = base * face.smoothstep(HEAD_FACING[0], HEAD_FACING[1], cosv)
     zi = getattr(v, "zone_img", None)  # the head view: the head above the neck only
@@ -2192,6 +2199,26 @@ POSE_HINT_DEG = 20.0  # the pose search of a drawn view covers turns this far ei
 
 
 PRIOR_DEG = 30.0      # a pose agrees with the expected turn when its turn is within this of it
+# Objects (props and buildings) have no expected turn: their pictures are searched over every turn (the front half when the
+# facing is decided) and the search's own score, outline with inner edges and colour, picks the pose; the D2 check refuses
+# a far rival that fits as well and paints differently. Their concept art is three-quarter, not a front view, and the
+# clean-up's quarter-turn facing snap can put any side at turn 0: the WP-50 crate's picture fit at turn 90 (expected 0),
+# the cottage's at 0 and the shop's at 85 (both expected 45), and each was refused for it (bakeoff/posefit).
+OBJECT_CATEGORIES = ("prop_rigid", "prop_articulated", "environment")
+
+
+def _breadth(turns: list[float]) -> int:
+    """How many 90-degree windows (ten turns of the search's grid) an object's pose search covers: its search gives that
+    many times the usual outline poses the colour terms (a four-sided building's outline ties every quarter turn, and
+    the full circle left its right pose out of the usual 24: bakeoff/posefit, the house at turn 30, tilt 35)."""
+    return max(1, -(-len(turns) // 10))
+
+
+def ps_turns() -> list[float]:
+    """The pose search's whole turn grid."""
+    from . import posesearch as ps
+
+    return [float(t) for t in ps.TURNS]
 DRAWN_PRIOR_DEG = 20.0  # the same for a drawn view and the turn it was drawn at
 PICTURE_SEARCH_DEG = 45.0  # the step 1 picture's search covers turns this far either side of its expected turn
 
@@ -2302,21 +2329,66 @@ def _silhouette_refused(v: "View") -> bool:
     return "silhouette" in str(v.info.get("refused", ""))
 
 
+HALF_TURN_MARGIN = 0.40  # an object's pose and its half-turn partner within this on the search's score: the outline and the
+                         # colour cannot tell the two halves apart (tuned on the WP-50 crate, gaps up to 0.34; the closest
+                         # asymmetric object seen, the cottage, 0.54; proved on a held-out set, bakeoff/posefit)
+HALF_TURN_OUTLINE = 0.01  # the partner's search outline passes the outline bar, or is at least the best pose's less this
+                          # (both can sit just under the bar while the full-size fit passes it: the crate at turn 60,
+                          # 0.8454 and 0.8488)
+HALF_TURN_FAR = 110.0    # the best pose this far from the facing the app knows ...
+HALF_TURN_NEAR = 70.0    # ... and its partner this near it: the partner is taken (a pose 90 from it never switches)
+
+
+def _half_turn_guard(mesh: dict[str, np.ndarray], alpha: np.ndarray, pic: np.ndarray, tex: np.ndarray, centre: np.ndarray,
+                     scale: float, poses: list[Any], ref: float, min_iou: float,
+                     turn_limit: tuple[float, float] | None) -> tuple[Any, list[Any], dict[str, Any]]:
+    """An object's pose search has no expected turn, so a model that looks alike from opposite sides (a crate) can score
+    its back half above its front. The best pose's half-turn partner, refined by the search's own refine, replaces it
+    when its outline passes the bar or is as good (HALF_TURN_OUTLINE), scores within HALF_TURN_MARGIN, and lies on the side of the facing the app knows
+    (`ref`: the build view's turn from the model's front) while the best pose does not. The abandoned half and the
+    search's poses near it are no longer rivals: the guard decides between the halves and never refuses.
+    Returns (pose, poses, record)."""
+    from . import posesearch as ps
+
+    top = poses[0]
+    rec: dict[str, Any] = {"ref": round(ref, 1), "best": [round(top.turn, 2), round(top.tilt, 2), top.lens, round(top.score, 4),
+                                                         round(top.iou, 4)]}
+    if _angdiff(top.turn, ref) <= HALF_TURN_FAR:
+        rec["decision"] = "kept: the best pose is on the facing's side"
+        return top, poses, rec
+    start = ps.Pose(float(top.turn) + 180.0, float(top.tilt), top.lens, 0.0)
+    if turn_limit is not None and _angdiff(start.turn, turn_limit[0]) > turn_limit[1]:
+        rec["decision"] = "kept: the half turn is outside the turns searched"
+        return top, poses, rec
+    part = ps.refine(mesh, alpha, centre, scale, start, rgb=pic, tex=tex, turn_limit=turn_limit)
+    part = dataclasses.replace(part, turn=_signed(part.turn))  # the turn as the search gives its own, within +-180
+    rec["partner"] = [round(part.turn, 2), round(part.tilt, 2), part.lens, round(part.score, 4), round(part.iou, 4)]
+    if (part.iou < min(min_iou, top.iou - HALF_TURN_OUTLINE) or top.score - part.score > HALF_TURN_MARGIN
+            or _angdiff(part.turn, ref) >= HALF_TURN_NEAR):
+        rec["decision"] = "kept: the half turn misses the outline, scores lower or is not nearer the facing"
+        return top, poses, rec
+    rec["decision"] = "switched"
+    rest = [p for p in poses if max(_angdiff(p.turn, top.turn), abs(p.tilt - top.tilt)) > D2_FAR_DEG]
+    return part, [part, *rest], rec
+
+
 def _pose_fit(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared", src: Any, src_n: int | None, name: str,
               centre: np.ndarray, scale: float, size: int, min_iou: float, atlas_job: Any,
               log: Callable[[str], None] | None, hint: float | None = None,
               turns: list[float] | None = None, tilts: list[float] | None = None,
               lenses: list[float | None] | None = None, prior: float | None = None, window: float = PRIOR_DEG,
-              keep: int = 3, turn_limit: tuple[float, float] | None = None) -> tuple["View | None", dict[str, Any]]:
+              keep: int = 3, turn_limit: tuple[float, float] | None = None, breadth: int = 1,
+              half_turn_ref: float | None = None) -> tuple["View | None", dict[str, Any]]:
     """WP-61: the pose search (turn, tilt, lens) for one picture, then the D2 check, then the fit at the picked pose.
     hint: the turn the view is meant to be seen from; the search covers turns within POSE_HINT_DEG of it (None: all turns).
     prior: the turn the picture is expected at, window: how far from it a pose still agrees (_settle_by_prior); the
     search still covers `turns`. keep: how many coarse poses are refined. turn_limit (centre, half width): the turn
-    window the refinement stays in (with a hint, the hint's window).
+    window the refinement stays in (with a hint, the hint's window). breadth: how many times the search's usual share of
+    outline poses gets the colour terms and the lenses (objects searched over more than a 90 degree window).
     Returns (view, record). The view is None when the search fails outright (the caller keeps its turn-only fit, logged);
     otherwise it is ok, or refused for D2 (the reason names the rival) or for its silhouette."""
     picked = _pose_pick(mesh, tex, prepared, src, src_n, name, centre, scale, min_iou, atlas_job, log, hint, turns, tilts,
-                        lenses, prior, window, keep, turn_limit)
+                        lenses, prior, window, keep, turn_limit, breadth, half_turn_ref)
     return _pose_view(mesh, tex, prepared, src, src_n, name, centre, scale, size, min_iou, log, picked)
 
 
@@ -2324,7 +2396,8 @@ def _pose_pick(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared
                centre: np.ndarray, scale: float, min_iou: float, atlas_job: Any, log: Callable[[str], None] | None,
                hint: float | None = None, turns: list[float] | None = None, tilts: list[float] | None = None,
                lenses: list[float | None] | None = None, prior: float | None = None, window: float = PRIOR_DEG,
-               keep: int = 3, turn_limit: tuple[float, float] | None = None) -> tuple[Any, dict[str, Any], str | None]:
+               keep: int = 3, turn_limit: tuple[float, float] | None = None,
+               breadth: int = 1, half_turn_ref: float | None = None) -> tuple[Any, dict[str, Any], str | None]:
     """_pose_fit's choice of pose, before the picture is fitted at it at full size: (pose or None when the search failed
     outright, record, refusal reason or None). The record is ready as soon as this returns (the drawn views take the
     step 1 picture's tilt and lens from it while the picture itself is still being fitted)."""
@@ -2337,7 +2410,8 @@ def _pose_pick(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared
     try:
         tm: dict[str, float] = {}
         poses = ps.search(mesh, alpha, centre, scale, keep=keep, turns=turns, tilts=tilts, lenses=lenses, rgb=pic, tex=tex,
-                          timings=tm, turn_limit=turn_limit)
+                          timings=tm, turn_limit=turn_limit, keep_full=ps.KEEP_FULL * breadth,
+                          lens_top=ps.LENS_TOP * breadth)
     except Exception as e:  # a failed search keeps the turn-only fit, and the record says so
         if log:
             log(f"view {name}: pose search failed ({e}); the turn-only fit is kept")
@@ -2345,6 +2419,14 @@ def _pose_pick(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared
     top = poses[0]
     refuse_why = None
     prior_rec: dict[str, Any] | None = None
+    half_rec: dict[str, Any] | None = None
+    if half_turn_ref is not None:
+        t_h = time.time()
+        top, poses, half_rec = _half_turn_guard(mesh, alpha, pic, tex, centre, scale, poses, float(half_turn_ref), min_iou,
+                                                turn_limit)
+        tm["half_turn"] = round(time.time() - t_h, 2)
+        if log and half_rec.get("decision") == "switched":
+            log(f"view {name}: the half turn nearer the facing taken: {half_rec}")
     if prior is not None:  # also when the best pose misses the outline bar: the expected turn still decides (round 5)
         t_s = time.time()
         top, prior_rec, refuse_why = _settle_by_prior(mesh, alpha, pic, tex, centre, scale, poses, float(prior), min_iou,
@@ -2357,6 +2439,8 @@ def _pose_pick(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared
         rec["prior"] = prior_rec
         if log and prior_rec["decision"] != "kept":
             log(f"view {name}: {prior_rec['decision']} by the expected turn {prior:.0f}: {prior_rec}")
+    if half_rec is not None:
+        rec["half_turn"] = half_rec
     t_d = time.time()
     lab = face.to_lab(np.clip(small(pic, D2_N)[..., :3], 0.0, 1.0))
     valid = small(alpha, D2_N) > 0.5
@@ -2415,7 +2499,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
           yaw_hint: Callable[[], float | None] | None = None, source: Any = None, front_view: Any = None,
           pic_n: int | None = None, log: Callable[[str], None] | None = None,
           keep: dict[str, Any] | None = None, head_yaw: float = 0.0, built_from: str | None = None,
-          front_known: bool = False) -> dict[str, Any]:
+          front_known: bool = False, category: str | None = None, picture_known: bool = True) -> dict[str, Any]:
     """Paint the picture (and the turnaround views, mode "full" or "detail"; "off" leaves them out) into tex (T,T,3) through
     the mesh's UVs. Returns {applied, base_color (T,T,3), reason, metrics}. Nothing is applied when the picture does not
     fit the model, or when the result is no closer to the picture than what the model had. `picture` is the one the 3D
@@ -2424,10 +2508,18 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     front view drawn from the original) stands in for it when the original does not fit the model. head_yaw: the camera
     yaw the model's face is seen straight on from (face_detail.HEAD_YAW); the face region is found from there.
     front_known: the clean-up decided which way the model faces (facing.decide, or a turn chosen by hand), so its front is
-    at head_yaw and the original picture and the built-from picture are fitted only within FRONT_HALF of it."""
+    at head_yaw and the original picture and the built-from picture are fitted only within FRONT_HALF of it.
+    category: the asset's category; for OBJECT_CATEGORIES neither picture has an expected turn (see OBJECT_CATEGORIES)."""
     from . import facemarks
 
     t0 = time.time()
+    if category in OBJECT_CATEGORIES:
+        # Props and buildings paint from the step 1 picture and the original painting only, never from the drawn side and
+        # back views: on a box-like model a drawn view fits by its outline at any turn, and the turnaround draws objects
+        # as three-quarter pictures with content of their own (bakeoff/paint-default: the shop's "right" view put a second
+        # vending machine and a mint wash on the wrong wall; the crate's "left" view painted its side at brightness 0.30
+        # against the bake's 0.46)
+        turnaround = None
     res: dict[str, Any] = {"applied": False, "base_color": tex, "reason": None, "metrics": {}}
     # which finder reads the eyes and mouth for the head views: without one the front head view can only be fitted by
     # the darkest spots and the three-quarter head views are refused, which the record has to say
@@ -2445,10 +2537,13 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
             # (the pose pick is enough: it does not wait for the picture's full-size fit)
             # the original shows the model's front: the step 1 picture's turn less the turn that picture was drawn at
             ptop, prec, pwhy = picture_pick_job.result()
-            prior = (float(prec["turn"]) - picture_prior if ptop is not None and pwhy is None and prec.get("turn") is not None
+            prior = (None if objects else
+                     float(prec["turn"]) - picture_prior if ptop is not None and pwhy is None and prec.get("turn") is not None
                      else 0.0)
             pv, _ = _pose_fit(mesh, tex, prepared, src, pic_n, name, centre, scale, size, bar, atlas_job, log,
-                              turns=wide if front_known else None, prior=prior)
+                              turns=wide if front_known else None, prior=prior,
+                              breadth=_breadth(wide if front_known else ps_turns()) if objects else 1,
+                              half_turn_ref=float(head_yaw) if objects else None)
             if pv is not None and (pv.ok or not _silhouette_refused(pv)):
                 return pv
             return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, bar, log=log, outlines=outlines)
@@ -2487,6 +2582,11 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     # has its picture near 40 degrees, and an expected 0 refused it), whatever the clean-up decided about the face; it is
     # searched within PICTURE_SEARCH_DEG of that
     picture_prior = INTENDED_TURN[built_from] if built_from in QUARTERS else 0.0
+    objects = category in OBJECT_CATEGORIES  # no expected turn for either picture (OBJECT_CATEGORIES)
+    # A character's picture whose angle nobody asked for (the person's own: picture_known False, see picture_known_of) is
+    # searched as an object's is, over every turn (the front half once the facing is decided), unless the model was built
+    # from a drawn three-quarter view, whose turn the app chose. A picture the app drew keeps the expected turn above.
+    wide_pic = objects or (not picture_known and built_from not in QUARTERS)
     # the step 1 picture is fitted by its pose search; its turn-only fit is made only when that fails (below)
     wanted: list[tuple[str, Any, list[float]]] = []
     wanted += [(n, s, y) for n, s, y in (("source", source, wide), ("front", front_view, front_view_yaws(head_yaw, front_known))) if s is not None]
@@ -2503,12 +2603,15 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         # WP-61: the picture's pose search first; the drawn views wait for its tilt and lens (submitted earlier, so a
         # view waiting on it never holds back a job it needs)
         # the turns the caller allows (picture_yaws), else the front half when the facing is decided, else the whole circle
-        picture_turns = ([float(y) for y in picture_yaws] if picture_yaws else
+        picture_turns = ([float(y) for y in picture_yaws] if picture_yaws else [float(y) for y in wide] if wide_pic else
                          [picture_prior + float(d) for d in np.arange(-PICTURE_SEARCH_DEG, PICTURE_SEARCH_DEG + 1e-6, 10.0)])
-        picture_limit = None if picture_yaws else (picture_prior, PICTURE_SEARCH_DEG)
+        picture_limit = (None if picture_yaws or (wide_pic and not front_known) else (float(head_yaw), FRONT_HALF) if wide_pic
+                         else (picture_prior, PICTURE_SEARCH_DEG))
         picture_pick_job = pool.submit(contextvars.copy_context().run, _pose_pick, mesh, tex, prepared, picture, pic_n,
                                        "picture", centre, scale, min_iou, atlas_job, log, None, picture_turns, None, None,
-                                       picture_prior, PRIOR_DEG, 3, picture_limit)
+                                       None if wide_pic else picture_prior, PRIOR_DEG, 3, picture_limit,
+                                       _breadth(picture_turns) if wide_pic else 1,
+                                       float(head_yaw) + picture_prior if wide_pic else None)
         picture_pose_job = pool.submit(contextvars.copy_context().run, lambda: _pose_view(
             mesh, tex, prepared, picture, pic_n, "picture", centre, scale, size, min_iou, log, picture_pick_job.result()))
         jobs = {n: pool.submit(fit, n, s, y) for n, s, y in wanted}
@@ -2551,7 +2654,9 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         for n, why in refuse_contradicting_turns(fitted, front_yaw, front, built_from).items():
             if log:
                 log(f"view {n}: refused, {why}")
-        why = picture_contradicts_front(front, front_yaw)
+        # an object whose facing is not decided has no front to contradict: its turn 0 is whichever side the clean-up's
+        # quarter-turn snap put there (bakeoff/posefit: a turn 90 picture of a box fitted at 90 was refused for it)
+        why = None if objects and not front_known else picture_contradicts_front(front, front_yaw)
         if why:
             front.ok = False
             front.info["refused"] = why
@@ -2636,6 +2741,9 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
                               "srcproject_seconds": round(time.time() - t0, 1)}
             return res
         pitch_px = atlas.pitch_m * size / scale
+        if objects:  # no steep angles on props and buildings (OBJECT_COS_CUT)
+            for v in views:
+                v.cos_cut = OBJECT_COS_CUT
 
         def ready(i: int) -> np.ndarray:
             v = views[i]
@@ -2691,7 +2799,8 @@ def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, tu
                 out_png: Path | str, *, mode: str = "detail", size: int = SIZE, source: Path | str | None = None,
                 front_view: Path | str | None = None, pic_n: int | None = None,
                 log: Callable[[str], None] | None = None, keep: dict[str, Any] | None = None,
-                head_yaw: float = 0.0, built_from: str | None = None, front_known: bool = False) -> dict[str, Any]:
+                head_yaw: float = 0.0, built_from: str | None = None, front_known: bool = False,
+                category: str | None = None, picture_known: bool = True) -> dict[str, Any]:
     """paint() on files: reads the model and its base colour, writes the new base colour to out_png when it applies.
     Returns {applied, reason, base_color (the path to use), metrics}."""
     mesh = face.load_mesh(glb)
@@ -2708,7 +2817,8 @@ def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, tu
 
     r = paint(mesh, tex, picture, {k: p for k, p in (turnaround or {}).items() if p is not None and Path(p).is_file()},
               mode=mode, size=size, yaw_hint=hint, source=source, front_view=front_view, pic_n=pic_n, log=log, keep=keep,
-              head_yaw=head_yaw, built_from=built_from, front_known=front_known)
+              head_yaw=head_yaw, built_from=built_from, front_known=front_known, category=category,
+              picture_known=picture_known)
     path = Path(base_color)
     if r["applied"]:
         path = face.save_rgb(r["base_color"], out_png)
@@ -2725,11 +2835,14 @@ MODES = ("detail", "full", "off")
 DEFAULT_MODE = "full"
 
 
-AUTO_CATEGORIES = ("humanoid",)
+# Buildings joined after a blind review of the shop and cottage (bakeoff/paint-default, 2026-11-23): the shop judged better
+# than the bake (its sign comes back), the cottage held only for the mended-fill patch of a remesh-off build. Rigid props
+# stay off: the crate gains dark smears where the original painting's slats do not line up with the model's.
+AUTO_CATEGORIES = ("humanoid", "environment")
 
 
 def on(params: dict[str, Any], category: str | None = None, look: dict[str, Any] | None = None) -> bool:
-    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character.
+    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character or a building.
     `look` is no longer read; it stays so the callers need not change."""
     if params.get(PARAM) is not None:
         return bool(params.get(PARAM))
@@ -2878,6 +2991,14 @@ def upscale_note(info: dict[str, Any]) -> str | None:
     return None
 
 
+def picture_known_of(concept_params: dict[str, Any] | None) -> bool:
+    """Whether the step 1 picture's angle may be expected (paint's picture_known): yes for a picture the app drew (a
+    recorded square-on front, picture_view.assumed, or one drawn before views were recorded), no for the person's own
+    (an upload, an edit of one, a picture combined from their photos: picture_view.PERSON_SOURCES), searched widely."""
+    p = concept_params or {}
+    return picture_view.assumed(p) is not None or p.get("source") not in picture_view.PERSON_SOURCES
+
+
 async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[str, Any],
                     keep: dict[str, Any] | None = None, head_yaw: float = 0.0,
                     front_known: bool = False) -> dict[str, Path]:
@@ -2894,6 +3015,12 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
         built_from = ((mv.params or {}) if mv is not None else {}).get("input_view")
     except Exception:  # noqa: BLE001  (no lineage to read: the first three-quarter view, as before)
         built_from = None
+    try:
+        cv = sc.stage_version("concept")
+        picture_known = picture_known_of(cv.params if cv is not None else None)
+    except Exception:  # noqa: BLE001  (no lineage to read: expected, as before)
+        picture_known = True
+    sc.set_metrics(srcproject_picture_known=picture_known)
     if base is None or picture is None:
         sc.set_metrics(srcproject_applied=False, srcproject_reason="no base colour or no picture to paint from")
         return current
@@ -2936,7 +3063,8 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
     try:
         r = await asyncio.to_thread(apply_files, glb, base, picture, turn, work / "base_color.png", mode=mode, source=source,
                                     front_view=front_view, pic_n=PIC_N_BIG if big else None, keep=keep, head_yaw=head_yaw,
-                                    built_from=built_from, front_known=front_known)
+                                    built_from=built_from, front_known=front_known, picture_known=picture_known,
+                                    category=getattr(getattr(sc, "asset", None), "category", None))
     except Exception as e:  # noqa: BLE001  (the pass never fails a run: the colour stays as it was)
         sc.set_metrics(srcproject_applied=False, srcproject_reason=f"failed: {str(e)[:200]}")
         return current
