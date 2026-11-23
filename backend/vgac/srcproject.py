@@ -2068,8 +2068,8 @@ def front_half(yaws: list[float], front_yaw: float, half: float = FRONT_HALF) ->
 def front_view_yaws(head_yaw: float, front_known: bool) -> list[float]:
     """The turns the drawn front view is fitted at. It is drawn from the front, so once the clean-up has decided which way
     the model faces (front_known) it is fitted there only: over FRONT_YAWS its outline alone chose a turn well off the
-    decided front on a private test build, and a small feature it painted on the far side of the chest landed beside the
-    same feature from the three-quarter views (two copies). One turn, not a window round it: fit_view refines a search of
+    decided front on a test upload, and a small detail it painted landed beside the same detail from the three-quarter
+    views (two copies). One turn, not a window round it: fit_view refines a search of
     several turns by up to 5 degrees past the best of them."""
     return [float(head_yaw)] if front_known else list(FRONT_YAWS)
 

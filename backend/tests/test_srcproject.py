@@ -509,8 +509,8 @@ def test_the_picture_is_expected_at_the_turn_of_the_view_the_model_was_built_fro
 
 
 def test_with_the_facing_decided_the_drawn_front_view_is_fitted_at_the_front_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A private test build: the drawn front view stood in for a refused original and its outline alone chose a turn
-    off the decided front, which painted a small chest feature beside the three-quarter views' copy of it."""
+    """A test upload: the drawn front view stood in for a refused original and its outline alone chose a turn off the
+    decided front, which painted a small detail beside the three-quarter views' copy of it."""
     asked: dict[str, list[float]] = {}
     real = srcproject.fit_view
 
