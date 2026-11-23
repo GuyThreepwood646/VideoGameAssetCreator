@@ -785,6 +785,8 @@ function RunningPlaceholder({ version, asset }: { version: Version; asset: Asset
 }
 
 function StageViewer({ stage, version, asset, viewTool, onFix, category, assetName, onChanged, hideReady, busy, onRedrawViews, words, onWords }: { words: string; onWords: (t: string) => void; stage: StageId; version: Version; asset: Asset; viewTool: number | null; onFix: (f: FixRequest) => void; category: string; assetName: string; onChanged: () => void; hideReady?: boolean; busy: boolean; onRedrawViews: (views: string[]) => Promise<boolean> | void }) {
+  const { ref } = useRefData()
+  const hasSkeleton = (ref?.categories.find((c) => c.id === category)?.rig_engine ?? 'none') !== 'none'
   // A queued version cancelled before it ran is rejected with no files.
   if (isStopped(version)) {
     return <div className="placeholder-box">You stopped this version before it finished. Resume (above) runs it again with the same settings.</div>
@@ -826,7 +828,8 @@ function StageViewer({ stage, version, asset, viewTool, onFix, category, assetNa
       return (
         <>
           <RigView version={version} />
-          <ShapeTab version={version} onChanged={onChanged} />
+          {/* The arm tool cuts a limb off a character: an object with no skeleton has no arm to separate (F16). */}
+          {hasSkeleton && <ShapeTab version={version} onChanged={onChanged} />}
         </>
       )
     case 'export':

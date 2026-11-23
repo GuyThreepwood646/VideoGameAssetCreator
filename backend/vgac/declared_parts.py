@@ -44,6 +44,16 @@ RIGID_KINDS = ("separate",) + MOVING_KINDS
 CATEGORY_KINDS = {"humanoid": ("separate", "sway", "stiff"), "prop_rigid": RIGID_KINDS, "prop_articulated": RIGID_KINDS,
                   "vehicle": RIGID_KINDS, "environment": RIGID_KINDS}
 DEFAULT_KIND = "separate"
+# The moving part an item's own name or description names (item_defaults): the first group with a word of the item's name,
+# else of its description. One part per item; the person adds or changes the rest.
+ITEM_PARTS = (
+    (("gate", "gates"), "gate leaf", "hinge"),
+    (("chest", "trunk", "coffin", "lid", "lids"), "lid", "hinge"),
+    (("door", "doors"), "door", "hinge"),
+    (("hatch", "hatches", "trapdoor"), "hatch", "hinge"),
+    (("wheel", "wheels", "wheelbarrow", "tyre", "tyres", "cart"), "wheel", "spin"),
+    (("drawer", "drawers"), "drawer", "slide"),
+)
 # The kind a part named without one takes, where its category allows it: the first rule with a word of its name.
 NAME_KINDS = (("spin", ("wheel", "wheels", "tyre", "tyres", "tire", "tires", "propeller", "fan", "rotor", "gear", "cog")),
               ("slide", ("drawer", "drawers", "tray")),
@@ -81,6 +91,19 @@ def kind_from_name(name: str, category: str | None) -> str:
         if kind in allowed and any(w in names for w in words):
             return kind
     return DEFAULT_KIND
+
+
+def item_defaults(category: str | None, name: Any, prompt: Any, fallback: list[str]) -> list[dict[str, str]]:
+    """The parts a new asset starts with when the person named none: the moving part the item's own name names (a
+    gate gets a gate leaf, a chest a lid, a wheelbarrow a wheel), else the description's, else the category's fallback
+    names. Kinds come from the name and the category. An object with no such word and no fallback gets no part."""
+    allowed = kinds_for(category)
+    for text in (name, prompt):
+        words = set(_words(text or ""))
+        for names, label, kind in ITEM_PARTS:
+            if kind in allowed and words.intersection(names):
+                return [{"name": label, "kind": kind}]
+    return [{"name": n, "kind": kind_from_name(n, category)} for n in fallback]
 
 
 def default_angle(name: str) -> float:

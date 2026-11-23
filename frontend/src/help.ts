@@ -280,7 +280,7 @@ export const CATEGORY_HELP: Record<string, HelpEntry> = {
   serpent: H('Snake or fish', 'A long creature without legs.', 'Gets a spine-chain skeleton; for now it sways rather than slithers.', 'serpent'),
   vehicle: H('Vehicle or mech', 'A car, tank, ship or walking machine.', 'No skeleton; for now it comes out as one solid piece with a collision shape.', 'vehicle'),
   prop_rigid: H('Solid object', 'A solid object that does not bend or open, such as a barrel.', 'No skeleton; just a model with a collision shape.', 'prop_rigid'),
-  prop_articulated: H('Object with moving parts', 'An object with a moving part, such as a chest with a lid.', 'For now it comes out as one solid piece; the lid or door does not open yet.', 'prop_articulated'),
+  prop_articulated: H('Object with moving parts', 'An object with a moving part, such as a chest with a lid.', 'Its moving parts are marked in step 5, then they turn or slide in the game; the moving part is named from the item.', 'prop_articulated'),
   environment: H('Building or scenery piece', 'A piece of scenery that snaps to a grid, such as a wall or floor tile.', 'No skeleton; sized to the grid with its anchor on a corner, so pieces line up.', 'environment'),
   foliage: H('Plant or tree', 'A plant, tree or bush.', 'No skeleton; made to be scattered around a scene.', 'foliage'),
   material: H('Repeating surface', 'A flat, repeating surface such as grass, stone or brick, for floors, walls and ground.', 'Produces a texture only, no 3D model. For a rock, a bush or another object, choose Rigid prop or Foliage.', 'material'),
