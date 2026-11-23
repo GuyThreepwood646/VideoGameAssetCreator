@@ -4,7 +4,7 @@
 // (three or more lines; a flying creature gets a fourth). Older exports have neither, so the same lines are built here from what the export, prep and rig
 // versions do report: the size check, the Unity report's assigned textures, clips and controller, the collider and
 // the files. A line whose facts are missing is left out rather than guessed.
-import { creditText, selectedVersion, STAGES, type Asset, type Check, type CheckTier, type FinishLine, type LibraryHairMetrics, type StageId, type Version } from '../api'
+import { creditText, selectedVersion, STAGES, type Asset, type AssetSummary, type Check, type CheckTier, type FinishLine, type LibraryHairMetrics, type StageId, type Version } from '../api'
 import { checkFix, checkPassed, checkSentence, joinAnd, measuredSize, metres, movesPlain, sizeAxisOf, type FixAction } from '../help'
 
 export type UnityClip = { name: string; loop?: boolean }
@@ -85,19 +85,48 @@ export function attentionRank(id: string): number {
 // A check that two steps both report (a clean-up check repeated by the hand-off, say) is one item, with the value from the
 // latest step that reports it: if that step passes it, the item is gone. The tier is the backend's (check_tiers.py); a
 // check from a payload that has none is worth a look, never decided here.
-export function attentionItems(asset: Asset): AttentionItem[] {
-  const ctx = { platform: asset.platform_target, category: asset.category }
+// A check that could not be measured (backend quality.not_measured): a note with its reason, never a problem. It never
+// makes an asset not ready, never adds to the count and never stops autopilot.
+export function isUnmeasured(check: Check): boolean {
+  return check.vars?.measured === false
+}
+
+// The kept checks of every step, one per check id: the latest step that reports it wins.
+function latestChecks(asset: Asset): Map<string, { stage: StageId; check: Check }> {
   const latest = new Map<string, { stage: StageId; check: Check }>()
   for (const stage of STAGES) {
     for (const c of checksOf(selectedVersion(asset, stage))) latest.set(c.id ?? c.name, { stage, check: c })
   }
+  return latest
+}
+
+export function attentionItems(asset: Asset): AttentionItem[] {
+  const ctx = { platform: asset.platform_target, category: asset.category }
   const out: AttentionItem[] = []
-  for (const [id, { stage, check }] of latest) {
-    if (checkPassed(check)) continue
+  for (const [id, { stage, check }] of latestChecks(asset)) {
+    if (checkPassed(check) || isUnmeasured(check)) continue
     out.push({ stage, check, id, text: checkSentence(check, ctx), rank: attentionRank(id), tier: check.tier ?? 'look' })
   }
   return out.sort((a, b) => a.rank - b.rank || STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage))
 }
+
+// The checks that could not be measured, as plain notes ("Not measured: ... was not checked, because ...").
+export function notMeasuredNotes(asset: Asset): string[] {
+  const ctx = { platform: asset.platform_target, category: asset.category }
+  const out: string[] = []
+  for (const { check } of latestChecks(asset).values()) {
+    if (!checkPassed(check) && isUnmeasured(check)) out.push(checkSentence(check, ctx))
+  }
+  return out
+}
+
+// How many failed checks count against the asset, by tier. The project card and its filter read this: a "likely" or a
+// "look" item means the asset needs a look; advice never does.
+export function assetAttention(asset: AssetSummary | Asset): { likely: number; look: number } {
+  const items = attentionItems(asset as Asset)
+  return { likely: items.filter((i) => i.tier === 'likely').length, look: items.filter((i) => i.tier === 'look').length }
+}
+
 
 // The short line a person reads for a check: the first sentence without its brackets, cut at the first comma, semicolon
 // or colon when it is long, and at a word as a last resort. Never an ellipsis: the rest is the "Why".
@@ -120,16 +149,21 @@ export function itemsByTier(items: AttentionItem[]): Record<CheckTier, Attention
 const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
 const countWord = (n: number) => COUNT_WORDS[n] ?? String(n)
 
-// The one-line verdict. Never says the asset failed: no check stops it being used.
+// The one-line verdict. A "likely to show" item means not ready; "worth a look" items mean ready with things to check; advice
+// never changes the status. It never says the asset failed.
 export function verdictLine(items: AttentionItem[]): string {
   if (items.length === 0) return 'Ready to use. Every check passed.'
   const t = itemsByTier(items)
-  const bits: string[] = []
-  if (t.likely.length) bits.push(`${countWord(t.likely.length)} ${t.likely.length === 1 ? 'thing is' : 'things are'} likely to show in the game`)
-  if (t.look.length) bits.push(`${countWord(t.look.length)} ${t.look.length === 1 ? 'is' : 'are'} worth a look`)
-  if (t.advice.length) bits.push(`${countWord(t.advice.length)} ${t.advice.length === 1 ? 'note is' : 'notes are'} advice only`)
-  const first = bits[0][0].toUpperCase() + bits[0].slice(1)
-  return `Ready to use. ${[first, ...bits.slice(1)].join(', ')}.`
+  const n = t.likely.length
+  const m = t.look.length
+  const k = t.advice.length
+  const likely = n ? `${countWord(n)} ${n === 1 ? 'thing is' : 'things are'} likely to show in the game` : ''
+  const look = m ? `${countWord(m)} ${m === 1 ? 'thing' : 'things'} worth a look` : ''
+  const advice = k ? `${countWord(k)} ${k === 1 ? 'note is' : 'notes are'} advice only` : ''
+  const cap = (x: string) => x[0].toUpperCase() + x.slice(1)
+  if (n) return `Not ready to use yet. ${cap([likely, look, advice].filter(Boolean).join(', '))}.`
+  if (m) return `Ready to use, with ${[look, advice].filter(Boolean).join(', ')}.`
+  return `Ready to use. ${cap(advice)}.`
 }
 
 // (The clean-up's old `facing` check compared the turn with the test that chose it, so it is not read here any more.)
