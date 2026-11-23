@@ -1281,7 +1281,7 @@ async def rig_from_donor(sc: StageContext, donor: Any, params: dict[str, Any], b
 # without folding into its neighbours or through the palm. The retarget limits each finger joint's turn to this many degrees
 # (blender/retarget.py --finger-cap). 0 turns it off. The fists and grips keep the library's own curl: clips named punch or
 # attack, and library actions Punch_*, Sword_* and Pistol_* (a held item or a punch needs a closed hand).
-FINGER_CAP_DEFAULT = 40.0
+FINGER_CAP_DEFAULT = 20.0
 FINGER_CAP_EXCEPT = ("punch", "attack", "Punch_", "Sword_", "Pistol_")
 
 

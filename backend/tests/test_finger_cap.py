@@ -54,7 +54,7 @@ def test_cap_turn_leaves_a_small_turn_alone_whichever_sign_the_quaternion_has():
 
 
 def test_the_setting_reads_degrees_and_off():
-    assert rig.finger_cap_of({}) == rig.FINGER_CAP_DEFAULT == 40.0
+    assert rig.finger_cap_of({}) == rig.FINGER_CAP_DEFAULT == 20.0
     assert rig.finger_cap_of({"finger_cap": 65}) == 65.0
     assert rig.finger_cap_of({"finger_cap": 0}) is None and rig.finger_cap_of({"finger_cap": False}) is None
     assert rig.finger_cap_of({"finger_cap": "x"}) == rig.FINGER_CAP_DEFAULT
