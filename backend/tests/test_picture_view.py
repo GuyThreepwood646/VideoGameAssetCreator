@@ -49,3 +49,15 @@ def test_the_persons_own_pictures_are_never_assumed():
     # picture_view was carried over from an earlier painted version
     for source in picture_view.PERSON_SOURCES:
         assert picture_view.assumed({"source": source, "picture_view": "front"}) is None, source
+
+
+def test_every_painted_category_asks_for_a_level_square_on_front():
+    # Step 2 turns its views from the step 1 picture as if it were the front (golden set 2026-11-22), so step 1 asks every
+    # category with a picture for a level, square-on front, and says so with picture_view.
+    for c in reference.categories():
+        if c["id"] == "material":
+            continue
+        block = c["pose_block"].lower()
+        assert c.get("picture_view") == "front", c["id"]
+        assert not any(w in block for w in ("three-quarter", "slightly above", "from above", "high angle")), c["id"]
+        assert "front" in block and ("eye level" in block or "facing the camera directly" in block), c["id"]

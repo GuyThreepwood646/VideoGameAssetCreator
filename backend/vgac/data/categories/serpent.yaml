@@ -12,6 +12,8 @@ size_label: "How long is it?"
 size_hint: "In metres, head to tail as it lies. A python is about 4 m."
 parts_default: []
 topology: quad
+# The step 1 wording below asks for a level, square-on front (vgac/picture_view.py).
+picture_view: front
 input_view_default: quarter
 # Hair-friendly pictures (vgac/hairpic.py): the look's fur sentence only when the description names fur or a mane.
 hair: fur_if_named
@@ -21,11 +23,11 @@ lod_ratios: [0.5, 0.25, 0.1]
 views: [front, left, back, right, quarter]
 pose_block: >-
   The creature is shown in a straight neutral pose with the body extended in a gentle S curve along
-  one line, no coils or loops, head raised slightly and facing forward, seen from a three-quarter
-  front angle so the head and the full length of the body are visible, whole body visible with
-  margin around it, centred in frame. Plain flat light grey background. Soft even studio lighting
-  from the front with no hard shadows. No text, no logos, no background scenery, no motion blur,
-  no cropping.
+  one line, no coils or loops, head raised slightly and facing the camera, seen straight from the
+  front at eye level, square-on, so the head and the curve of the body behind it are visible, whole
+  body visible with margin around it, centred in frame. Plain flat light grey background. Soft even
+  studio lighting from the front with no hard shadows. No text, no logos, no background scenery, no
+  motion blur, no cropping.
 budgets:
   mobile_low: {triangles: 4000, texture: 1024}
   pc_mid: {triangles: 16000, texture: 2048}
