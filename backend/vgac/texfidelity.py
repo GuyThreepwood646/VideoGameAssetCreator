@@ -16,6 +16,10 @@ left out, it reports:
 - view_sharpness: face.sharpness on 8 orthographic renders around the model (moved here from
   bakeoff/texture_measure.py). Only the front is compared with a picture; the other seven stand alone.
 
+The fit camera: every turn level, then tilts 15 and 30 when that does not line up, then tilts up
+to 90 and an 85 and 50 mm lens. A fit only those wider cameras reach also needs the model's inner edges to agree with
+the picture's (posesearch's edge term, EDGE_MIN), since from above one box's outline fits another box's picture.
+
 What it cannot see: the back and the sides (the picture shows one side), anything hidden behind a limb in the picture,
 the normal, metal and roughness maps, and lighting. A picture that is itself shaded is compared as shaded.
 
@@ -43,8 +47,17 @@ ALPHA_OPAQUE = 128
 FRONT_IOU_OK = 0.85  # a model whose front already fits the picture this well is not turned
 IOU_FIT_MIN = 0.80    # below this the render and the picture do not line up well enough to trust the numbers
 # Camera heights (degrees looking down) tried when the level camera does not fit: most step 1 pictures look down on the
-# subject a little. On the golden set the crate's fit rose from 0.77 level to 0.93 at 15 (bakeoff/facing/tiltfit.json).
+# subject a little.
 FIT_TILTS = (15.0, 30.0)
+# Wider cameras tried only when those still do not fit: steeper tilts for pictures drawn from nearly overhead, and an 85
+# and a 50 mm lens on the best of them. Shorter lenses are left out: _frame_camera would put the eye inside the model.
+WIDE_TILTS = (45.0, 60.0, 75.0, 90.0)
+WIDE_LENSES = (85.0, 50.0)
+# A fit only a wider camera reaches counts only when the model's inner edges agree with the picture's (posesearch's edge
+# term at that pose): seen from above, the outline of one boxy subject fits the picture of another, while their inner
+# edges do not agree. The limit sits between the edge agreement of such wrong fits and that of true fits.
+EDGE_MIN = 0.33
+WIDE_EDGE_TRIES = 3   # the best wider fits whose edges are checked, best outline first
 
 # Report-only limits for the two checks (set from the bake-off baseline, docs/TEXTURE-FIDELITY-PLAN.md).
 SHARP_RATIO_MIN = 0.5
@@ -195,19 +208,21 @@ def _pad_to(mask: np.ndarray, size: int) -> np.ndarray:
     return m
 
 
-def _frame_camera(mesh: dict[str, np.ndarray], yaw: float, pic_extent_px: float, size: int, tilt: float = 0.0) -> face.Camera:
+def _frame_camera(mesh: dict[str, np.ndarray], yaw: float, pic_extent_px: float, size: int, tilt: float = 0.0,
+                  lens: float | None = None) -> face.Camera:
     """A camera whose render has the figure about as many pixels across as the picture does, so the picture is hardly
-    resampled and sharpness compares at one scale."""
+    resampled and sharpness compares at one scale. lens None is orthographic; a focal length (mm) a pinhole camera
+    standing back by the distance that frames the scale (85 and 50 mm only: shorter puts the eye inside the model)."""
     v = mesh["verts"]
     lo, hi = v.min(0), v.max(0)
     centre = (lo + hi) / 2
-    cam0 = face.Camera(target=centre, yaw_deg=yaw, scale=float(np.linalg.norm(hi - lo)) * 1.5, size=size, tilt_deg=tilt)
+    cam0 = face.Camera(target=centre, yaw_deg=yaw, scale=float(np.linalg.norm(hi - lo)) * 1.5, size=size, tilt_deg=tilt, lens_mm=lens)
     p, _ = cam0.project(v)
     ext = float(max(np.ptp(p[:, 0]), np.ptp(p[:, 1])))
     scale = cam0.scale * ext / max(pic_extent_px, 1.0)
     # never let the figure leave the frame
     scale = max(scale, cam0.scale * ext / (size * 0.96))
-    return face.Camera(target=centre, yaw_deg=yaw, scale=scale, size=size, tilt_deg=tilt)
+    return face.Camera(target=centre, yaw_deg=yaw, scale=scale, size=size, tilt_deg=tilt, lens_mm=lens)
 
 
 # --- the measures --------------------------------------------------------------------------------------------
@@ -259,10 +274,10 @@ def compare(render: np.ndarray, render_mask: np.ndarray, pic: np.ndarray, pic_ma
 
 
 def _front_candidate(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, pic_mask: np.ndarray, yaw: float, size: int,
-                     want_images: bool, tilt: float = 0.0) -> dict[str, Any]:
+                     want_images: bool, tilt: float = 0.0, lens: float | None = None) -> dict[str, Any]:
     ys, xs = np.nonzero(pic_mask)
     extent = float(max(np.ptp(xs), np.ptp(ys)) + 1) * size / max(pic.shape[:2])
-    cam = _frame_camera(mesh, yaw, extent, size, tilt)
+    cam = _frame_camera(mesh, yaw, extent, size, tilt, lens)
     r = face.render_view(mesh, tex, cam, background=0.5)
     pic_sq = _pad_square(pic)
     mask_sq = _pad_square(pic_mask)
@@ -273,7 +288,7 @@ def _front_candidate(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarr
     # Both sides at 8 bits, as a texture or a picture on disk is: float rendering would show less quantisation noise than the picture.
     r["image"] = face.to_uint8(r["image"]).astype(np.float64) / 255.0
     m = compare(r["image"], r["mask"], warped, wmask)
-    res = {"yaw": yaw, "tilt": tilt, "silhouette_iou": round(fit["iou"], 4), "fit_scale": round(fit["scale"], 3), "fit_shift_px": [round(fit["tx"], 1), round(fit["ty"], 1)], **m}
+    res = {"yaw": yaw, "tilt": tilt, "lens": lens, "silhouette_iou": round(fit["iou"], 4), "fit_scale": round(fit["scale"], 3), "fit_shift_px": [round(fit["tx"], 1), round(fit["ty"], 1)], **m}
     if want_images:
         res["_images"] = {"render": r["image"], "picture": warped, "render_mask": r["mask"], "picture_mask": wmask}
     return res
@@ -293,16 +308,21 @@ def score(glb: Path | str, picture: Path | str | np.ndarray | Image.Image, base_
     pic, pic_mask = load_picture(picture)
     if pic_mask.sum() < 100:
         return {"error": "the picture has no cut-out to compare against"}
-    tried: dict[tuple[float, float], dict[str, Any]] = {}
+    tried: dict[tuple[float, float, float | None], dict[str, Any]] = {}
 
-    def run(y: float, t: float = 0.0) -> dict[str, Any]:
-        k = (float(y) % 360, float(t))
+    def run(y: float, t: float = 0.0, lens: float | None = None) -> dict[str, Any]:
+        k = (float(y) % 360, float(t), lens)
         if k not in tried:
-            tried[k] = _front_candidate(mesh, tex, pic, pic_mask, k[0], size, keep_images, k[1])
+            tried[k] = _front_candidate(mesh, tex, pic, pic_mask, k[0], size, keep_images, k[1], lens)
         return tried[k]
 
     def best_iou() -> float:
         return max(r["silhouette_iou"] for r in tried.values())
+
+    def two_tops(rows: list[dict[str, Any]]) -> list[tuple[float, float, float | None]]:
+        rows = sorted(rows, key=lambda r: -r["silhouette_iou"])
+        out = [rows[0]] + [r for r in rows[1:] if _yaw_apart(r["yaw"], rows[0]["yaw"]) >= 45][:1]
+        return [(r["yaw"], r["tilt"], r["lens"]) for r in out]
 
     if yaw != "auto":
         run(float(yaw))
@@ -327,13 +347,46 @@ def score(glb: Path | str, picture: Path | str | np.ndarray | Image.Image, base_
             if b["tilt"]:
                 for dy in (-15, 15):
                     run(b["yaw"] + dy, b["tilt"])
-    top_iou = best_iou()
+        if best_iou() < IOU_FIT_MIN:
+            # still no fit: a picture drawn from nearly overhead or with a near camera. Steeper tilts on the two best
+            # turns so far and the turns opposite them (from overhead the front and back views differ mainly in which end
+            # is at the top, and the level search does not tell them apart), then the two lenses on the two best of
+            # those, then 15 degree steps around the best.
+            tops = two_tops(list(tried.values()))
+            for t in WIDE_TILTS:
+                for y, _, _ in tops:
+                    run(y, t)
+                    run(y + 180, t)
+            for y, t, _ in two_tops(list(tried.values())):
+                for lens in WIDE_LENSES:
+                    run(y, t, lens)
+            b = max(tried.values(), key=lambda r: r["silhouette_iou"])
+            if _is_wide(b):
+                for dy in (-15, 15):
+                    run(b["yaw"] + dy, b["tilt"], b["lens"])
+    refused: dict[str, Any] | None = None
+    pool_from = [r for r in tried.values() if not _is_wide(r)]
+    wide_fits = sorted((r for r in tried.values() if _is_wide(r) and r["silhouette_iou"] >= IOU_FIT_MIN),
+                       key=lambda r: -r["silhouette_iou"])[:WIDE_EDGE_TRIES]
+    if wide_fits:
+        target = _edge_target(pic, pic_mask)
+        for r in wide_fits:
+            r["edge_term"] = round(_edge_term(mesh, tex, target, r), 4)
+            if r["edge_term"] >= EDGE_MIN:
+                pool_from.append(r)
+            elif refused is None:
+                refused = {k: r[k] for k in ("yaw", "tilt", "lens", "silhouette_iou", "edge_term")}
+        if any(_is_wide(r) for r in pool_from):
+            refused = None
+    top_iou = max(r["silhouette_iou"] for r in pool_from)
     # A boxy or round subject fits the silhouette at several turns: among the turns that fit about equally well, the one
     # whose low-pass colour agrees best with the picture wins.
-    pool = [r for r in tried.values() if r["silhouette_iou"] >= top_iou - 0.03]
+    pool = [r for r in pool_from if r["silhouette_iou"] >= top_iou - 0.03]
     best = min(pool, key=lambda r: (r["delta_e"] if r.get("delta_e") is not None else 1e9))
     best = dict(best)
     best["fit_ok"] = best["silhouette_iou"] >= IOU_FIT_MIN
+    if refused:
+        best["wide_fit_refused"] = refused
     out: dict[str, Any] = {k: v for k, v in best.items() if k != "_images"}
     out["triangles"] = int(len(mesh["faces"]))
     out["texture_px"] = int(tex.shape[0])
@@ -348,6 +401,29 @@ def score(glb: Path | str, picture: Path | str | np.ndarray | Image.Image, base_
     if keep_images and "_images" in best:
         out["_images"] = best["_images"]
     return out
+
+
+def _is_wide(r: dict[str, Any]) -> bool:
+    """Whether a candidate needed a wider camera than the level, 15 and 30 degree orthographic ones."""
+    return r.get("lens") is not None or float(r.get("tilt") or 0.0) > max(FIT_TILTS)
+
+
+def _edge_target(pic: np.ndarray, pic_mask: np.ndarray) -> Any:
+    from . import posesearch
+
+    return posesearch.target(_pad_square(pic_mask).astype(np.float64), posesearch.REFINE_N, _pad_square(pic))
+
+
+def _edge_term(mesh: dict[str, np.ndarray], tex: np.ndarray, target: Any, r: dict[str, Any]) -> float:
+    """posesearch's inner-edge term (model creases and colour edges against the picture's edges, 0..1) at a candidate's
+    turn, tilt and lens, on posesearch's own framing (bounds centre, 1.2 x the bounds diagonal)."""
+    from . import posesearch
+
+    v = mesh["verts"]
+    lo, hi = v.min(0), v.max(0)
+    p = posesearch.score_pose(mesh, target, (lo + hi) / 2, float(np.linalg.norm(hi - lo)) * 1.2,
+                              (float(r["yaw"]), float(r["tilt"]), r.get("lens")), tex)
+    return float(p.terms.get("edge", 0.0))
 
 
 def _yaw_apart(a: float, b: float) -> float:
@@ -385,9 +461,8 @@ def save_comparison(result: dict[str, Any], dest: Path | str) -> Path | None:
 # --- whether step 2 redrew the picture ------------------------------------------------------------------------
 
 # The step 1 picture's outline against step 2's drawn front, each cropped to its figure and scaled to one height: below
-# this, step 2 redrew the subject (the golden knight's arms-down picture became a T-pose: 0.69; the wheelbarrow's
-# three-quarter picture a true front: 0.56; every other golden build 0.92 or more), and a model built from the redrawn
-# views is compared with the built-from picture when the step 1 picture does not line up.
+# this, step 2 redrew the subject (a changed pose or a changed view), and a model built from the redrawn views is
+# compared with the built-from picture when the step 1 picture does not line up.
 REDRAWN_IOU = 0.85
 OUTLINE_N = 128
 
@@ -428,10 +503,18 @@ def fidelity_checks(result: dict[str, Any]) -> list[dict[str, Any]]:
              ("texture_colour_matches_picture", "whether the colours match the picture"))
     if result.get("error") or not result.get("fit_ok"):
         iou = result.get("silhouette_iou")
-        why = ("the model could not be drawn from the picture's side to compare with it" if result.get("error")
-               else "the model drawn from the picture's side did not line up with the picture"
-                    + (f" (outline overlap {float(iou):.2f}, it needs {IOU_FIT_MIN:.2f})" if iou is not None else "")
-                    + ", so any difference would be the fit's fault, not the texture's")
+        refused = result.get("wide_fit_refused") if not result.get("error") else None
+        if result.get("error"):
+            why = "the model could not be drawn from the picture's side to compare with it"
+        elif refused:
+            why = (f"the model's outline lined up with the picture only from a steep or close camera, and the shapes inside "
+                   f"it did not match the picture's (edge agreement {float(refused['edge_term']):.2f}, it needs "
+                   f"{EDGE_MIN:.2f}), so it may be a different subject or side, and any difference would be the fit's "
+                   f"fault, not the texture's")
+        else:
+            why = ("the model drawn from the picture's side did not line up with the picture"
+                   + (f" (outline overlap {float(iou):.2f}, it needs {IOU_FIT_MIN:.2f})" if iou is not None else "")
+                   + ", so any difference would be the fit's fault, not the texture's")
         return [quality.not_measured(i, what, why) for i, what in names]
     out: list[dict[str, Any]] = []
     ratio = result.get("sharpness_ratio")
@@ -458,7 +541,7 @@ def texture_checks_for(glb: Path | str, picture: Path | str | np.ndarray | Image
         return []
 
 
-STAGE_KEYS = ("yaw", "tilt", "silhouette_iou", "fit_ok", "ssim", "delta_e", "delta_l", "delta_chroma", "sharpness_ratio")
+STAGE_KEYS = ("yaw", "tilt", "lens", "edge_term", "wide_fit_refused", "silhouette_iou", "fit_ok", "ssim", "delta_e", "delta_l", "delta_chroma", "sharpness_ratio")
 
 
 def measure_for_stage(glb: Path | str, picture: Path | str, base_color: Path | str | None = None) -> dict[str, Any]:
