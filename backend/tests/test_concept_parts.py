@@ -57,6 +57,13 @@ def test_read_stored_keeps_the_mark_and_leaves_other_rows_alone():
     assert rows == [{"name": "wheels", "kind": "spin", "from": "category"}, {"name": "lid", "kind": "hinge"}]
 
 
+def test_the_vehicle_pose_block_names_no_particular_part():
+    # Part words come only from the subject and its declared parts, never from the category's pose text.
+    pose = reference.category("vehicle")["pose_block"].lower()
+    assert "wheel" not in pose and "door" not in pose and "hatch" not in pose
+    assert "moving parts in their resting positions" in pose
+
+
 def test_rigging_reads_the_same_parts_with_or_without_the_mark():
     from vgac.stages import rig
 

@@ -51,7 +51,7 @@ ITEM_PARTS = (
     (("chest", "trunk", "coffin", "lid", "lids"), "lid", "hinge"),
     (("door", "doors"), "door", "hinge"),
     (("hatch", "hatches", "trapdoor"), "hatch", "hinge"),
-    (("wheel", "wheels", "wheelbarrow", "tyre", "tyres", "cart"), "wheel", "spin"),
+    (("wheel", "wheels", "wheelbarrow", "tyre", "tyres", "cart", "handcart", "bicycle", "bike", "trolley"), "wheel", "spin"),
     (("drawer", "drawers"), "drawer", "slide"),
 )
 # The kind a part named without one takes, where its category allows it: the first rule with a word of its name.
