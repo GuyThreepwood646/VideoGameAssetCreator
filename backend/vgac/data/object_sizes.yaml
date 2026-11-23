@@ -1,0 +1,150 @@
+# Common stand-alone objects and their usual real size, by name (F18: a described wheelbarrow came out 4.5 m long).
+# Used only when a description names one of these objects and gives no size of its own, and only for the object
+# categories listed below. Creatures, people and buildings never use this table.
+#
+# Per entry:
+#   words     the names that match the object in a description (whole words, any case). Plurals are listed when
+#             they should match too.
+#   size_m    the usual size in metres
+#   axis      which dimension the number is, the same axis names resolve_size uses:
+#               height      the up extent
+#               horizontal  the larger ground-plane extent ("across" or "long" on the ground)
+#               longest     the largest of all three
+#
+# When a description names two entries, the one named first wins (the subject, in "a wheelbarrow full of apples").
+# Entries close to their category default are left out, so nothing moves that does not need to.
+version: 1
+categories: [prop_rigid, prop_articulated, vehicle, foliage]
+objects:
+  wheelbarrow:
+    words: [wheelbarrow, wheelbarrows]
+    size_m: 1.5
+    axis: longest
+  gate:
+    words: [gate, gates, garden gate, field gate]
+    size_m: 1.0
+    axis: horizontal
+  door:
+    words: [door, doors]
+    size_m: 2.0
+    axis: height
+  barrel:
+    words: [barrel, barrels, cask, casks]
+    size_m: 0.9
+    axis: height
+  chest:
+    words: [chest, chests, treasure chest, coffer]
+    size_m: 0.9
+    axis: horizontal
+  table:
+    words: [table, tables]
+    size_m: 0.75
+    axis: height
+  chair:
+    words: [chair, chairs, armchair]
+    size_m: 0.9
+    axis: height
+  stool:
+    words: [stool, stools]
+    size_m: 0.45
+    axis: height
+  bench:
+    words: [bench, benches]
+    size_m: 1.5
+    axis: horizontal
+  throne:
+    words: [throne, thrones]
+    size_m: 1.3
+    axis: height
+  bed:
+    words: [bed, beds]
+    size_m: 2.0
+    axis: longest
+  bookshelf:
+    words: [bookshelf, bookcase, shelf, shelves]
+    size_m: 1.8
+    axis: height
+  ladder:
+    words: [ladder, ladders]
+    size_m: 3.0
+    axis: height
+  bucket:
+    words: [bucket, buckets, pail]
+    size_m: 0.3
+    axis: height
+  sack:
+    words: [sack, sacks, burlap sack, grain sack]
+    size_m: 0.6
+    axis: height
+  box:
+    words: [box, boxes, cardboard box, wooden box]
+    size_m: 0.5
+    axis: longest
+  lantern:
+    words: [lantern, lanterns]
+    size_m: 0.3
+    axis: height
+  torch:
+    words: [torch, torches]
+    size_m: 0.5
+    axis: longest
+  anvil:
+    words: [anvil, anvils]
+    size_m: 0.7
+    axis: height
+  cart:
+    words: [cart, carts, hand cart, handcart]
+    size_m: 2.0
+    axis: longest
+  wagon:
+    words: [wagon, wagons, cart wagon]
+    size_m: 3.0
+    axis: longest
+  rowboat:
+    words: [rowboat, row boat, dinghy, canoe]
+    size_m: 3.0
+    axis: longest
+  boulder:
+    words: [boulder, boulders]
+    size_m: 1.2
+    axis: longest
+  bush:
+    words: [bush, bushes, shrub, shrubs]
+    size_m: 1.0
+    axis: height
+  flower:
+    words: [flower, flowers]
+    size_m: 0.4
+    axis: height
+  mushroom:
+    words: [mushroom, mushrooms]
+    size_m: 0.2
+    axis: height
+  bottle:
+    words: [bottle, bottles, flask, flasks]
+    size_m: 0.3
+    axis: height
+  potion:
+    words: [potion, potions, vial, vials]
+    size_m: 0.2
+    axis: height
+  cup:
+    words: [cup, cups, mug, mugs, goblet, goblets]
+    size_m: 0.12
+    axis: height
+  book:
+    words: [book, books, tome, tomes]
+    size_m: 0.25
+    axis: longest
+  scroll:
+    words: [scroll, scrolls]
+    size_m: 0.3
+    axis: longest
+  sword:
+    words: [sword, swords]
+    size_m: 0.9
+    axis: longest
+  signpost:
+    words: [signpost, signposts]
+    size_m: 2.0
+    axis: height

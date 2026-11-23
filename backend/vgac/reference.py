@@ -1040,3 +1040,36 @@ def parse_size(text: str | None, default_m: float | None = None) -> dict[str, An
     if not found:
         return None
     return next((f for f in found if f["axis"]), found[0])
+
+
+@lru_cache(maxsize=1)
+def _object_sizes() -> dict[str, Any]:
+    """data/object_sizes.yaml: {categories: set of ids, objects: [{label, pattern, size_m, axis}]}, one pattern per entry
+    built from its words (whole words, any case, longest word first)."""
+    raw = _load_yaml(DATA_DIR / "object_sizes.yaml")
+    objects = []
+    for label, row in (raw.get("objects") or {}).items():
+        words = sorted((w.lower() for w in row["words"]), key=len, reverse=True)
+        pattern = re.compile(r"(?<![\w-])(?:" + "|".join(re.escape(w) for w in words) + r")(?![\w-])", re.IGNORECASE)
+        objects.append({"label": label, "pattern": pattern, "size_m": float(row["size_m"]), "axis": row["axis"]})
+    return {"categories": set(raw.get("categories") or []), "objects": objects}
+
+
+def object_size(category_id: str, description: str | None) -> dict[str, Any] | None:
+    """A common object named in the description, for an object category (data/object_sizes.yaml): {size_m, axis,
+    label, text}, or None. Only the categories listed in the table use it; creatures, people and buildings never do.
+    The object named first in the text is the subject ("a wheelbarrow full of apples"); on a tie the longer name wins."""
+    table = _object_sizes()
+    if category_id not in table["categories"] or not description:
+        return None
+    best = None
+    for obj in table["objects"]:
+        for m in obj["pattern"].finditer(description):
+            key = (m.start(), -len(m.group(0)))
+            if best is None or key < best[0]:
+                best = (key, obj, m.group(0))
+            break  # only the first mention of this object can be the subject
+    if best is None:
+        return None
+    _, obj, text = best
+    return {"size_m": obj["size_m"], "axis": obj["axis"], "label": obj["label"], "text": text}
