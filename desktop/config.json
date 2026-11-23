@@ -35,6 +35,6 @@
   "logsFolder": "runtime/logs",
   "exportsFolder": "exports",
   "launcherLog": "runtime/logs/launcher.log",
-  "window": { "width": 1440, "height": 900, "minWidth": 1200, "minHeight": 800 },
+  "window": { "width": 1440, "height": 900, "minWidth": 360, "minHeight": 480 },
   "pollIntervalMs": 2000
 }
