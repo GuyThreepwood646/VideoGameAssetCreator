@@ -14,6 +14,8 @@ size_label: "How tall is it?"
 size_hint: "In metres, from the ground to the top. A bush is about 1 m; an oak about 15 m."
 parts_default: []
 topology: triangle
+# The step 1 wording below asks for a level, square-on front (vgac/picture_view.py).
+picture_view: front
 input_view_default: front
 motion: none
 clips: []

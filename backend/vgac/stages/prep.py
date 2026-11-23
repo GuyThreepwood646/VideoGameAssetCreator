@@ -566,7 +566,8 @@ async def ship_late(sc: StageContext, glb: Path, maps: dict[str, Path], look: di
 
 async def colour_faces(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], head_yaw: float) -> dict[str, Path]:
     """The look's one colour per triangle (recipe surface.colour_per_face, Low-poly; vgac/looktex.py), the front of a
-    character's head left as painted when surface.face_keeps_texture. -> the maps from here."""
+    character's head left as painted when surface.face_keeps_texture, and every triangle that holds painted detail (a
+    window, a sign, lettering: looktex.detailed_triangles) in every category. -> the maps from here."""
     from .. import looktex
 
     def work() -> tuple[Path, dict[str, Any]]:
@@ -582,7 +583,8 @@ async def colour_faces(sc: StageContext, glb: Path, maps: dict[str, Path], rec: 
         out_dir.mkdir(parents=True, exist_ok=True)
         path = face.save_rgb(r["base_color"], out_dir / "base_color.png")
         imaging.glb_replace_images(glb, base_color=path)
-        return path, {"ran": True, "faces": r["faces"], "kept_texels": r["kept"], "face_kept_by": how}
+        return path, {"ran": True, "faces": r["faces"], "kept_texels": r["kept"], "detail_faces": r["detailed_faces"],
+                        "face_kept_by": how}
 
     path, record = await asyncio.to_thread(work)
     sc.register("base_color", path)

@@ -4631,7 +4631,7 @@ button.preset-card:hover:not(:disabled) {
   .view-menu {
     position: static;
   }
-  .status-pop {
+  .topbar .status-pop {
     left: var(--s2);
     right: var(--s2);
     min-width: 0;
@@ -5098,4 +5098,317 @@ textarea::placeholder {
   height: auto;
   margin: 8px 0;
   border-radius: 4px;
+}
+
+/* Phone-width windows (a phone reaching the PC by remote desktop, about 360 to 450 px wide in portrait).
+   Desktop layout is unchanged: every rule here sits under a max-width query. The page shell never needs more
+   than 360 px; anything wider (a strip of views, a table) scrolls inside its own box. */
+@media (max-width: 900px) {
+  .jump-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  :root {
+    --control-h: 40px;
+  }
+  /* Long button labels wrap instead of pushing the row wider; controls get a finger-sized height. */
+  button,
+  .btn {
+    white-space: normal;
+    min-height: 40px;
+  }
+  button.link,
+  .info-btn {
+    min-height: 0;
+    min-width: 0;
+  }
+  /* The step guide puts its action buttons under the text instead of beside it. */
+  .guide {
+    flex-direction: column;
+    align-items: stretch;
+    padding: var(--s3);
+  }
+  .guide-action {
+    flex: initial;
+    min-width: 0;
+  }
+  /* Stacked, the guide text takes its own height (a flex basis would become a fixed height in a column). */
+  .guide-body,
+  .finish-bar .guide-body {
+    flex: none;
+    max-width: none;
+  }
+  .guide-action-col {
+    align-items: flex-start;
+  }
+  /* The 3D viewer's single column is never wider than the viewer, so its toolbar wraps. */
+  .viewer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* The toolbar wraps onto several rows here, so the viewer grows with it (its height is set inline) and the
+     model keeps a drawing area of its own. */
+  .viewer[style*='height'] {
+    height: auto !important;
+    grid-template-rows: auto auto;
+  }
+  .viewer[style*='height'] > .canvas-host {
+    height: min(60vh, 360px);
+  }
+  .viewer[style*='86vh'] > .canvas-host {
+    height: 75vh;
+  }
+  .concept-body,
+  .export-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .view-cell-wide {
+    min-width: min(300px, 100%);
+  }
+  .move-search,
+  .feedback-note input {
+    min-width: 0;
+  }
+  /* Pop-ups and dialogs never run past the window's edge. */
+  .viewer-toolbar .viewer-light-pop,
+  .status-pop,
+  .confirm-card,
+  .overlay-card.move-picker {
+    max-width: calc(100vw - 2 * var(--s3));
+  }
+  .viewer-toolbar .viewer-light-pop {
+    min-width: 0;
+  }
+  /* An info tip has no room beside its button, so it opens as a full-width sheet at the bottom of the window. */
+  .info-tip,
+  .info-tip-right {
+    position: fixed;
+    top: auto;
+    bottom: var(--s3);
+    left: var(--s3);
+    right: var(--s3);
+    width: auto;
+    max-height: 50vh;
+    overflow-y: auto;
+    overflow-wrap: anywhere;
+  }
+  /* The "..." menus on tiles and versions open the same way, so a menu on the left of the window is never cut off. */
+  .more-pop,
+  .more-pop.card-pop,
+  .viewer-toolbar .viewer-light-pop {
+    position: fixed;
+    top: auto;
+    bottom: var(--s3);
+    left: var(--s3);
+    right: var(--s3);
+    min-width: 0;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  img,
+  video {
+    max-width: 100%;
+  }
+}
+@media (max-width: 700px) {
+  :root {
+    --control-md: 40px;
+  }
+  /* An asset page scrolls as one page. The step list becomes a strip of compact steps that scrolls sideways in its
+     own box, so each step starts right under it and nothing sits in a second scroll box. */
+  .pipeline-layout,
+  .pipeline-layout.with-log {
+    height: auto;
+    grid-template-rows: auto;
+  }
+  .stage-main {
+    overflow: visible;
+  }
+  /* The rail's parts become rows of the page: asset facts, step strip, the step, then the prompt under the step. */
+  .stage-rail {
+    display: contents;
+  }
+  .rail-head,
+  .rail-stages,
+  .rail-progress {
+    background: var(--panel);
+  }
+  .rail-head {
+    order: 1;
+  }
+  .rail-progress {
+    order: 2;
+  }
+  .rail-stages {
+    order: 3;
+    border-bottom: 1px solid var(--border);
+  }
+  .stage-main {
+    order: 4;
+  }
+  .rail-prompt {
+    order: 5;
+    background: var(--panel);
+  }
+  .job-col {
+    order: 6;
+  }
+  .rail-stages {
+    display: flex;
+    flex-direction: row;
+    gap: var(--s1);
+    overflow-x: auto;
+    padding: var(--s2);
+  }
+  .rail-stage {
+    flex: none;
+    border-left: none;
+    border-bottom: 2px solid transparent;
+    border-radius: var(--radius-md);
+    padding-right: 0;
+  }
+  .rail-stage.active {
+    border-left-color: transparent;
+    border-bottom-color: var(--accent);
+  }
+  .rail-stage-btn {
+    grid-template-columns: 12px auto auto;
+    padding: var(--s2);
+    min-height: 40px;
+  }
+  .rail-stage-btn .rail-tech,
+  .rail-stage-btn .rail-meta,
+  .rail-stage > .info-wrap {
+    display: none;
+  }
+  .rail-label {
+    white-space: nowrap;
+  }
+  /* One-line notes and the sort menu wrap or keep their own width instead of being cut off. */
+  .viewer-status {
+    white-space: normal;
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+  .projects-head {
+    flex-wrap: wrap;
+  }
+  .projects-sort,
+  .projects-search {
+    flex: none;
+    max-width: 100%;
+  }
+  /* Small round controls keep their look; an invisible 40 px square around each takes the tap. */
+  button,
+  .btn {
+    min-width: 40px;
+  }
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  .redraw-go {
+    min-height: 40px;
+  }
+  select {
+    min-width: 48px;
+  }
+  .info-btn,
+  summary,
+  .switch,
+  .icon-btn,
+  .viewer-toolbar button {
+    position: relative;
+  }
+  .info-btn::after,
+  summary::after,
+  .switch::after,
+  .icon-btn::after,
+  .viewer-toolbar button::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 40px);
+    height: max(100%, 40px);
+    transform: translate(-50%, -50%);
+  }
+  .check-item {
+    min-height: 40px;
+  }
+  input[type='checkbox'],
+  input[type='radio'] {
+    width: 20px;
+    height: 20px;
+  }
+}
+@media (max-width: 700px) {
+  /* The step strip fades at both ends, so a cut-off step reads as "scroll for more", and stops on whole steps. */
+  .rail-stages {
+    padding-inline: var(--s4);
+    scroll-padding-inline: var(--s4);
+    scroll-snap-type: x proximity;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
+  }
+  .rail-stage {
+    scroll-snap-align: center;
+  }
+  /* A tile's "+n variants" badge sits in the picture's top-left corner, the "..." menu in the top-right. */
+  .asset-card-tools {
+    left: var(--s2);
+    justify-content: space-between;
+    pointer-events: none;
+  }
+  .asset-card-tools > * {
+    pointer-events: auto;
+  }
+  .asset-card-tools > .chip {
+    min-height: 0;
+    position: relative;
+  }
+  .asset-card-tools > .chip::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 40px);
+    height: max(100%, 40px);
+    transform: translate(-50%, -50%);
+  }
+  .asset-card-tools > .more-menu:only-child {
+    margin-left: auto;
+  }
+}
+@media (max-width: 480px) {
+  /* The step heading stacks: name, then the version line, then the start-over button on its own row. */
+  .stage-main .section-head {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  .stage-main .section-head > * {
+    flex-basis: 100%;
+  }
+  .stage-main .section-head > :is(button, a) {
+    flex-basis: auto;
+  }
+  /* The project page title and its look line stack the same way. */
+  .project-layout .col-wide > .row-between {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s1);
+  }
+}
+@media (max-width: 420px) {
+  .jump-row,
+  .create-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .asset-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+  .project-layout {
+    padding: var(--s2);
+  }
+  .stage-main {
+    padding: var(--s2);
+  }
 }

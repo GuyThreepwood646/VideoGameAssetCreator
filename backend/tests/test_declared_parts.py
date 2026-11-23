@@ -317,8 +317,15 @@ def test_item_default_for_a_wheelbarrow_is_a_wheel_not_doors():
         {"name": "wheel", "kind": "spin"}]
 
 
+def test_item_default_names_a_wheel_for_wheeled_items_without_a_wheel_word():
+    for name in ("Handcart", "Bicycle", "Bike", "Shopping trolley"):
+        assert dp.item_defaults("vehicle", name, "", ["wheels"]) == [
+            {"name": "wheel", "kind": "spin"}], name
+
+
 def test_item_default_falls_back_to_the_category_and_is_empty_for_an_unnamed_object():
-    assert dp.item_defaults("vehicle", "Old van", "A van", ["wheels"]) == [{"name": "wheels", "kind": "spin"}]
+    assert dp.item_defaults("vehicle", "Old van", "A van", ["wheels"]) == [
+        {"name": "wheels", "kind": "spin", "from": "category"}]
     assert dp.item_defaults("prop_articulated", "Mystery box", "A plain box", []) == []
 
 
