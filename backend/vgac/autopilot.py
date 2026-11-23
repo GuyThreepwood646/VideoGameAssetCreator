@@ -81,6 +81,10 @@ FACING_STOP_REASON = (
     "drawn views says one thing and where the feet point says another. The character may be facing the wrong way. "
     "Look at the clean-up step (step 4) and its facing check, and turn the character with its fix if it is wrong; or press "
     "Resume to carry on as it is.")
+FACING_OFF_STOP_REASON = (
+    "The model may face the wrong way: the outline of the drawn views puts its front about {value} degrees from where it "
+    "was left, and the app was not sure enough to turn it. Look at the clean-up step (step 4) and its facing check, and "
+    "turn the model with its fix if it is side-on or backwards; or press Resume to carry on as it is.")
 FACING_UNSURE_STOP_REASON = (
     "The app could not tell the character's front from its back: its outline looks almost the same both ways round, and "
     "nothing else settled it. It kept the side the 3D step built as the front. Look at the clean-up step (step 4) and its "
@@ -88,6 +92,8 @@ FACING_UNSURE_STOP_REASON = (
 
 
 def _facing_stop_reason(c: dict[str, Any]) -> str:
+    if (c.get("vars") or {}).get("off"):
+        return FACING_OFF_STOP_REASON.format(value=f"{c.get('value'):g}" if isinstance(c.get("value"), (int, float)) else c.get("value"))
     if (c.get("vars") or {}).get("unsure"):
         return FACING_UNSURE_STOP_REASON
     value, limit = c.get("value"), c.get("limit")

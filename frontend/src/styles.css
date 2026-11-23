@@ -5089,3 +5089,13 @@ textarea::placeholder {
 .face-sheet-band {
   min-height: 18px;
 }
+
+/* A repeating surface shows its tile preview where a model would be (F13). */
+.finish-tile {
+  display: block;
+  max-width: 360px;
+  width: 100%;
+  height: auto;
+  margin: 8px 0;
+  border-radius: 4px;
+}

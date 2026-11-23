@@ -49,6 +49,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common  # noqa: E402  (shared helpers next to this script)
+import fillmend  # noqa: E402  (pure maths next to this script)
 import gridfit  # noqa: E402  (pure maths next to this script)
 import headweight  # noqa: E402
 import outline  # noqa: E402  (pure maths next to this script)
@@ -179,6 +180,73 @@ def measure_outline(pre_obj, fin_obj):
     return block
 
 
+fill_report = {"fill_faces": 0, "fill_mended": 0, "fill_unmended": 0}
+
+
+def fill_holes_mended(sides):
+    """bpy.ops.mesh.fill_holes in edit mode, then the new faces' texture corners mended (blender/fillmend.py): a new
+    face with an edge stretched across the texture is laid flat at its own shape and placed beside a face that is
+    already right, across the edge they share. The faces themselves are not changed. The new faces are told by their
+    corner sets (the fill reuses freed face slots and copies face data from the neighbours, so neither the index nor a
+    face layer tells them apart)."""
+    me = mesh.data
+    bm = bmesh.from_edit_mesh(me)
+    bm.verts.index_update()
+    old = {frozenset(v.index for v in f.verts) for f in bm.faces}
+    bpy.ops.mesh.fill_holes(sides=sides)
+    bm = bmesh.from_edit_mesh(me)
+    bm.verts.index_update()
+    uv = bm.loops.layers.uv.active
+    new = [f for f in bm.faces if frozenset(v.index for v in f.verts) not in old]
+    fill_report["fill_faces"] += len(new)
+    if not new or uv is None:
+        return
+
+    def corners(f):
+        return (np.array([lp.vert.co[:] for lp in f.loops]), np.array([lp[uv].uv[:] for lp in f.loops]))
+
+    is_new = set(new)
+    median = fillmend.median_ratio([fillmend.edge_ratios(*corners(f)) for f in bm.faces if f not in is_new])
+    todo = {f for f in new if fillmend.is_wrong(*corners(f), median)}
+    cover = fillmend.Coverage()
+    for f in bm.faces:
+        if f not in todo:
+            cover.add(corners(f)[1])
+    mended = 0
+    progress = True
+    while todo and progress:  # outward from the faces that are right, one ring at a time
+        progress = False
+        for f in sorted(todo, key=lambda g: g.index):
+            pts = corners(f)[0]
+            loops = list(f.loops)
+            best = None  # (texels already used under it, texture corners): the placement over the fewest
+            for i, lp in enumerate(loops):
+                a, b = lp.vert, loops[(i + 1) % len(loops)].vert  # lp.edge runs from this corner to the next
+                for anchor in (g for g in lp.edge.link_faces if g is not f and g not in todo):
+                    ua = next((x[uv].uv[:] for x in anchor.loops if x.vert is a), None)
+                    ub = next((x[uv].uv[:] for x in anchor.loops if x.vert is b), None)
+                    rest = [x[uv].uv[:] for x in anchor.loops if x.vert is not a and x.vert is not b]
+                    if ua is None or ub is None or not rest:
+                        continue
+                    got = fillmend.place_polygon(pts, i, (i + 1) % len(loops), ua, ub, np.mean(rest, axis=0))
+                    if got is None or fillmend.is_wrong(pts, got, median):
+                        continue
+                    n_over = cover.over(got)
+                    if best is None or n_over < best[0]:
+                        best = (n_over, got)
+            if best is None:
+                continue
+            for x, t in zip(loops, best[1]):
+                x[uv].uv = (float(t[0]), float(t[1]))
+            cover.add(best[1])
+            todo.discard(f)
+            mended += 1
+            progress = True
+    fill_report["fill_mended"] += mended
+    fill_report["fill_unmended"] += len(todo)
+    bmesh.update_edit_mesh(me)
+
+
 def drop_object(obj):
     """Remove a helper object and its mesh data, so the export (which takes the whole selection) never sees it."""
     me = obj.data
@@ -243,7 +311,7 @@ if symmetric:
     bpy.ops.mesh.select_all(action="SELECT")
     bpy.ops.mesh.remove_doubles(threshold=0.0005)
     bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.mesh.fill_holes(sides=8)
+    fill_holes_mended(8)
     bpy.ops.mesh.select_all(action="SELECT")
     bpy.ops.mesh.normals_make_consistent(inside=False)
     bpy.ops.object.mode_set(mode="OBJECT")
@@ -313,7 +381,7 @@ bpy.ops.mesh.select_mode(type="VERT")
 bpy.ops.mesh.select_non_manifold()
 bpy.ops.mesh.remove_doubles(threshold=0.002, use_unselected=False)
 bpy.ops.mesh.select_all(action="SELECT")
-bpy.ops.mesh.fill_holes(sides=12)
+fill_holes_mended(12)
 bpy.ops.mesh.delete_loose()
 bpy.ops.mesh.select_all(action="SELECT")
 bpy.ops.mesh.normals_make_consistent(inside=False)
@@ -434,6 +502,7 @@ report = {
     "texture_size": tex_size,
     **bake_report,
     **shape_report,
+    **fill_report,
 }
 if grid_report is not None:
     report["grid"] = grid_report

@@ -20,6 +20,8 @@ type Props = {
   asset: Asset
   stage: StageId
   jobs: Job[]
+  // The version whose keep is being saved, if any (F23): shown as saving until the save returns.
+  keepingId?: string | null
   stages: StageInfo[] | null
   estimates: Record<string, number> | null
   active: Version | undefined
@@ -68,7 +70,7 @@ export function finishedBarShown(asset: Asset, stage: StageId, autopilot: Autopi
 }
 
 // "Step 3 of 6: Build the 3D model. You kept version 1, and it passed every check." with the way to the finished asset.
-function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: StageId; info: StageInfo | null; selected: Version | undefined }) {
+function FinishedBar({ asset, stage, info, selected, saving = false }: { asset: Asset; stage: StageId; info: StageInfo | null; selected: Version | undefined; saving?: boolean }) {
   const stepNo = STAGES.indexOf(stage) + 1
   const name = stagePlain(stage, info)
   const versions = versionsOf(asset, stage)
@@ -77,7 +79,7 @@ function FinishedBar({ asset, stage, info, selected }: { asset: Asset; stage: St
   // The banner follows the same tier as the version card: likely, worth a look or advice.
   const tier = good === false ? failingTier(selected?.metrics ?? {}) : null
   const bad = tier === 'likely' ? '. A check on this step is likely to show in the game' : tier === 'look' ? '. A check on this step is worth a look' : tier === 'advice' ? '. This step has advice only' : '. A check on this step needs a look'
-  const kept = `You kept version ${idx}${good === true ? '. This step passed its checks' : good === false ? bad : ''}.`
+  const kept = saving ? 'Saving your choice of version. The one kept until the save finishes is still the one that counts.' : `You kept version ${idx}${good === true ? '. This step passed its checks' : good === false ? bad : ''}.`
   // The same list the finish card shows, so the count here and there agree.
   const items = attentionItems(asset)
   const warns = items.length
@@ -147,7 +149,7 @@ export function guideState(asset: Asset, stage: StageId, jobs: Job[], selected: 
   return 'empty'
 }
 
-export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onStartAgain, onStop, onResume, onDismissStopped, onFix, onOpenTool, onChanged, firstParams, count = 2 }: Props) {
+export function GuidePanel({ asset, stage, jobs, stages, estimates, active, selected, keepingId, busy, baseName, autopilot, apAvailable, autopilotActions, onMakeVariant, onRun, onRunNext, onRetry, onStartAgain, onStop, onResume, onDismissStopped, onFix, onOpenTool, onChanged, firstParams, count = 2 }: Props) {
   const info = (s: StageId) => stages?.find((x) => x.id === s) ?? null
   const versions = versionsOf(asset, stage)
   const prev = previousStage(stage, asset.category)
@@ -164,7 +166,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
     return <FinishCard asset={asset} byAutopilot={autopilot?.status === 'done'} onMakeVariant={onMakeVariant} onFix={onFix} busy={busy} onChanged={onChanged} />
   }
   if (finishedBarShown(asset, stage, autopilot, jobs, selected)) {
-    return <FinishedBar asset={asset} stage={stage} info={info(stage)} selected={selected} />
+    return <FinishedBar asset={asset} stage={stage} info={info(stage)} selected={selected} saving={!!keepingId && keepingId !== selected?.id} />
   }
 
   // "Make it" shows whenever nothing is running and the asset is not finished.
@@ -331,7 +333,8 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
       }
       const idx = selected ? versions.indexOf(selected) + 1 : 0
       const good = selected ? looksGood(selected.metrics) : null
-      happened = `You kept version ${idx}${good === true ? ' and it passed every check' : good === false ? ({ likely: ', though a check is likely to show in the game', look: ', though a check is worth a look', advice: ', with some advice' }[failingTier(selected?.metrics ?? {}) ?? 'look']) : ''}.`
+      const savingNo = keepingId && keepingId !== selected?.id ? versions.findIndex((v) => v.id === keepingId) + 1 : 0
+      happened = savingNo ? `Saving version ${savingNo} as the one you keep. Version ${idx} is kept until the save finishes.` : `You kept version ${idx}${good === true ? ' and it passed every check' : good === false ? ({ likely: ', though a check is likely to show in the game', look: ', though a check is worth a look', advice: ', with some advice' }[failingTier(selected?.metrics ?? {}) ?? 'look']) : ''}.`
       const nextVersions = versionsOf(asset, next!)
       const nextInfo = info(next!)
       if (nextVersions.length) {

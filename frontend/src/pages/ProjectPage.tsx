@@ -2,7 +2,7 @@ import { openFolderAndSay } from '../notify'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { assetAttention } from '../pipeline/finish'
-import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type Category, type EditChoice, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
+import { api, ApiError, itemsApi, libraryUrl, selectedVersion, stageState, stepsFor, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type Category, type EditChoice, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
 import { ImageDrop, nameFromFile, type PickedImage } from '../components/ImageDrop'
 import { FeaturePhotos } from '../components/FeaturePhotos'
 import { featureCrop, foundPeople, usedFeatures, type FeatureSlot, type StartFrom } from '../featurePhotos'
@@ -11,7 +11,7 @@ import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
 import { useEvents } from '../events'
 import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
-import { axisWord, CATEGORY_HELP, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
+import { axisWord, CATEGORY_HELP, exampleName, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, stagePlainFor, suggestFallback, totalEstimate } from '../help'
 import { hairNotes } from '../hairNotes'
 import { editLoras } from '../editLoras'
 import { EditLoras } from '../pipeline/EditLoras'
@@ -25,6 +25,8 @@ import { useConfirm } from '../components/Confirm'
 
 // Shown as soon as Repeating surface is chosen, so nobody picks it for a rock or a bush and is surprised by a flat swatch.
 const MATERIAL_NOTE = `${CATEGORY_HELP.material.meaning} ${CATEGORY_HELP.material.why}`
+// Categories whose objects have moving parts named from the item (declared_parts.item_defaults); their note says so.
+const MOVING_PARTS_CATEGORIES = ['vehicle', 'prop_articulated']
 
 export default function ProjectPage() {
   const { pid = '' } = useParams()
@@ -134,7 +136,7 @@ export type AssetFilter = 'all' | 'progress' | 'needs' | 'ready'
 const FILTER_LABEL: Record<AssetFilter, string> = { all: 'All', progress: 'In progress', needs: 'Needs a look', ready: 'Ready' }
 
 function assetStatus(a: AssetSummary): Exclude<AssetFilter, 'all'> {
-  const sts = STAGES.map((x) => stageState(a, x))
+  const sts = stepsFor(a.category).map((x) => stageState(a, x))
   if (sts.includes('error')) return 'needs'
   if (sts.every((x) => x === 'done')) {
     // Finished, but a check the app counts against it (likely to show, or worth a look) means it needs a look.
@@ -170,7 +172,8 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
   const thumb = libraryUrl(concept?.files.cutout ?? concept?.files.image)
   // The checkerboard shows through a picture that has not arrived yet; a placeholder shimmer stands in until it does.
   const [thumbLoaded, setThumbLoaded] = useState(false)
-  const doneSteps = STAGES.filter((x) => stageState(asset, x) === 'done').length
+  const steps = stepsFor(asset.category)
+  const doneSteps = steps.filter((x) => stageState(asset, x) === 'done').length
   return (
     <div className="asset-card-wrap">
       <Link to={`/assets/${asset.id}`} className="asset-card">
@@ -178,20 +181,20 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
         <div className="asset-name">{asset.name}</div>
         <div className="muted small">{categoryName}</div>
         {(() => {
-          const sts = STAGES.map((x) => stageState(asset, x))
+          const sts = steps.map((x) => stageState(asset, x))
           const failedAt = sts.indexOf('error')
           const att = sts.every((x) => x === 'done') ? assetAttention(asset) : { likely: 0, look: 0 }
-          const label = failedAt >= 0 ? `Needs a look: ${stagePlain(STAGES[failedAt])}`
+          const label = failedAt >= 0 ? `Needs a look: ${stagePlainFor(steps[failedAt], asset.category)}`
             : sts.some((x) => x === 'running') ? 'Working'
             : att.likely ? `Not ready to use yet: ${att.likely} likely to show in the game`
             : att.look ? `Needs a look: ${att.look} worth a look`
             : sts.every((x) => x === 'done') ? 'Ready' : sts.every((x) => x === 'none') ? 'Not started' : 'In progress'
           return <div className={'small ' + (failedAt >= 0 || att.likely || att.look ? 'bad-text' : 'muted')}>{label}</div>
         })()}
-        <div className="stage-dots" role="img" aria-label={`${doneSteps} of ${STAGES.length} steps done`} title={`${doneSteps} of ${STAGES.length} steps done`}>
-          {STAGES.map((s) => {
+        <div className="stage-dots" role="img" aria-label={`${doneSteps} of ${steps.length} steps done`} title={`${doneSteps} of ${steps.length} steps done`}>
+          {steps.map((s) => {
             const st = stageState(asset, s)
-            return <span key={s} className={'sdot sdot-' + st} title={`${stagePlain(s)}: ${st === 'none' ? 'not started' : st === 'done' ? 'done' : st === 'running' ? 'working' : 'failed'}`} />
+            return <span key={s} className={'sdot sdot-' + st} title={`${stagePlainFor(s, asset.category)}: ${st === 'none' ? 'not started' : st === 'done' ? 'done' : st === 'running' ? 'working' : 'failed'}`} />
           })}
         </div>
       </Link>
@@ -210,6 +213,7 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
           <label className="small tile-toggle more-check" title="Show this asset's picture on the project's tile on the Projects page">
             <input
               type="checkbox"
+              aria-label="Show on the project tile"
               checked={asset.show_on_project !== false}
               onChange={(e) => void api.updateAsset(asset.id, { show_on_project: e.target.checked }).then(onChanged)}
             />{' '}
@@ -303,6 +307,8 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
   const [platform, setPlatform] = useState<PlatformId>(project.platform_target)
   const [prompt, setPrompt] = useState('')
   const [parts, setParts] = useState<string[]>([])
+  // Sent only when the person typed parts: otherwise the backend names the moving part from the item (F15).
+  const [partsTyped, setPartsTyped] = useState(false)
   const [model, setModel] = useState<string>('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -342,7 +348,8 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
     if (!category && ref.categories[0] && assets) {
       const first = ref.categories.find((c) => c.id === mostUsedCategory(assets)) ?? ref.categories.find((c) => c.id === 'humanoid') ?? ref.categories[0]
       setCategory(first.id)
-      setParts(first.parts_default ?? [])
+      setParts([])
+      setPartsTyped(false)
     }
   }, [ref, category, assets])
 
@@ -385,8 +392,8 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
 
   const changeCategory = (id: string) => {
     setCategory(id)
-    const c = ref?.categories.find((x) => x.id === id)
-    if (c) setParts(c.parts_default ?? [])
+    setParts([])
+    setPartsTyped(false)
   }
 
   const cat = ref?.categories.find((c) => c.id === category)
@@ -429,7 +436,7 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
         ...(differs ? { different_look: true } : {}),
         platform_target: platform,
         prompt: prompt.trim(),
-        parts: parts.map((name) => ({ name })),
+        ...(partsTyped ? { parts: parts.map((name) => ({ name })) } : {}),
         ...(chosenModel && !fromPicture && !fromModel ? { concept_model: chosenModel } : {}),
         ...(fromPicture && picture ? { image: picture.dataUrl } : {}),
         // A box round the main person cuts the photo first; the people found are recorded with it (no box = the whole photo).
@@ -543,7 +550,7 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
                 ))}
               </div>
               {cat && g.items.some((c) => c.id === cat.id) && (
-                <div className="field-hint category-note">{cat.label}: {cat.id === 'material' ? MATERIAL_NOTE : cat.rig_engine === 'none' ? 'no skeleton; it will not animate.' : 'it will get a skeleton and can be animated.'}</div>
+                <div className="field-hint category-note">{cat.label}: {cat.id === 'material' ? MATERIAL_NOTE : MOVING_PARTS_CATEGORIES.includes(cat.id) ? 'no skeleton; its moving parts (a lid, a door, a wheel) turn or slide once they are marked in step 5.' : cat.rig_engine === 'none' ? 'no skeleton; it will not animate.' : 'it will get a skeleton and can be animated.'}</div>
               )}
             </div>
           ))}
@@ -555,7 +562,7 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
         </Field>
       ) : (
         <Field label="2. Describe it" term="term.prompt" hint="One sentence is enough. Enter adds a line; Ctrl+Enter creates the asset.">
-          <SubmitTextarea ctrlEnter rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. a sturdy young knight in worn plate armour, short dark hair" aria-label="Description" autoFocus />
+          <SubmitTextarea ctrlEnter rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={`e.g. ${examples[0].charAt(0).toLowerCase()}${examples[0].slice(1)}`} aria-label="Description" autoFocus />
           <div className="muted small">Template: {PROMPT_TEMPLATE}</div>
         </Field>
       )}
@@ -570,7 +577,7 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
         />
       )}
       <Field label="3. Name (optional)" hint={`We will call it "${fallbackName}" if you leave this empty.`}>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? 'Knight' : fallbackName} />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? exampleName(category) : fallbackName} />
       </Field>
       {described && (
         <div className="muted small described-size">
@@ -732,8 +739,8 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
               {chosenModel && <Info term={'model.' + chosenModel} />}
             </span>
           </Field>
-          <Field label="Parts" term="term.parts" hint="Pieces that must move or swap on their own. Enter adds one.">
-            <ChipInput value={parts} onChange={setParts} placeholder="e.g. weapon" />
+          <Field label="Parts" term="term.parts" hint={cat && MOVING_PARTS_CATEGORIES.includes(cat.id) ? 'Pieces that move. Left empty, the moving part is named from the item: a gate gets a gate leaf, a chest a lid. Enter adds one.' : 'Pieces that must move or swap on their own. Enter adds one.'}>
+            <ChipInput value={parts} onChange={(v) => { setParts(v); setPartsTyped(true) }} placeholder="e.g. weapon" />
           </Field>
         </div>
       </Disclosure>

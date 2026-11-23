@@ -648,8 +648,9 @@ def create_asset(pid: str, body: AssetIn, db: Session = Depends(get_session)) ->
     a.body_is_metal = body.body_is_metal
     from . import declared_parts
 
-    a.parts = _declared(body.parts, body.category) if body.parts is not None else [
-        {"name": str(n), "kind": declared_parts.kind_from_name(str(n), body.category)} for n in (cat.get("parts_default") or [])]
+    # The parts the person typed, else the moving part the item's own name names (declared_parts.item_defaults).
+    a.parts = _declared(body.parts, body.category) if body.parts is not None else declared_parts.item_defaults(
+        body.category, body.name, body.prompt, [str(n) for n in (cat.get("parts_default") or [])])
     db.add(a)
     db.commit()
     db.refresh(a)

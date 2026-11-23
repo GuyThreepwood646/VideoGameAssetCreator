@@ -3,12 +3,12 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { assetAttention } from '../pipeline/finish'
-import { api, libraryUrl, PLATFORMS, selectedVersion, STAGES, stageState, STYLE_MODELS, versionsOf, type AssetSummary, type LookPreset, type PlatformId, type Project, type StyleLock, type StyleModel } from '../api'
+import { api, libraryUrl, PLATFORMS, selectedVersion, STAGES, stageState, stepsFor, STYLE_MODELS, versionsOf, type AssetSummary, type LookPreset, type PlatformId, type Project, type StyleLock, type StyleModel } from '../api'
 import { useConfirm } from '../components/Confirm'
 import { Info } from '../components/Info'
 import { PresetRow } from '../components/PresetRow'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, timeAgo, useAsync } from '../components/ui'
-import { modelLabel, platformConsequence, platformPlain, stagePlain } from '../help'
+import { modelLabel, platformConsequence, platformPlain, stagePlainFor } from '../help'
 import { baseLookId, lockFromPreset, lockMatchesPreset, presetById, usePresets } from '../presets'
 import { MatchPicture } from './MatchPicture'
 
@@ -232,18 +232,19 @@ function JumpBackIn({ projects }: { projects: Project[] }) {
         {latest.map((a) => {
           const concept = selectedVersion(a, 'concept')
           const thumb = libraryUrl(concept?.files.cutout ?? concept?.files.image)
-          const states = STAGES.map((s) => stageState(a, s))
+          const steps = stepsFor(a.category)
+          const states = steps.map((s) => stageState(a, s))
           const working = states.indexOf('running')
           const failed = states.indexOf('error')
           const next = states.indexOf('none')
           const status =
             working >= 0
-              ? { cls: 'jump-working', text: `Working: ${stagePlain(STAGES[working])}` }
+              ? { cls: 'jump-working', text: `Working: ${stagePlainFor(steps[working], a.category)}` }
               : failed >= 0
-                ? { cls: 'jump-error', text: `Needs a look: ${stagePlain(STAGES[failed])}` }
+                ? { cls: 'jump-error', text: `Needs a look: ${stagePlainFor(steps[failed], a.category)}` }
                 : next < 0
                   ? doneStatus(a)
-                  : { cls: '', text: `Next: ${stagePlain(STAGES[next])}` }
+                  : { cls: '', text: `Next: ${stagePlainFor(steps[next], a.category)}` }
           const done = states.filter((s) => s === 'done').length
           return (
             <li key={a.id}>
@@ -252,8 +253,8 @@ function JumpBackIn({ projects }: { projects: Project[] }) {
                 <span className="jump-text">
                   <span className="jump-name">{a.name}</span>
                   <span className={'small ' + (status.cls || 'muted')}>{status.text}</span>
-                  <span className="jump-bar" role="img" aria-label={`${done} of ${STAGES.length} steps done`}>
-                    <span style={{ width: `${(done / STAGES.length) * 100}%` }} />
+                  <span className="jump-bar" role="img" aria-label={`${done} of ${steps.length} steps done`}>
+                    <span style={{ width: `${(done / steps.length) * 100}%` }} />
                   </span>
                 </span>
               </Link>

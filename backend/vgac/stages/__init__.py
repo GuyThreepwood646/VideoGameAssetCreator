@@ -148,7 +148,7 @@ async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
                     await judge(sc)
         else:
             raise ValueError(f"unknown op {op!r}")
-        if op in ("run", "refine", "adjust"):
+        if op in ("run", "refine", "adjust", "upload", "upscale"):   # the picture steps too (F20)
             steptime.finish(sc)   # WP-91: metrics.timing, parts and total
         sc.save()
 
