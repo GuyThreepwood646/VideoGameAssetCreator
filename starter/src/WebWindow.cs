@@ -177,7 +177,7 @@ namespace Vgac.Starter
             Text = "Video Game Asset Creator";
             Icon = AppIcon.Get(32);
             ClientSize = new System.Drawing.Size(1440, 900);
-            MinimumSize = new System.Drawing.Size(1200, 800);
+            MinimumSize = new System.Drawing.Size(360, 480);
             StartPosition = FormStartPosition.CenterScreen;
             view.Dock = DockStyle.Fill;
             Controls.Add(view);

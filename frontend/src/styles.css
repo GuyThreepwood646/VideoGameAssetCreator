@@ -4631,7 +4631,7 @@ button.preset-card:hover:not(:disabled) {
   .view-menu {
     position: static;
   }
-  .status-pop {
+  .topbar .status-pop {
     left: var(--s2);
     right: var(--s2);
     min-width: 0;
@@ -5098,4 +5098,110 @@ textarea::placeholder {
   height: auto;
   margin: 8px 0;
   border-radius: 4px;
+}
+
+/* Phone-width windows (a phone reaching the PC by remote desktop, about 360 to 450 px wide in portrait).
+   Desktop layout is unchanged: every rule here sits under a max-width query. The page shell never needs more
+   than 360 px; anything wider (a strip of views, a table) scrolls inside its own box. */
+@media (max-width: 900px) {
+  .jump-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  :root {
+    --control-h: 40px;
+  }
+  /* Long button labels wrap instead of pushing the row wider; controls get a finger-sized height. */
+  button,
+  .btn {
+    white-space: normal;
+    min-height: 40px;
+  }
+  button.link,
+  .info-btn {
+    min-height: 0;
+  }
+  /* The step guide puts its action buttons under the text instead of beside it. */
+  .guide {
+    flex-direction: column;
+    align-items: stretch;
+    padding: var(--s3);
+  }
+  .guide-action {
+    flex: initial;
+    min-width: 0;
+  }
+  .guide-action-col {
+    align-items: flex-start;
+  }
+  /* The 3D viewer's single column is never wider than the viewer, so its toolbar wraps. */
+  .viewer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .concept-body,
+  .export-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .view-cell-wide {
+    min-width: min(300px, 100%);
+  }
+  .move-search,
+  .feedback-note input {
+    min-width: 0;
+  }
+  /* Pop-ups and dialogs never run past the window's edge. */
+  .viewer-toolbar .viewer-light-pop,
+  .status-pop,
+  .confirm-card,
+  .overlay-card.move-picker {
+    max-width: calc(100vw - 2 * var(--s3));
+  }
+  .viewer-toolbar .viewer-light-pop {
+    min-width: 0;
+  }
+  /* An info tip has no room beside its button, so it opens as a full-width sheet at the bottom of the window. */
+  .info-tip,
+  .info-tip-right {
+    position: fixed;
+    top: auto;
+    bottom: var(--s3);
+    left: var(--s3);
+    right: var(--s3);
+    width: auto;
+    max-height: 50vh;
+    overflow-y: auto;
+    overflow-wrap: anywhere;
+  }
+  /* The "..." menus on tiles and versions open the same way, so a menu on the left of the window is never cut off. */
+  .more-pop,
+  .more-pop.card-pop {
+    position: fixed;
+    top: auto;
+    bottom: var(--s3);
+    left: var(--s3);
+    right: var(--s3);
+    min-width: 0;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  img,
+  video {
+    max-width: 100%;
+  }
+}
+@media (max-width: 420px) {
+  .jump-row,
+  .create-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .asset-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+  .project-layout {
+    padding: var(--s2);
+  }
+  .stage-main {
+    padding: var(--s2);
+  }
 }

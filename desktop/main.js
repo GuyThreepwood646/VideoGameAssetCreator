@@ -99,8 +99,8 @@ function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: w.width || 1440,
     height: w.height || 900,
-    minWidth: w.minWidth || 1200,
-    minHeight: w.minHeight || 800,
+    minWidth: w.minWidth || 360,
+    minHeight: w.minHeight || 480,
     title: 'Video Game Asset Creator',
     backgroundColor: '#1b1d21',
     icon: appIcon(),
