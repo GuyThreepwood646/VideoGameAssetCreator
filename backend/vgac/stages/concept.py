@@ -137,8 +137,8 @@ def prompt_and_view(sc: StageContext, params: dict[str, Any]) -> tuple[str, str 
         category_wording = True
     if (held or {}).get("sentence"):
         parts.append(held["sentence"])
-    if sc.asset.parts:  # the names of the declared parts (declared_parts.py); the picture is asked to draw them apart
-        parts.append("The following parts are clearly separate pieces: " + ", ".join(p["name"] for p in sc.asset.parts) + ".")
+    if any(p.get("from") != "category" for p in sc.asset.parts):  # the declared parts (declared_parts.py); a category default is not drawn
+        parts.append("The following parts are clearly separate pieces: " + ", ".join(p["name"] for p in sc.asset.parts if p.get("from") != "category") + ".")
     # Last: placed after the style block it changed the character more (runtime/tmp/celface).
     parts.append(face_sentence(sc, params, base))
     return " ".join(p for p in parts if p), picture_view.asked(sc.category, category_wording)
