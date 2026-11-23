@@ -884,19 +884,33 @@ def ground_target(root, end, ground_z, reach, outward=None, min_out=0.0):
 
 # ---- foot paths for procedural walking and running -----------------------------------------------------------
 
-def foot_path(u: float, duty: float, stride: float, lift: float, run: bool = False) -> tuple:
+STRIKE_DEG = 12.0  # toes-up pitch at heel strike (default roll)
+QUICK_STRIKE_DEG = 6.0  # toes-up pitch at heel strike of the quick roll
+QUICK_STRIKE_SHARE = 0.15  # share of the stance the quick roll takes to bring the foot flat (default roll: 0.2)
+
+
+def foot_path(u: float, duty: float, stride: float, lift: float, run: bool = False, quick_strike: bool = False) -> tuple:
     """(forward, up, pitch_deg) of one foot relative to its rest place at cycle fraction u.
 
     While planted (the first `duty` of the cycle) the foot moves backward at constant speed from +stride/2 to
     -stride/2 at ground height: on a body moving forward at stride / (duty * cycle seconds) it does not slide. In
     the air it swings forward again, leaving and landing at the stance's speed (no world speed at either end); a
-    run lifts the heel high early in the swing (toward the seat), a walk keeps it low. pitch_deg: toes up positive (heel strike), toes down negative (push off). Periodic and continuous."""
+    run lifts the heel high early in the swing (toward the seat), a walk keeps it low. pitch_deg: toes up positive (heel strike), toes down negative (push off). Periodic and continuous.
+    quick_strike: the heel lands with the toes QUICK_STRIKE_DEG up and the foot rolls flat over QUICK_STRIKE_SHARE of
+    the stance on an ease-out curve, so the toes drop mostly in the first frame after the heel lands. With the default
+    (STRIKE_DEG, a smoothstep over 0.2 of the stance) the toes of a long foot stay several cm up and nearly still for
+    two to three frames after heel strike."""
     u = wrap(u)
     duty = min(0.95, max(0.05, duty))
     push = 22.0 if run else 18.0
+    strike = QUICK_STRIKE_DEG if quick_strike else STRIKE_DEG
     if u < duty:
         s = u / duty
-        pitch = 12.0 * (1.0 - smoothstep(s / 0.2)) - push * smoothstep((s - 0.7) / 0.3)
+        if quick_strike:
+            roll = (1.0 - min(1.0, s / QUICK_STRIKE_SHARE)) ** 2
+        else:
+            roll = 1.0 - smoothstep(s / 0.2)
+        pitch = strike * roll - push * smoothstep((s - 0.7) / 0.3)
         return stride * (0.5 - s), 0.0, pitch
     s = (u - duty) / (1.0 - duty)
     # The swing is a Hermite curve whose end slopes match the stance: the foot leaves the ground and lands on it with no
@@ -909,7 +923,7 @@ def foot_path(u: float, duty: float, stride: float, lift: float, run: bool = Fal
         fwd -= stride * 0.3 * math.sin(math.pi * s) ** 2 * (1.0 - s) ** 2  # the heel rises behind before swinging through
     else:
         up = lift * math.sin(math.pi * s) ** 1.2
-    pitch = -push * (1.0 - smoothstep(s / 0.4)) + 12.0 * smoothstep((s - 0.6) / 0.4)
+    pitch = -push * (1.0 - smoothstep(s / 0.4)) + strike * smoothstep((s - 0.6) / 0.4)
     return fwd, up, pitch
 
 

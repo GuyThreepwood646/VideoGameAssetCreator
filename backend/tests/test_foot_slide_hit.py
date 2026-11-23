@@ -135,3 +135,31 @@ def test_rounded_heel_touches_the_floor_at_every_pitch():
     a_est = gait.rolled_ankle(ANKLE, BALL, FLOOR, FWD, LAT, 0.25, 12.0)
     low_est = min(gait.v_add(a_est, gait.q_rotate(q, gait.v_sub(p, ANKLE)))[2] for p in heel)
     assert abs(low_est - FLOOR) > 0.01
+
+
+# ---- heel strike roll ------------------------------------------------------------------------------------------------
+
+def test_quick_strike_lands_lower_and_mostly_rolls_flat_in_one_frame():
+    duty, stride, lift = 0.6, 0.6, 0.1
+    at_contact = gait.foot_path(0.0, duty, stride, lift, quick_strike=True)[2]
+    soon = gait.foot_path(1.0 / 24.0, duty, stride, lift, quick_strike=True)[2]  # one frame of a 24-frame cycle
+    assert at_contact == pytest.approx(gait.QUICK_STRIKE_DEG)
+    assert 0.0 < at_contact <= 8.0
+    assert soon < 0.35 * at_contact
+    # continuous across heel strike: the swing ends at the same toes-up pitch the stance starts with
+    assert gait.foot_path(1.0 - 1e-9, duty, stride, lift, quick_strike=True)[2] == pytest.approx(at_contact, abs=1e-3)
+
+
+def test_quick_strike_keeps_the_landing_at_the_stance_speed():
+    duty, stride, lift, h = 0.6, 0.6, 0.1, 1e-5
+    f = lambda u: gait.foot_path(u, duty, stride, lift, quick_strike=True)[0]
+    stance_slope = (f(0.3 * duty + h) - f(0.3 * duty)) / h
+    assert (f(1.0 - 1e-9) - f(1.0 - h)) / h == pytest.approx(stance_slope, rel=0.02)
+
+
+@pytest.mark.parametrize("run,duty", [(False, 0.6), (True, 0.4)])
+def test_default_heel_strike_is_unchanged(run, duty):
+    # the run and non-biped feet keep the 12 degree strike rolled flat on a smoothstep over 0.2 of the stance
+    assert gait.foot_path(0.0, duty, 0.6, 0.1, run)[2] == pytest.approx(12.0)
+    assert gait.foot_path(0.1 * duty, duty, 0.6, 0.1, run)[2] == pytest.approx(12.0 * (1.0 - gait.smoothstep(0.5)))
+

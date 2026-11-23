@@ -1472,7 +1472,8 @@ def _walk_like(P, t, run):
         S_, lift = S_ * A, lift * A
         for i in ik_idx:
             uu = gait.wrap(t + ph[i])
-            fwd_, up_, pitch = gait.foot_path(uu, duty, S_, lift, run=run and biped)
+            # A biped walk lands with a smaller, quicker heel roll, so the toes do not hang in the air after heel strike.
+            fwd_, up_, pitch = gait.foot_path(uu, duty, S_, lift, run=run and biped, quick_strike=biped and not run)
             if not biped:
                 pitch *= 0.6
             toe_flat = 1.0 if uu < duty else 1.0 - gait.smoothstep((uu - duty) / (1.0 - duty) / 0.3)
