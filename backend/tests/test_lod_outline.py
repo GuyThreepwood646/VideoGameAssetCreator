@@ -39,6 +39,17 @@ def test_each_category_has_its_own_mark_and_foliage_levels_split_at_the_mark():
     assert got == {"lod_outline_kept_LOD1": True, "lod_outline_kept_LOD2": False}
 
 
+def test_environment_mark_flags_the_shredded_arch_and_not_the_clean_levels():
+    # Reference numbers: the stone arch LOD2 (0.8969, cornice shredded in review) is flagged at 0.90; the cottage LOD2
+    # (0.9389) and the arch LOD1 (0.9636) pass.
+    assert quality.LOD_OUTLINE_IOU_MIN["environment"] == 0.90
+    report = {"lod_outline": {"LOD1": _outline(0.9636), "LOD2": _outline(0.8969)}}
+    got = {c["id"]: c["passed"] for c in quality.lod_outline_checks(report, "environment")}
+    assert got == {"lod_outline_kept_LOD1": True, "lod_outline_kept_LOD2": False}
+    cottage = {"lod_outline": {"LOD2": _outline(0.9389)}}
+    assert quality.lod_outline_checks(cottage, "environment")[0]["passed"] is True
+
+
 def test_failed_level_sentence_names_the_level_and_the_limit():
     g, implied = guidance.check_guide("lod_outline_kept_LOD2")
     assert implied == {"level": "2"}

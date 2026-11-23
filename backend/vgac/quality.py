@@ -260,8 +260,10 @@ def lod_checks(report: dict[str, Any], expected_ratios: list[float] | None, tole
 # LOD outline (step 6, warning only): each level's outline against LOD0, from the seven views of blender/outline.py
 # (the same measure as step 4's outline_kept). The lowest IoU a category's level may show. Each mark is the lowest level
 # of the reference subjects that shows no visible loss, minus 0.01, rounded down to 0.01; the foliage LOD2 levels that
-# lost a branch mass are left out of that calibration. The region mark stays at the step 4 value.
-LOD_OUTLINE_IOU_MIN = {"humanoid": 0.97, "quadruped": 0.96, "prop_rigid": 0.97, "vehicle": 0.98, "environment": 0.88,
+# lost a branch mass are left out of that calibration. Environment is set to 0.90 rather than the rule's 0.88: at 0.90 it
+# flags the stone arch level whose cornice was shredded in review, and no level that review judged unchanged. The region mark
+# stays at the step 4 value.
+LOD_OUTLINE_IOU_MIN = {"humanoid": 0.97, "quadruped": 0.96, "prop_rigid": 0.97, "vehicle": 0.98, "environment": 0.90,
                        "foliage": 0.90}
 LOD_OUTLINE_REGION_MAX = 0.02
 
