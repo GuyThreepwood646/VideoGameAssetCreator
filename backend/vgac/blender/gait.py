@@ -889,8 +889,8 @@ def foot_path(u: float, duty: float, stride: float, lift: float, run: bool = Fal
 
     While planted (the first `duty` of the cycle) the foot moves backward at constant speed from +stride/2 to
     -stride/2 at ground height: on a body moving forward at stride / (duty * cycle seconds) it does not slide. In
-    the air it swings forward again; a run lifts the heel high early in the swing (toward the seat), a walk keeps
-    it low. pitch_deg: toes up positive (heel strike), toes down negative (push off). Periodic and continuous."""
+    the air it swings forward again, leaving and landing at the stance's speed (no world speed at either end); a
+    run lifts the heel high early in the swing (toward the seat), a walk keeps it low. pitch_deg: toes up positive (heel strike), toes down negative (push off). Periodic and continuous."""
     u = wrap(u)
     duty = min(0.95, max(0.05, duty))
     push = 22.0 if run else 18.0
@@ -899,14 +899,59 @@ def foot_path(u: float, duty: float, stride: float, lift: float, run: bool = Fal
         pitch = 12.0 * (1.0 - smoothstep(s / 0.2)) - push * smoothstep((s - 0.7) / 0.3)
         return stride * (0.5 - s), 0.0, pitch
     s = (u - duty) / (1.0 - duty)
-    fwd = -stride * 0.5 + stride * smoothstep(s)
+    # The swing is a Hermite curve whose end slopes match the stance: the foot leaves the ground and lands on it with no
+    # speed in the world (it draws back a little just before landing), so neither toe-off nor heel strike slides.
+    m = -stride * (1.0 - duty) / duty
+    s2, s3 = s * s, s * s * s
+    fwd = -stride * 0.5 * (2 * s3 - 3 * s2 + 1) + m * (s3 - 2 * s2 + s) + stride * 0.5 * (3 * s2 - 2 * s3) + m * (s3 - s2)
     if run:
         up = lift * math.sin(math.pi * s) ** 1.5 * (1.0 - 0.35 * s)
-        fwd -= stride * 0.3 * math.sin(math.pi * s) * (1.0 - s) ** 2  # the heel rises behind before swinging through
+        fwd -= stride * 0.3 * math.sin(math.pi * s) ** 2 * (1.0 - s) ** 2  # the heel rises behind before swinging through
     else:
         up = lift * math.sin(math.pi * s) ** 1.2
     pitch = -push * (1.0 - smoothstep(s / 0.4)) + 12.0 * smoothstep((s - 0.6) / 0.4)
     return fwd, up, pitch
+
+
+FOOT_NAMES = ("LeftFoot", "RightFoot")
+HEEL_BACK_SHARE = 0.35  # the heel sits this share of the ankle-to-ball length behind the ankle (heel_raise uses the same)
+
+
+def foot_bone_index(names) -> int | None:
+    """Index in a leg's bone list (hip first) of its named foot bone (mixamorig:LeftFoot, Foot.L, foot_r), or None."""
+    for k, n in enumerate(names):
+        if mixamo_short(n) in FOOT_NAMES or generic_to_mixamo(n) in FOOT_NAMES:
+            return k
+    return None
+
+
+def ik_pair_start(seg_lengths: list[float], foot_index: int | None = None) -> int:
+    """Start of the two-bone IK pair of a limb: the bone index i whose bones i and i + 1 the IK turns. seg_lengths[k] is
+    joint k to joint k + 1 (the last joint is the leaf end); the pair may not end on the leaf end. A leg with a named foot
+    ends its pair at the ankle (thigh and shin), even when a big cartoon foot makes shin plus foot the longer pair; any
+    other limb takes the longest pair (a dog's upper arm and forearm)."""
+    last = max(0, len(seg_lengths) - 3)
+    if foot_index is not None and 2 <= foot_index <= last + 2:
+        return foot_index - 2
+    best_i, best = 0, -1.0
+    for i in range(0, last + 1):
+        tot = seg_lengths[i] + seg_lengths[i + 1]
+        if tot > best + 1e-9:
+            best_i, best = i, tot
+    return best_i
+
+
+def rolled_ankle(ankle, ball, floor_z, forward, lateral, toe_len, pitch_deg):
+    """Where the ankle goes when a planted foot pitches by pitch_deg (toes up positive) about a point that stays put: the
+    ball joint for toes down (push off), the heel on the floor (HEEL_BACK_SHARE of toe_len behind the ankle) for toes up
+    (heel strike). The foot turns by the same rotation procanim gives it: pitch_deg about -lateral. Positions are the
+    rest ones (world); the caller adds the foot path's forward and up offsets."""
+    if pitch_deg < 0 and ball is not None:
+        piv = tuple(ball)
+    else:
+        piv = (ankle[0] - forward[0] * HEEL_BACK_SHARE * toe_len, ankle[1] - forward[1] * HEEL_BACK_SHARE * toe_len, floor_z)
+    q = q_axis_angle(lateral, math.radians(-pitch_deg))
+    return v_add(piv, q_rotate(q, v_sub(ankle, piv)))
 
 
 # ---- library clip choice -------------------------------------------------------------------------------------
@@ -1178,6 +1223,32 @@ def peak_speed_frame(ends: dict[str, list[tuple[float, float, float]]], fps: flo
             if v > best["speed"]:
                 best = {"frame": i, "time": round(i / fps, 4), "speed": round(v, 3), "end": name}
     return best
+
+
+HIT_REACH_SHARE = 0.002  # the hit is the first frame within this share of the height of the striking end's furthest reach
+
+
+def hit_frame(ends: dict[str, list[tuple[float, float, float]]], fps: float, forward, height: float) -> dict:
+    """The hit frame of a one-shot clip: contact, where the strike swing ends.
+
+    The striking end is the fastest one (peak_speed_frame). Peak speed falls in the middle of the swing, 2 to 3 frames
+    before the hand or foot stops at its furthest point (WP-19 rerun: planted contacts 11, 16 and 13 with peaks 8, 13
+    and 10; reviewer marks 2 frames after the peak on every real attack). So from the peak frame on, the hit is the first
+    frame where that end is within HIT_REACH_SHARE * height of its furthest point along `forward`.
+    -> {"frame", "time", "speed" (the peak speed, m/s), "end", "peak_frame", "method"}; frame -1 when no end has three frames.
+    """
+    peak = peak_speed_frame(ends, fps)
+    out = dict(peak, peak_frame=peak["frame"], method="furthest_reach")
+    if peak["frame"] < 0:
+        return out
+    track = ends[peak["end"]]
+    f = v_norm((forward[0], forward[1], forward[2]), (0.0, 1.0, 0.0))
+    reach = [v_dot(p, f) for p in track]
+    best = max(reach[peak["frame"]:])
+    tol = HIT_REACH_SHARE * max(height, 1e-6)
+    i = next(k for k in range(peak["frame"], len(track)) if reach[k] >= best - tol)
+    out.update(frame=i, time=round(i / fps, 4))
+    return out
 
 
 def speed_row_fields(res: dict) -> dict:
