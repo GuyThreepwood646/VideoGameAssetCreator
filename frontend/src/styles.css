@@ -5340,6 +5340,44 @@ textarea::placeholder {
     height: 20px;
   }
 }
+@media (max-width: 700px) {
+  /* The step strip fades at both ends, so a cut-off step reads as "scroll for more", and stops on whole steps. */
+  .rail-stages {
+    padding-inline: var(--s4);
+    scroll-padding-inline: var(--s4);
+    scroll-snap-type: x proximity;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
+  }
+  .rail-stage {
+    scroll-snap-align: center;
+  }
+  /* A tile's "+n variants" badge sits in the picture's top-left corner, the "..." menu in the top-right. */
+  .asset-card-tools {
+    left: var(--s2);
+    justify-content: space-between;
+    pointer-events: none;
+  }
+  .asset-card-tools > * {
+    pointer-events: auto;
+  }
+  .asset-card-tools > .chip {
+    min-height: 0;
+    position: relative;
+  }
+  .asset-card-tools > .chip::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 40px);
+    height: max(100%, 40px);
+    transform: translate(-50%, -50%);
+  }
+  .asset-card-tools > .more-menu:only-child {
+    margin-left: auto;
+  }
+}
 @media (max-width: 480px) {
   /* The step heading stacks: name, then the version line, then the start-over button on its own row. */
   .stage-main .section-head {
@@ -5351,6 +5389,12 @@ textarea::placeholder {
   }
   .stage-main .section-head > :is(button, a) {
     flex-basis: auto;
+  }
+  /* The project page title and its look line stack the same way. */
+  .project-layout .col-wide > .row-between {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s1);
   }
 }
 @media (max-width: 420px) {
