@@ -94,6 +94,8 @@ NOTES: dict[str, tuple[str, str]] = {
                          "Use your own 3D model, build the 3D model again, or edit the parts by hand."),
     "moving_parts": ("by_hand", "On the skeleton step, click on each named part in the parts panel (a lid, a door, a wheel or a drawer), "
                                 "then run the step again."),
+    "moving_cut": ("by_hand", "The moving parts stay fixed for now. Press Make it move again on the skeleton step to retry; if it repeats, "
+                              "build the 3D model again and rig that one."),
     "single_root": ("by_hand", "Run the skeleton step again; if it repeats, build the 3D model again and rig that one."),
     "max_influences": ("by_hand", "Run the skeleton step again; if it repeats, build the 3D model again and rig that one."),
     "wings_found": ("by_hand", "Go back to the first step and redraw the creature with both wings fully spread and clearly separate from the body, "
