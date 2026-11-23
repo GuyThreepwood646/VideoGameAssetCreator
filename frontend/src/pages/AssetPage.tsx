@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { api, ApiError, STAGES, stageState, stoppedVersions, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Job, type JobStatus, type StageId, type Suggestion } from '../api'
+import { api, ApiError, STAGES, stageState, stepsFor, stoppedVersions, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Job, type JobStatus, type StageId, type Suggestion } from '../api'
 import { Info } from '../components/Info'
 import { JobLog } from '../components/JobLog'
 import { Disclosure, ErrorText, Field, SubmitTextarea, type FixRequest, PanelClose } from '../components/ui'
 import { useEvents } from '../events'
-import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, MODEL_IMPORT_SECONDS, plainJargon, platformPlain, stageEstimate, stageGerund, stagePlain, stageTech, suggestFallback, VARIANT_EXAMPLES } from '../help'
+import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, MODEL_IMPORT_SECONDS, plainJargon, platformPlain, stageEstimate, stageGerund, stagePlain, stagePlainFor, stageTech, suggestFallback, VARIANT_EXAMPLES } from '../help'
 import { autopilotStage, isAutopilotActive, type AutopilotActions } from '../pipeline/AutopilotPanel'
 import { ItemsPanel } from '../pipeline/ItemsPanel'
 import { HairRailLine, HairRebuildNote, HairSettingPanel, useHairPanel } from '../pipeline/HairSetting'
@@ -449,11 +449,11 @@ export default function AssetPage() {
             const help = stageInfo(s)
             return (
               <div key={s} className={cls + (stopped ? ' stopped' : '')}>
-                <button type="button" className="rail-stage-btn" onClick={() => navigate(`/assets/${asset.id}/${s}`)} title={stagePlain(s, help)} aria-current={s === stage ? 'step' : undefined}>
+                <button type="button" className="rail-stage-btn" onClick={() => navigate(`/assets/${asset.id}/${s}`)} title={stagePlainFor(s, asset.category, help)} aria-current={s === stage ? 'step' : undefined}>
                   <span className={'sdot sdot-' + st} />
                   <span className="rail-index">{i + 1}</span>
                   <span className="rail-label">
-                    {stagePlain(s, help)}
+                    {stagePlainFor(s, asset.category, help)}
                     <span className="tech-term rail-tech">{stageTech(s, help)}</span>
                   </span>
                   <span className={'rail-meta' + (movingPartsOnly ? ' rail-meta-note' : '')}>{meta}</span>
@@ -671,11 +671,12 @@ function statusLine(asset: Asset, jobs: Job[], ref: RefData | null, suggestion: 
   }
   const sorted = jobs.slice().sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
   const last = sorted[0]
-  const done = STAGES.filter((s) => asset.selected?.[s]).length
+  const steps = stepsFor(asset.category)
+  const done = steps.filter((s) => asset.selected?.[s]).length
   if (last && last.status === 'error') {
     const s = stageOfJob(last, asset)
     return { text: `${s ? stagePlain(s) + ': ' : ''}${humanError(last.error)}`, tone: 'bad', raw: last.error ?? undefined }
   }
-  if (done === STAGES.length) return { text: `${autopilot?.status === 'done' ? 'Autopilot finished. ' : 'Finished. '}Your asset is ready to hand to the game.`, tone: 'ok' }
-  return { text: `Nothing running. ${done} of ${STAGES.length} steps done.`, tone: 'none' }
+  if (done === steps.length) return { text: `${autopilot?.status === 'done' ? 'Autopilot finished. ' : 'Finished. '}Your asset is ready to hand to the game.`, tone: 'ok' }
+  return { text: `Nothing running. ${done} of ${steps.length} steps done.`, tone: 'none' }
 }

@@ -1227,6 +1227,14 @@ export function previousStage(stage: StageId, category?: Pick<Category, 'skips'>
 
 export type StageState = 'none' | 'running' | 'done' | 'error'
 
+// The steps a category runs. A repeating surface skips "Check all sides" (its category file says skips: turnaround), so
+// it is not counted as a step that did not finish (F13).
+export const SKIPPED_STEPS: Record<string, StageId[]> = { material: ['turnaround'] }
+export function stepsFor(category: string | undefined | null): StageId[] {
+  const skip = SKIPPED_STEPS[category ?? ''] ?? []
+  return STAGES.filter((s) => !skip.includes(s))
+}
+
 export function stageState(asset: AssetSummary, stage: StageId): StageState {
   const list = versionsOf(asset, stage)
   if (list.some((v) => v.status === 'running' || v.status === 'queued')) return 'running'

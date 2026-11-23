@@ -2,7 +2,7 @@
 // guide while the autopilot owns the asset, and the finishing moment card.
 import { Fragment, useContext, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import { api, firstStaleStage, libraryUrl, selectedVersion, stoppedVersions, STAGES, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Check, type Job, type StageId, type StageInfo, type StopOn, type Version } from '../api'
+import { api, firstStaleStage, libraryUrl, selectedVersion, stepsFor, stoppedVersions, STAGES, versionsOf, type Asset, type AutopilotBody, type AutopilotState, type Check, type Job, type StageId, type StageInfo, type StopOn, type Version } from '../api'
 import { BeautyPicture } from '../components/BeautyPicture'
 import { Info } from '../components/Info'
 import { PictureViewer, Zoomable, type PictureItem } from '../components/PictureViewer'
@@ -427,6 +427,9 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
     }
   }
   const glb = libraryUrl(exp?.files.anim_glb ?? exp?.files.glb ?? rig?.files.anim_glb ?? rig?.files.glb)
+  // A repeating surface has no model: its tile preview stands in for one (F13).
+  const tile = libraryUrl(exp?.files.tile_preview ?? selectedVersion(asset, 'mesh')?.files.tile_preview ?? selectedVersion(asset, 'prep')?.files.tile_preview)
+  const stepCount = stepsFor(asset.category).length
   const clips = Array.isArray(exp?.metrics.clips) ? (exp!.metrics.clips as string[]) : []
   // The plain walk by its exact name: a looser match used to pick "crouch_walk" once more moves were offered.
   const walk = clips.find((c) => c.toLowerCase() === 'walk') ?? clips.find((c) => c.toLowerCase() === 'idle') ?? clips[0] ?? 'walk'
@@ -435,12 +438,12 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
   return (
     <section className="guide guide-finished finish-card" aria-live="polite">
       <div className="guide-body">
-        <div className="guide-kicker">{byAutopilot ? `Autopilot finished all ${STAGES.length} steps` : 'Finished'}</div>
+        <div className="guide-kicker">{byAutopilot ? `Autopilot finished all ${stepCount} steps` : 'Finished'}</div>
         <div className="guide-happened finish-title">{attention.some((i) => i.tier === 'likely') ? 'Your asset is not ready yet' : 'Your asset is ready'}</div>
         <div className="finish-verdict" role="status">{verdictLine(attention)}</div>
         {notMeasured.map((t) => <div key={t} className="muted small finish-note">{t}</div>)}
         <div className="guide-now muted">
-          Your {asset.name} went through all {STAGES.length} steps. Download the files or hand them to your game engine. Everything is kept, so you can still change any step below.
+          Your {asset.name} went through all {stepCount} steps. Download the files or hand them to your game engine. Everything is kept, so you can still change any step below.
         </div>
         {exp && (
           <div className="row-gap finish-deliver">
@@ -473,7 +476,7 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
         ) : glb ? (
           <Viewer url={glb} height={360} turntableDefault showBonesDefault={false} defaultClip={walk} className="finish-viewer" />
         ) : (
-          <div className="placeholder-box">No 3D model to show.</div>
+          tile ? <img className="finish-tile" src={tile} alt={`${asset.name}, tile preview`} /> : <div className="placeholder-box">No 3D model to show.</div>
         )}
         {exp && <BeautyPicture version={exp} name={asset.name} />}
         {(lines.length > 0 || look) && (
@@ -516,7 +519,7 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
           {attention.length === 0 ? (
             <div className="finish-line ok">
               <TrafficDot state="ok" title="checked" />
-              <span className="finish-line-text">Every check on all {STAGES.length} steps passed on the versions you kept.</span>
+              <span className="finish-line-text">Every check on all {stepCount} steps passed on the versions you kept.</span>
             </div>
           ) : (
             <>

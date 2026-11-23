@@ -2,7 +2,7 @@ import { openFolderAndSay } from '../notify'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { assetAttention } from '../pipeline/finish'
-import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type Category, type EditChoice, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
+import { api, ApiError, itemsApi, libraryUrl, selectedVersion, stageState, stepsFor, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type Category, type EditChoice, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
 import { ImageDrop, nameFromFile, type PickedImage } from '../components/ImageDrop'
 import { FeaturePhotos } from '../components/FeaturePhotos'
 import { featureCrop, foundPeople, usedFeatures, type FeatureSlot, type StartFrom } from '../featurePhotos'
@@ -11,7 +11,7 @@ import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
 import { useEvents } from '../events'
 import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
-import { axisWord, CATEGORY_HELP, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, suggestFallback, totalEstimate } from '../help'
+import { axisWord, CATEGORY_HELP, exampleName, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, stagePlainFor, suggestFallback, totalEstimate } from '../help'
 import { hairNotes } from '../hairNotes'
 import { editLoras } from '../editLoras'
 import { EditLoras } from '../pipeline/EditLoras'
@@ -134,7 +134,7 @@ export type AssetFilter = 'all' | 'progress' | 'needs' | 'ready'
 const FILTER_LABEL: Record<AssetFilter, string> = { all: 'All', progress: 'In progress', needs: 'Needs a look', ready: 'Ready' }
 
 function assetStatus(a: AssetSummary): Exclude<AssetFilter, 'all'> {
-  const sts = STAGES.map((x) => stageState(a, x))
+  const sts = stepsFor(a.category).map((x) => stageState(a, x))
   if (sts.includes('error')) return 'needs'
   if (sts.every((x) => x === 'done')) {
     // Finished, but a check the app counts against it (likely to show, or worth a look) means it needs a look.
@@ -170,7 +170,8 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
   const thumb = libraryUrl(concept?.files.cutout ?? concept?.files.image)
   // The checkerboard shows through a picture that has not arrived yet; a placeholder shimmer stands in until it does.
   const [thumbLoaded, setThumbLoaded] = useState(false)
-  const doneSteps = STAGES.filter((x) => stageState(asset, x) === 'done').length
+  const steps = stepsFor(asset.category)
+  const doneSteps = steps.filter((x) => stageState(asset, x) === 'done').length
   return (
     <div className="asset-card-wrap">
       <Link to={`/assets/${asset.id}`} className="asset-card">
@@ -178,20 +179,20 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
         <div className="asset-name">{asset.name}</div>
         <div className="muted small">{categoryName}</div>
         {(() => {
-          const sts = STAGES.map((x) => stageState(asset, x))
+          const sts = steps.map((x) => stageState(asset, x))
           const failedAt = sts.indexOf('error')
           const att = sts.every((x) => x === 'done') ? assetAttention(asset) : { likely: 0, look: 0 }
-          const label = failedAt >= 0 ? `Needs a look: ${stagePlain(STAGES[failedAt])}`
+          const label = failedAt >= 0 ? `Needs a look: ${stagePlainFor(steps[failedAt], asset.category)}`
             : sts.some((x) => x === 'running') ? 'Working'
             : att.likely ? `Not ready to use yet: ${att.likely} likely to show in the game`
             : att.look ? `Needs a look: ${att.look} worth a look`
             : sts.every((x) => x === 'done') ? 'Ready' : sts.every((x) => x === 'none') ? 'Not started' : 'In progress'
           return <div className={'small ' + (failedAt >= 0 || att.likely || att.look ? 'bad-text' : 'muted')}>{label}</div>
         })()}
-        <div className="stage-dots" role="img" aria-label={`${doneSteps} of ${STAGES.length} steps done`} title={`${doneSteps} of ${STAGES.length} steps done`}>
-          {STAGES.map((s) => {
+        <div className="stage-dots" role="img" aria-label={`${doneSteps} of ${steps.length} steps done`} title={`${doneSteps} of ${steps.length} steps done`}>
+          {steps.map((s) => {
             const st = stageState(asset, s)
-            return <span key={s} className={'sdot sdot-' + st} title={`${stagePlain(s)}: ${st === 'none' ? 'not started' : st === 'done' ? 'done' : st === 'running' ? 'working' : 'failed'}`} />
+            return <span key={s} className={'sdot sdot-' + st} title={`${stagePlainFor(s, asset.category)}: ${st === 'none' ? 'not started' : st === 'done' ? 'done' : st === 'running' ? 'working' : 'failed'}`} />
           })}
         </div>
       </Link>
@@ -210,6 +211,7 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
           <label className="small tile-toggle more-check" title="Show this asset's picture on the project's tile on the Projects page">
             <input
               type="checkbox"
+              aria-label="Show on the project tile"
               checked={asset.show_on_project !== false}
               onChange={(e) => void api.updateAsset(asset.id, { show_on_project: e.target.checked }).then(onChanged)}
             />{' '}
@@ -555,7 +557,7 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
         </Field>
       ) : (
         <Field label="2. Describe it" term="term.prompt" hint="One sentence is enough. Enter adds a line; Ctrl+Enter creates the asset.">
-          <SubmitTextarea ctrlEnter rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. a sturdy young knight in worn plate armour, short dark hair" aria-label="Description" autoFocus />
+          <SubmitTextarea ctrlEnter rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={`e.g. ${examples[0].charAt(0).toLowerCase()}${examples[0].slice(1)}`} aria-label="Description" autoFocus />
           <div className="muted small">Template: {PROMPT_TEMPLATE}</div>
         </Field>
       )}
@@ -570,7 +572,7 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
         />
       )}
       <Field label="3. Name (optional)" hint={`We will call it "${fallbackName}" if you leave this empty.`}>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? 'Knight' : fallbackName} />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? exampleName(category) : fallbackName} />
       </Field>
       {described && (
         <div className="muted small described-size">

@@ -117,6 +117,13 @@ export function stagePlain(stage: StageId, info?: StageInfo | null): string {
   return info?.plain_name || STAGE_TEXT[stage].plain
 }
 
+// A repeating surface's own step names: its steps make maps, not a 3D model (F13).
+const SURFACE_STEP_PLAIN: Partial<Record<StageId, string>> = { mesh: 'Make the surface maps', prep: 'Clean up the textures', rig: 'Make it move (not used for a surface)' }
+export function stagePlainFor(stage: StageId, category: string | undefined, info?: StageInfo | null): string {
+  if (category === 'material' && SURFACE_STEP_PLAIN[stage]) return SURFACE_STEP_PLAIN[stage]!
+  return stagePlain(stage, info)
+}
+
 // The industry term shown muted under the step name (UX-03). The backend's technical_short is the one source.
 export function stageTech(stage: StageId, info?: StageInfo | null): string {
   return info?.technical_short || STAGE_TEXT[stage].tech
@@ -283,7 +290,7 @@ export const CATEGORY_HELP: Record<string, HelpEntry> = {
   prop_articulated: H('Object with moving parts', 'An object with a moving part, such as a chest with a lid.', 'For now it comes out as one solid piece; the lid or door does not open yet.', 'prop_articulated'),
   environment: H('Building or scenery piece', 'A piece of scenery that snaps to a grid, such as a wall or floor tile.', 'No skeleton; sized to the grid with its anchor on a corner, so pieces line up.', 'environment'),
   foliage: H('Plant or tree', 'A plant, tree or bush.', 'No skeleton; made to be scattered around a scene.', 'foliage'),
-  material: H('Repeating surface', 'A flat, repeating surface such as grass, stone or brick, for floors, walls and ground.', 'Produces a texture only, no 3D model. For a rock, a bush or another object, choose Rigid prop or Foliage.', 'material'),
+  material: H('Repeating surface', 'A flat, repeating surface such as grass, stone or brick, for floors, walls and ground.', 'Produces a texture only, no 3D model. For a rock, a bush or another object, choose Solid object or Plant or tree.', 'material'),
 }
 
 export const STYLE_HELP: Record<string, HelpEntry> = {
@@ -1713,9 +1720,15 @@ export function suggestFallback(
   return { model, model_label: modelLabel(model), reason, budgets, estimates }
 }
 
+// The whole asset's time from the suggestion's own per-step estimates (already set for this category, the surface
+// steps only, and from its own history). The stage list's figures are for every category together, so they are only a
+// fallback for a step the suggestion does not name (F4: a texture-only build was shown as 37 minutes).
 export function totalEstimate(estimates: Record<string, number> | null | undefined, ref?: { stages: StageInfo[] } | null): number {
   let total = 0
-  for (const s of STAGES) total += stageEstimate(s, ref?.stages.find((x) => x.id === s), estimates)
+  for (const s of STAGES) {
+    const own = estimates?.[s]
+    total += typeof own === 'number' ? own : stageEstimate(s, ref?.stages.find((x) => x.id === s), null)
+  }
   return total
 }
 
@@ -1741,6 +1754,15 @@ export const EXAMPLE_PROMPTS: Record<string, [string, string]> = {
 
 export function examplePrompts(category: string): [string, string] {
   return EXAMPLE_PROMPTS[category] ?? EXAMPLE_PROMPTS.prop_rigid
+}
+
+// The Name box's example word for the category (F10: it said "Knight" whatever was picked).
+const EXAMPLE_NAMES: Record<string, string> = {
+  humanoid: 'Knight', quadruped: 'Wolf', winged: 'Hawk', multileg: 'Spider', serpent: 'Python', vehicle: 'Buggy',
+  prop_rigid: 'Barrel', prop_articulated: 'Chest', environment: 'Wall', foliage: 'Oak', material: 'Cobblestones',
+}
+export function exampleName(category: string): string {
+  return EXAMPLE_NAMES[category] ?? 'Barrel'
 }
 
 // ---------------------------------------------------------------------------
@@ -1791,11 +1813,14 @@ export function firstFailing(metrics: Record<string, unknown>, ctx: CheckContext
 
 // The most serious tier among a version's failed checks (backend check_tiers.py), or null when none failed or none
 // carries a tier. "advice" alone means nothing here is likely to show in the game: a near miss is never a red dot (UX-10).
+// The tier a failing version shows. A failure without a tier of its own (a view that does not match the front, the
+// step 2 consistency check) is "look", the default tier in check_tiers, so it reads "Worth a look" everywhere (F6).
 export function failingTier(metrics: Record<string, unknown>): 'likely' | 'look' | 'advice' | null {
   const checks = metrics.checks
-  if (!Array.isArray(checks)) return null
-  const tiers = (checks as Check[]).filter((c) => c && typeof c === 'object' && !checkPassed(c)).map((c) => c.tier)
-  if (tiers.length === 0 || tiers.some((t) => !t)) return null
+  if (!Array.isArray(checks)) return looksGood(metrics) === false ? 'look' : null
+  const failing = (checks as Check[]).filter((c) => c && typeof c === 'object' && !checkPassed(c))
+  if (failing.length === 0) return null
+  const tiers = failing.map((c) => c.tier || 'look')
   return tiers.includes('likely') ? 'likely' : tiers.includes('look') ? 'look' : 'advice'
 }
 
