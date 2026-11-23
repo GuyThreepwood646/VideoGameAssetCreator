@@ -52,7 +52,7 @@ from typing import Any, Awaitable, Callable
 import psutil
 from sqlalchemy import func, select
 
-from . import cardmem, comfy_inputs, estimates, model_choices, prefs
+from . import cardlog, cardmem, comfy_inputs, estimates, model_choices, prefs
 from .comfy import JOB_PROMPTS, ComfyClient, withdraw_job_prompts
 from .config import Settings, get_settings
 from .db import SET_ASIDE_ERROR, STOPPED_ERROR, Asset, Job, Version, is_stopped, job_to_dict, session_factory, utcnow, version_to_dict
@@ -426,6 +426,10 @@ class Lease:
     # What the queue did to lend it, in plain words ("" when nothing special), e.g. the engine let go of its models.
     note: str = ""
     granted_at: float = 0.0  # time.monotonic() when it was lent; the borrowing job records how long it kept it
+    kind: str = ""  # the kind of work the card was lent for (the record's kind)
+    step: str = ""  # the step of the job that asked ("face redraw", "turnaround side"), for the record
+    claimed: bool = False  # held for the job's first close-up, not lent: recorded as drawn, not as a second card
+    started: str = ""  # the wall-clock start, for the record
 
     async def end(self, interrupt: bool = False) -> None:
         """Hand the card back. interrupt: withdraw this job's own prompts from the card first (the job was stopped), so
@@ -754,6 +758,7 @@ class InstanceWorker:
             job.status = "running"
             job.started_at = utcnow()
             job.message = "starting"
+            cardlog.start_own(job)
             if self._pass_note is not None and self._pass_note[0] == job_id:
                 # a rig job started ahead of a longer one that was waiting: count it against that one's limit
                 self._passed[self._pass_note[1]] = self._passed.get(self._pass_note[1], 0) + 1
@@ -829,8 +834,8 @@ class InstanceWorker:
             lend, here, job_kind = self.lend, self.name, kind
 
             def borrow(kind: str | None = None, avoid: str | None = None,
-                       only: str | None = None) -> Awaitable[tuple[Lease | None, str]]:
-                return lend(here, job_id, kind or job_kind, avoid, only)
+                       only: str | None = None, step: str = "", claimed: bool = False) -> Awaitable[tuple[Lease | None, str]]:
+                return lend(here, job_id, kind or job_kind, avoid, only, step=step, claimed=claimed)
 
             ctx.borrow = borrow
         self.current_ctx = ctx
@@ -902,6 +907,7 @@ class InstanceWorker:
                 job = db.get(Job, job_id)
                 if job is not None:
                     job.finished_at = utcnow()
+                    cardlog.end_own(job)
                     if engine_retry:
                         job.status = "queued"
                         job.started_at = None
@@ -917,6 +923,8 @@ class InstanceWorker:
                         job.message = error
                         if rerouted:
                             target = ctx.reroute_to or self.name
+                            if target != job.instance:
+                                cardlog.add_move(job, job.instance, target, ctx.reroute_message)
                             job.instance = target
                             job.message = ctx.reroute_message
                             log.info("job %s re-queued on %s: %s", job_id[:8], target, job.message)
@@ -1165,6 +1173,7 @@ class JobQueue:
         with session_factory()() as db:
             job = Job(instance=instance, kind=kind, asset_id=asset_id, version_id=version_id, status="queued",
                       payload_json=json.dumps(payload or {}), message=message or "")
+            cardlog.planned(job)
             db.add(job)
             db.flush()  # the id comes from the column default, so it exists only after the flush
             if version_id:
@@ -1340,6 +1349,8 @@ class JobQueue:
                             payload["params"] = {**payload["params"], key: seed}
                             job.payload = payload
                     job.status = "queued"
+                    if job.instance != instance:
+                        cardlog.add_move(job, job.instance, instance, "back in the queue after a stop")
                     job.instance = instance
                     job.error = None
                     job.message = message or "back in the queue after a stop"
@@ -1572,6 +1583,7 @@ class JobQueue:
                     else:
                         message = (f"Moved to {gpu_name(target, self.settings)}: {gpu_name(j.instance, self.settings)} "
                                    f"may not do {KIND_PLAIN.get(kind_group(cap) or '', cap)}")
+                    cardlog.add_move(j, j.instance, target, message)
                     j.instance = target
                     j.message = message
                     changed.append(j)
@@ -1621,6 +1633,7 @@ class JobQueue:
                                                 Job.instance != target)).all()
             for j in rows:
                 if self._can_take(target, j.kind):
+                    cardlog.add_move(j, j.instance, target, "the default card")
                     j.instance = target
                     j.message = default_moved_message(target, self.settings)
                     changed.append(j)
@@ -1664,6 +1677,7 @@ class JobQueue:
                 if not self._can_take(instance, j.kind):
                     continue
                 source = j.instance
+                cardlog.add_move(j, source, instance, "sharing: the card it was queued on is busy")
                 j.instance = instance
                 j.message = shared_message(source, instance, self.settings)
                 db.commit()
@@ -1707,7 +1721,7 @@ class JobQueue:
         return None
 
     async def lend(self, borrower: str, job_id: str, kind: str, avoid: str | None = None,
-                   only: str | None = None) -> tuple[Lease | None, str]:
+                   only: str | None = None, step: str = "", claimed: bool = False) -> tuple[Lease | None, str]:
         """Lend a second card to the running job `job_id` (on card `borrower`, or the host, needing `kind` of work), when
         one is free: on, allowed the work, idle, nothing waiting it would take, its engine already answering (never
         started for this: a start and a first model load take longer than they save) and LEND_MIN_ROOM_GB of memory
@@ -1768,9 +1782,10 @@ class JobQueue:
                 continue
             w = self.workers[name]
             lease = Lease(instance=name, job_id=job_id, client=self.clients[name], gpu=gpu_name(name, self.settings),
-                          _give_back=self._give_back)
+                          _give_back=self._give_back, kind=kind, step=step, claimed=claimed)
             lease.note = note
             lease.granted_at = time.monotonic()
+            lease.started = cardlog.utcnow().isoformat()
             w.lent_to = job_id
             self.leases[name] = lease
             if note:
@@ -1843,8 +1858,8 @@ class JobQueue:
         self.publish_gpus()
 
     def _record_lent(self, lease: Lease) -> None:
-        """Write on the borrowing job how long it had a second card ({"lent": [{"card", "seconds"}]} in its result), so
-        the estimates can tell runs that had two cards from runs that had one (estimates.stage_estimates)."""
+        """Write on the job that used the card (cardlog): the card, the kind of work, the step and the times, in its
+        "cards" list; a loan also goes to "lent" (card and seconds), which the estimates read as a second card."""
         if not lease.granted_at:
             return
         seconds = round(time.monotonic() - lease.granted_at, 1)
@@ -1853,12 +1868,11 @@ class JobQueue:
                 job = db.get(Job, lease.job_id)
                 if job is None:
                     return
-                res = job.result if isinstance(job.result, dict) else {}
-                res["lent"] = list(res.get("lent") or []) + [{"card": lease.instance, "seconds": seconds}]
-                job.result = res
+                cardlog.add_use(job, card=lease.instance, role=cardlog.DREW if lease.claimed else cardlog.LENT,
+                                kind=lease.kind, step=lease.step, started_at=lease.started, seconds=seconds)
                 db.commit()
         except Exception:  # noqa: BLE001
-            log.debug("could not record the lease on job %s", lease.job_id[:8], exc_info=True)
+            log.debug("could not record the card use on job %s", lease.job_id[:8], exc_info=True)
 
     def end_leases(self, job_id: str) -> None:
         """Hand back every card still lent to `job_id` (the job ended; the step normally does this itself)."""
