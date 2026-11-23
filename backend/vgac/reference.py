@@ -134,7 +134,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("hand_edit", "boolean", None, categories=["humanoid"], label="Open the hands first (hands only)",
                description="The picture the build starts from is edited once so each hand is open, back toward the camera, fingers straight and slightly apart; the build then resolves separate fingers. Skipped when the side views step already made a pose_ready picture. One more picture edit (about a minute); off when empty"),
         _param("seed", "integer", None, min=0, max=2**31 - 1),
-        _param("remesh", "boolean", None, description="Watertight remesh before decimation; category default when empty (off for scenery so doorways stay open)"),
+        _param("remesh", "boolean", None, description="Watertight remesh before decimation; on by default for every category when empty (it closes holes, so textures are not stretched across them)"),
         # G03: UnwrapMesh accepts 0 to 16 texels; the plan's 64 is beyond the node.
         _param("padding", "integer", None, min=1, max=16, label="Seam space in pixels (UV padding)",
                description="Automatic when empty: 4 px at 1024, 8 at 2048, 16 at 4096"),

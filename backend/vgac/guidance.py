@@ -115,7 +115,7 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
                                             "why": "Use it when step 2 was made without Pose for 3D first and the hands came out as mittens. It changes less than Pose for 3D first, and adds about a minute. Tried on two characters so far.",
                                             "technical": "hand_edit: one Qwen-Image-Edit pass on the build's input picture before TRELLIS (stages/mesh.py HAND_EDIT); skipped when the step 2 version holds a pose_ready picture"}},
     "remesh": {"simple": False, "help": {"meaning": "Rebuild the surface as one solid shell before simplifying.",
-                         "why": "Characters and creatures: keep it on, it removes double walls. Plants: untested so far; thin leaves may come out thicker. Hard objects (props, vehicles): it can round crisp edges and thicken or lose thin parts, so turn it off if the edges matter. Buildings and scenery: off by default so doorways and arches stay open, but a building built with it off at a low triangle count can come out torn; the same building came out whole with it on, as a softer shape. After a build, look at the grey views under the model.", "technical": "RemeshMesh (solid sign mode)"}},
+                         "why": "On by default for every kind of object. Characters, creatures, props and vehicles: keep it on; it closes holes so the textures are not stretched across them, and it can round a crisp edge a little. Plants: untested so far; thin leaves may come out thicker. Buildings and scenery: keep it on too; with it off a building can come out torn, while the same building came out whole with it on, as a softer shape. After a build, look at the grey views under the model.", "technical": "RemeshMesh (solid sign mode)"}},
     "size_m": {"simple": True, "help": {"meaning": "How big the asset is in the game, in metres, measured the way that makes sense for it: height for people, length for cars and snakes.", "why": "Keeps everything in proportion, so a car is car-sized next to your character.", "technical": "Uniform scale so the extent on size_axis equals size_m"}},
     "face_yaw": {"simple": True, "help": {"meaning": "Which side of the model the game treats as its front.", "why": "Characters walk and cars drive toward their front; if it is wrong, they move sideways.", "technical": "Yaw about Y so the concept front faces +Z"},
                  "options": {"auto": "Automatic", "0": "As built", "90": "Turned a quarter to the left", "180": "Turned around", "270": "Turned a quarter to the right"}},
@@ -1651,7 +1651,8 @@ def grid_finish_line(metrics: dict[str, Any]) -> dict[str, Any] | None:
 
 
 # The tileable material category makes images only: these replace the stage estimates for it.
-MATERIAL_ESTIMATES = {"concept": 60, "turnaround": 0, "mesh": 10, "prep": 1, "rig": 1, "export": 5}
+# A texture-only surface: the picture, then the surface maps and the tile (one run measured 1 min 46 s in all, F4/F13).
+MATERIAL_ESTIMATES = {"concept": 50, "turnaround": 0, "mesh": 40, "prep": 5, "rig": 1, "export": 5}
 
 
 def model_label_long(mid: str) -> str:

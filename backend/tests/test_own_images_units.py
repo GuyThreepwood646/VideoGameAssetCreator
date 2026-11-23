@@ -251,6 +251,15 @@ def test_a_small_picture_offers_upscale_it():
     assert _checks(figure("a", **BIG))["detail_size"]["passed"]
 
 
+def test_a_small_object_picture_gets_no_upscale_advice():
+    """F5: the 860 px limit was measured on characters. A small-in-frame object or scenery picture is framed whole
+    with margin, so detail_size is not one of its checks (big_enough still is)."""
+    scenery = {"id": "environment", "pose_block": "x"}
+    c = _checks(figure("a"), scenery)
+    assert "detail_size" not in c and "pose_for_3d" not in c
+    assert "big_enough" in c
+
+
 def test_upscale_plan_reaches_the_target_within_limits():
     from vgac.readiness import UPSCALE_TARGET_PX
     from vgac.stages.concept import UPSCALE_ART_MODEL, UPSCALE_MAX_SIDE, UPSCALE_PHOTO_MODEL, upscale_plan

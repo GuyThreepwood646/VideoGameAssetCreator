@@ -231,9 +231,11 @@ def concept_checks(cutout: Path | str | Image.Image, category: dict[str, Any] | 
     size_px = int(round(subject_h if cid == "humanoid" else max(subject_h, subject_w)))
     out.append(quality.check("big_enough", size_px >= MIN_SUBJECT_PX, size_px, MIN_SUBJECT_PX,
                              vars={**redraw, "measure": "tall" if cid == "humanoid" else "across"}))
-    out.append(quality.check("detail_size", size_px >= DETAIL_SUBJECT_PX, size_px, DETAIL_SUBJECT_PX,
-                             vars={"measure": "tall" if cid == "humanoid" else "across", "target": UPSCALE_TARGET_PX}))
     if cid == "humanoid":
+        # The size limit was measured on characters only; objects and scenery are framed whole with margin, so a
+        # small-in-frame picture of one is normal and the "Upscale it" advice would be wrong for it (F5).
+        out.append(quality.check("detail_size", size_px >= DETAIL_SUBJECT_PX, size_px, DETAIL_SUBJECT_PX,
+                                 vars={"measure": "tall", "target": UPSCALE_TARGET_PX}))
         out.append(buildpose.pose_check(buildpose.measure(cutout), held_item))
     return out
 
