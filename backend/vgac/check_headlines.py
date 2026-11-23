@@ -64,7 +64,7 @@ HEADLINES: dict[str, str] = {
     "clips_loop": "A move that should loop stops after one cycle",
     "library_clips": "The library moves could not be used, so built-in moves are used",
     "rig_restore": "The rigged model lost its textures or its size",
-    "moving_parts": "Parts meant to move are not rigged yet",
+    "moving_parts": "A moving part is not marked yet",
     "unity_humanoid_avatar": "Unity could not read the skeleton as a person",
     "collider_vertices": "The collision shape has too many points for Unity",
     "lod_count": "Some detail levels were not made",

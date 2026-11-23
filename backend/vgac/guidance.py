@@ -429,7 +429,7 @@ def _moving_ok(c: dict[str, Any]) -> str:
 def _moving_fail(c: dict[str, Any]) -> str:
     out = []
     if _var(c, "unplaced"):
-        out.append(f"These moving parts have no points yet, so they stay fixed: {_names(c, 'unplaced')}.")
+        out.append(f"Mark these moving parts in step 5 (one click on each piece), then press Make it move again: {_names(c, 'unplaced')}. Until then they stay fixed in the game.")
     if _var(c, "not_found"):
         out.append(f"No piece was found at the points of: {_names(c, 'not_found')}, so they stay fixed.")
     return " ".join(out) or "The moving parts could not be cut free, so they stay fixed."
