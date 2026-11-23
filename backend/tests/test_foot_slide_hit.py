@@ -135,3 +135,63 @@ def test_rounded_heel_touches_the_floor_at_every_pitch():
     a_est = gait.rolled_ankle(ANKLE, BALL, FLOOR, FWD, LAT, 0.25, 12.0)
     low_est = min(gait.v_add(a_est, gait.q_rotate(q, gait.v_sub(p, ANKLE)))[2] for p in heel)
     assert abs(low_est - FLOOR) > 0.01
+
+
+# ---- heel strike roll ------------------------------------------------------------------------------------------------
+
+def test_quick_strike_lands_lower_and_mostly_rolls_flat_in_one_frame():
+    duty, stride, lift = 0.6, 0.6, 0.1
+    at_contact = gait.foot_path(0.0, duty, stride, lift, quick_strike=True)[2]
+    soon = gait.foot_path(1.0 / 24.0, duty, stride, lift, quick_strike=True)[2]  # one frame of a 24-frame cycle
+    assert at_contact == pytest.approx(gait.QUICK_STRIKE_DEG)
+    assert 0.0 < at_contact <= 8.0
+    assert soon < 0.35 * at_contact
+    # continuous across heel strike: the swing ends at the same toes-up pitch the stance starts with
+    assert gait.foot_path(1.0 - 1e-9, duty, stride, lift, quick_strike=True)[2] == pytest.approx(at_contact, abs=1e-3)
+
+
+def test_quick_strike_keeps_the_landing_at_the_stance_speed():
+    duty, stride, lift, h = 0.6, 0.6, 0.1, 1e-5
+    f = lambda u: gait.foot_path(u, duty, stride, lift, quick_strike=True)[0]
+    stance_slope = (f(0.3 * duty + h) - f(0.3 * duty)) / h
+    assert (f(1.0 - 1e-9) - f(1.0 - h)) / h == pytest.approx(stance_slope, rel=0.02)
+
+
+@pytest.mark.parametrize("run,duty", [(False, 0.6), (True, 0.4)])
+def test_default_heel_strike_is_unchanged(run, duty):
+    # the run and non-biped feet keep the 12 degree strike rolled flat on a smoothstep over 0.2 of the stance
+    assert gait.foot_path(0.0, duty, 0.6, 0.1, run)[2] == pytest.approx(12.0)
+    assert gait.foot_path(0.1 * duty, duty, 0.6, 0.1, run)[2] == pytest.approx(12.0 * (1.0 - gait.smoothstep(0.5)))
+
+
+
+# ---- swing clearance ---------------------------------------------------------------------------------------------------
+
+def test_walk_lift_has_a_floor_from_the_height():
+    height = 1.8
+    assert gait.walk_lift(0.5, height) == pytest.approx(gait.WALK_LIFT_MIN_SHARE * height)  # short legs
+    assert gait.walk_lift(2.0, height) == pytest.approx(gait.WALK_LIFT_LEG * 2.0)  # long legs keep their own lift
+    assert gait.walk_lift(0.5) == pytest.approx(gait.WALK_LIFT_LEG * 0.5)  # no height: the leg rule alone
+
+
+def test_plateau_swing_stays_up_and_drops_late():
+    duty, stride, lift = 0.6, 0.6, 0.1
+    up = lambda s: gait.foot_path(duty + s * (1 - duty), duty, stride, lift, quick_strike=True, plateau=True)[1]
+    assert up(0.0) == pytest.approx(0.0, abs=1e-9)
+    assert up(1.0 - 1e-9) == pytest.approx(0.0, abs=1e-6)
+    assert min(up(0.2 + 0.6 * k / 20) for k in range(21)) >= 0.54 * lift  # the middle 60 % of the swing is clear (0.55 at 80 %)
+    assert up(0.85) >= 0.41 * lift  # higher late than sin(pi s)^1.2 (0.39 at 85 %)
+    # gentle landing: one frame of a 24-frame walk (duty 0.6, 9.6 swing frames) before contact the foot is under 0.31 of
+    # the lift (0.29; the 1 - x^2 drop gave 0.45). At a 7.5 % lift that is under 3 % of the height, so the last frame is
+    # low: long-legged walkers travel 1.7 to 1.9 % of their height in it, over the 1.5 % aimed for.
+    assert up(1.0 - 1.0 / 9.6) <= 0.31 * lift
+    # forward path unchanged: lands at the stance speed
+    h = 1e-5
+    f = lambda u: gait.foot_path(u, duty, stride, lift, quick_strike=True, plateau=True)[0]
+    assert (f(1.0 - 1e-9) - f(1.0 - h)) / h == pytest.approx((f(0.3 * duty + h) - f(0.3 * duty)) / h, rel=0.02)
+
+
+def test_default_swing_height_is_unchanged():
+    duty, lift = 0.6, 0.1
+    s = 0.85
+    assert gait.foot_path(duty + s * (1 - duty), duty, 0.6, lift)[1] == pytest.approx(lift * math.sin(math.pi * s) ** 1.2)
