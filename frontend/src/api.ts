@@ -1203,6 +1203,15 @@ export function versionsOf(asset: Pick<Asset, 'stages'> | AssetSummary, stage: S
   return asset.stages?.[stage] ?? []
 }
 
+// The 1-based number, among the earlier step's versions, of the version `version` was really built from (its
+// parent_version_id), or 0 when it has none there (F23: not the earlier step's kept version).
+export function builtFromNumber(asset: AssetSummary, prev: StageId | null, version: Version | undefined): number {
+  if (!prev || !version?.parent_version_id) return 0
+  const list = versionsOf(asset, prev)
+  const i = list.findIndex((v) => v.id === version.parent_version_id)
+  return i >= 0 ? i + 1 : 0
+}
+
 export function selectedVersion(asset: AssetSummary, stage: StageId): Version | undefined {
   const id = asset.selected?.[stage]
   const list = versionsOf(asset, stage)

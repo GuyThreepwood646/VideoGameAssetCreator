@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { CATEGORY_HELP, exampleName, examplePrompts, failingTier, fmtDuration, stagePlainFor, totalEstimate } from '../src/help'
-import { stageEstimateSeconds, stepsFor, STAGES } from '../src/api'
+import { builtFromNumber, stageEstimateSeconds, stepsFor, STAGES } from '../src/api'
 import type { StageInfo } from '../src/api'
 
 // The scorecard audit's wording and small screen fixes (WP audit batch A): F4, F6, F10, F12, F13.
@@ -50,4 +50,17 @@ test('the repeating surface help uses the button names (F12)', () => {
   const all = JSON.stringify(CATEGORY_HELP.material)
   assert.ok(all.includes('Solid object') && all.includes('Plant or tree'), all)
   assert.ok(!all.includes('Rigid prop'), all)
+})
+
+// F23: a step's version names the earlier version it was really built from (its parent), not the kept one.
+test('a version names its parent, not the kept version of the earlier step (F23)', () => {
+  const v = (id: string, parent: string | null) => ({ id, parent_version_id: parent, status: 'done' }) as never
+  const asset = {
+    stages: { mesh: [v('m1', null), v('m2', null)], prep: [v('p1', 'm1')] },
+    selected: { mesh: 'm2', prep: 'p1' },
+  } as never
+  assert.equal(builtFromNumber(asset, 'mesh', v('p1', 'm1')), 1)
+  assert.equal(builtFromNumber(asset, 'mesh', v('p2', 'm2')), 2)
+  assert.equal(builtFromNumber(asset, 'mesh', v('p3', null)), 0)
+  assert.equal(builtFromNumber(asset, null, v('p1', 'm1')), 0)
 })
