@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { attentionItems, facesForward, finishLines, verdictLine, type AttentionItem } from '../src/pipeline/finish'
+import { attentionItems, facesForward, finishLines, notMeasuredNotes, verdictLine, type AttentionItem } from '../src/pipeline/finish'
 import type { Asset } from '../src/api'
 
 type Fx = { project: string; asset: string; category: string; versions: { id: string; stage: string; status: string; selected: boolean; checks: { id: string; passed: boolean; severity?: string; help?: string; message?: string }[]; old_card?: unknown }[] }
@@ -98,7 +98,23 @@ test("a check both step 4 and step 6 report is shown once, with the latest step'
 test("the verdict never says the asset failed and counts each tier; the tier is the backend's", () => {
   const item = (tier: 'likely' | 'look' | 'advice') => ({ stage: 'prep', id: 'x', text: '', rank: 0, tier, check: { name: 'x' } }) as unknown as AttentionItem
   assert.equal(verdictLine([]), 'Ready to use. Every check passed.')
-  assert.equal(verdictLine([item('likely'), item('look'), item('look'), item('advice')]), 'Ready to use. One thing is likely to show in the game, two are worth a look, one note is advice only.')
+  assert.equal(verdictLine([item('likely'), item('look'), item('look'), item('advice')]), 'Not ready to use yet. One thing is likely to show in the game, two things worth a look, one note is advice only.')
   assert.equal(verdictLine([item('advice'), item('advice')]), 'Ready to use. Two notes are advice only.')
   assert.ok(!/fail/i.test(verdictLine([item('likely')])))
+})
+
+test("a likely item means not ready; worth-a-look items mean ready with things to check; advice changes nothing", () => {
+  const item = (tier: 'likely' | 'look' | 'advice') => ({ stage: 'rig', id: 'hitbox_cover', text: '', rank: 0, tier, check: { name: 'hitbox_cover' } }) as unknown as AttentionItem
+  assert.equal(verdictLine([item('likely')]), 'Not ready to use yet. One thing is likely to show in the game.')
+  assert.equal(verdictLine([item('look'), item('look')]), 'Ready to use, with two things worth a look.')
+  assert.equal(verdictLine([item('look'), item('advice')]), 'Ready to use, with one thing worth a look, one note is advice only.')
+  assert.ok(!verdictLine([item('likely')]).startsWith('Ready to use'))
+})
+
+test("a check that was not measured is a note, never a problem or a count", () => {
+  const unmeasured = { name: 'texture_sharp', id: 'texture_sharp', passed: false, message: 'not measured', vars: { measured: false, what: 'how sharp the colour texture is', why: 'the outline fit failed' }, help: 'Not measured: how sharp the colour texture is was not checked, because the outline fit failed.' }
+  const a = { id: 'a', name: 'a', category: 'foliage', platform_target: 'pc', project_id: 'p', selected: {}, stages: { prep: [{ id: 'v', asset_id: 'a', stage: 'prep', status: 'done', selected: true, parent_version_id: null, params: {}, files: {}, metrics: { checks: [unmeasured] } }] } } as unknown as Asset
+  assert.equal(attentionItems(a).length, 0)
+  assert.deepEqual(notMeasuredNotes(a), ['Not measured: how sharp the colour texture is was not checked, because the outline fit failed.'])
+  assert.equal(verdictLine(attentionItems(a)), 'Ready to use. Every check passed.')
 })

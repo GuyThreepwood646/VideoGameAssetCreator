@@ -99,9 +99,15 @@ def hitbox_checks(doc: dict[str, Any] | None, error: str | None = None) -> list[
     n = int(doc["count"])
     out = []
     cover, cmin = doc.get("cover"), float(doc.get("cover_min") or 0.85)
+    over, omax = doc.get("overreach"), float(doc.get("overreach_max") or 1.6)
+    short = cover is not None and float(cover) < cmin
+    too_big = over is not None and float(over) > omax
+    if short and too_big:
+        # Too few boxes in one place and too big in another: one item with one re-fit (the two fixes would undo each other).
+        return [_check("hitbox_cover", False, round(float(cover), 4), cmin, n=n, cover=f"{round(float(cover) * 100)}%",
+                       times=f"{float(over):.1f}", both=True)]
     if cover is not None:
         out.append(_check("hitbox_cover", float(cover) >= cmin, round(float(cover), 4), cmin, n=n, cover=f"{round(float(cover) * 100)}%"))
-    over, omax = doc.get("overreach"), float(doc.get("overreach_max") or 1.6)
     if over is not None:
         out.append(_check("hitbox_overreach", float(over) <= omax, round(float(over), 2), omax, n=n, times=f"{float(over):.1f}"))
     return out

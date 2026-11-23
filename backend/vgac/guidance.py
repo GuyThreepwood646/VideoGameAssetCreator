@@ -685,10 +685,15 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     },
     "hitbox_cover": {
         "severity": "warn",
+        # Both faults on one skeleton (rig.hitbox_checks, vars both): one item. Bigger and smaller would undo each other, so
+        # the one fix is a re-fit with the normal setting; the sentence does not promise that it will fix it (the check re-measures).
         "ok": "{n} hit boxes cover {cover} of the body and follow the skeleton.",
-        "fail": "The hit boxes cover only {cover} of the body, so some hits would pass through.",
-        "fix": lambda c: {"stage": "rig", "params": {"hitbox_fit": "loose"}},
-        "fix_label": "Make the hit boxes bigger",
+        "fail": lambda c: ("The hit boxes are the wrong size in places: they cover only {cover} of the body, so some hits would pass through, "
+                           "and some boxes stick out {times} times the body's size, so other hits would land in thin air."
+                           if _var(c, "both") else "The hit boxes cover only {cover} of the body, so some hits would pass through."),
+        "fix": lambda c: ({"stage": "rig", "params": {"hitbox_fit": "normal"}} if _var(c, "both")
+                          else {"stage": "rig", "params": {"hitbox_fit": "loose"}}),
+        "fix_label": lambda c: "Fit the hit boxes again" if _var(c, "both") else "Make the hit boxes bigger",
     },
     "hitbox_overreach": {
         "severity": "warn",

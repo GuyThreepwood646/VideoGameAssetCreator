@@ -283,9 +283,10 @@ def test_hitbox_checks():
     checks = {c["name"]: c for c in rig.hitbox_checks(doc)}
     assert set(checks) == {"hitbox_cover", "hitbox_overreach"} and all(c["passed"] for c in checks.values())
     assert checks["hitbox_cover"]["vars"] == {"n": 11, "cover": "90%"}
-    bad = {c["name"]: c for c in rig.hitbox_checks(dict(doc, cover=0.6, overreach=3.2))}
-    assert not bad["hitbox_cover"]["passed"] and not bad["hitbox_overreach"]["passed"]
-    assert bad["hitbox_overreach"]["vars"]["times"] == "3.2"
+    # Both faults on one skeleton are one item (honest Ready): the cover check carries both, with one re-fit.
+    bad = rig.hitbox_checks(dict(doc, cover=0.6, overreach=3.2))
+    assert [c["name"] for c in bad] == ["hitbox_cover"] and not bad[0]["passed"]
+    assert bad[0]["vars"]["both"] is True and bad[0]["vars"]["times"] == "3.2"
     failed = rig.hitbox_checks(None, "blender exploded")
     assert [c["name"] for c in failed] == ["hitbox_fit"] and not failed[0]["passed"]
     assert rig.hitbox_checks({"mode": "none", "count": 0}) == []
