@@ -14,6 +14,9 @@ parts_default: []
 topology: quad
 # The step 1 wording below asks for a level, square-on front (vgac/picture_view.py).
 picture_view: front
+# Z-Image Turbo ignores view words at the end of the prompt (step1-view trial 2026-11-22: 0 of 8 square-on); put
+# first, before the description, they gave 8 of 8 (vgac/stages/concept.py, view_lead).
+view_lead: "Straight-on front view at eye level, camera directly in front of the animal, its head toward the camera:"
 input_view_default: quarter
 # Hair-friendly pictures (vgac/hairpic.py): the look's fur sentence only when the description names fur or a mane.
 hair: fur_if_named

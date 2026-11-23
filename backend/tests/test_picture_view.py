@@ -61,3 +61,29 @@ def test_every_painted_category_asks_for_a_level_square_on_front():
         assert c.get("picture_view") == "front", c["id"]
         assert not any(w in block for w in ("three-quarter", "slightly above", "from above", "high angle")), c["id"]
         assert "front" in block and ("eye level" in block or "facing the camera directly" in block), c["id"]
+
+
+LEVEL_ALREADY = ("humanoid", "foliage")  # these already came out square-on with their wording last (golden set)
+
+
+def test_the_view_words_come_first_in_the_step_1_prompt():
+    # Z-Image Turbo ignored square-on wording at the end of the prompt (step1-view trial 2026-11-22: 0 of 8 square-on) and
+    # followed it at the start (8 of 8), so every painted category but these two leads with its view words.
+    for c in reference.categories():
+        if c["id"] in ("material",) + LEVEL_ALREADY:
+            continue
+        lead = c.get("view_lead") or ""
+        assert lead.startswith("Straight-on front view") and "eye level" in lead, c["id"]
+        prompt, view = concept.prompt_and_view(_sc(c["id"]), {})
+        assert prompt.startswith(lead + " a sturdy knight"), c["id"]
+        assert view == "front", c["id"]
+        assert prompt.count(lead) == 1, c["id"]
+
+
+def test_no_view_lead_without_the_category_wording(monkeypatch):
+    lead = reference.category("prop_rigid")["view_lead"]
+    assert lead not in concept.prompt_and_view(_sc("prop_rigid"), {"readiness_block": False})[0]
+    from vgac import items
+
+    monkeypatch.setattr(items, "concept_prompt_parts", lambda _a: {"pose_block": "The sword is shown alone, upright."})
+    assert lead not in concept.prompt_and_view(_sc("prop_rigid"), {})[0]
