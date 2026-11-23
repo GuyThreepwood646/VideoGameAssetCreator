@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import dataclasses
 import math
 import os
 import time
@@ -2315,12 +2316,56 @@ def _silhouette_refused(v: "View") -> bool:
     return "silhouette" in str(v.info.get("refused", ""))
 
 
+HALF_TURN_MARGIN = 0.40  # an object's pose and its half-turn partner within this on the search's score: the outline and the
+                         # colour cannot tell the two halves apart (tuned on the WP-50 crate, gaps up to 0.34; the closest
+                         # asymmetric object seen, the cottage, 0.54; proved on a held-out set, bakeoff/posefit)
+HALF_TURN_OUTLINE = 0.01  # the partner's search outline passes the outline bar, or is at least the best pose's less this
+                          # (both can sit just under the bar while the full-size fit passes it: the crate at turn 60,
+                          # 0.8454 and 0.8488)
+HALF_TURN_FAR = 110.0    # the best pose this far from the facing the app knows ...
+HALF_TURN_NEAR = 70.0    # ... and its partner this near it: the partner is taken (a pose 90 from it never switches)
+
+
+def _half_turn_guard(mesh: dict[str, np.ndarray], alpha: np.ndarray, pic: np.ndarray, tex: np.ndarray, centre: np.ndarray,
+                     scale: float, poses: list[Any], ref: float, min_iou: float,
+                     turn_limit: tuple[float, float] | None) -> tuple[Any, list[Any], dict[str, Any]]:
+    """An object's pose search has no expected turn, so a model that looks alike from opposite sides (a crate) can score
+    its back half above its front. The best pose's half-turn partner, refined by the search's own refine, replaces it
+    when its outline passes the bar or is as good (HALF_TURN_OUTLINE), scores within HALF_TURN_MARGIN, and lies on the side of the facing the app knows
+    (`ref`: the build view's turn from the model's front) while the best pose does not. The abandoned half and the
+    search's poses near it are no longer rivals: the guard decides between the halves and never refuses.
+    Returns (pose, poses, record)."""
+    from . import posesearch as ps
+
+    top = poses[0]
+    rec: dict[str, Any] = {"ref": round(ref, 1), "best": [round(top.turn, 2), round(top.tilt, 2), top.lens, round(top.score, 4),
+                                                         round(top.iou, 4)]}
+    if _angdiff(top.turn, ref) <= HALF_TURN_FAR:
+        rec["decision"] = "kept: the best pose is on the facing's side"
+        return top, poses, rec
+    start = ps.Pose(float(top.turn) + 180.0, float(top.tilt), top.lens, 0.0)
+    if turn_limit is not None and _angdiff(start.turn, turn_limit[0]) > turn_limit[1]:
+        rec["decision"] = "kept: the half turn is outside the turns searched"
+        return top, poses, rec
+    part = ps.refine(mesh, alpha, centre, scale, start, rgb=pic, tex=tex, turn_limit=turn_limit)
+    part = dataclasses.replace(part, turn=_signed(part.turn))  # the turn as the search gives its own, within +-180
+    rec["partner"] = [round(part.turn, 2), round(part.tilt, 2), part.lens, round(part.score, 4), round(part.iou, 4)]
+    if (part.iou < min(min_iou, top.iou - HALF_TURN_OUTLINE) or top.score - part.score > HALF_TURN_MARGIN
+            or _angdiff(part.turn, ref) >= HALF_TURN_NEAR):
+        rec["decision"] = "kept: the half turn misses the outline, scores lower or is not nearer the facing"
+        return top, poses, rec
+    rec["decision"] = "switched"
+    rest = [p for p in poses if max(_angdiff(p.turn, top.turn), abs(p.tilt - top.tilt)) > D2_FAR_DEG]
+    return part, [part, *rest], rec
+
+
 def _pose_fit(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared", src: Any, src_n: int | None, name: str,
               centre: np.ndarray, scale: float, size: int, min_iou: float, atlas_job: Any,
               log: Callable[[str], None] | None, hint: float | None = None,
               turns: list[float] | None = None, tilts: list[float] | None = None,
               lenses: list[float | None] | None = None, prior: float | None = None, window: float = PRIOR_DEG,
-              keep: int = 3, turn_limit: tuple[float, float] | None = None, breadth: int = 1) -> tuple["View | None", dict[str, Any]]:
+              keep: int = 3, turn_limit: tuple[float, float] | None = None, breadth: int = 1,
+              half_turn_ref: float | None = None) -> tuple["View | None", dict[str, Any]]:
     """WP-61: the pose search (turn, tilt, lens) for one picture, then the D2 check, then the fit at the picked pose.
     hint: the turn the view is meant to be seen from; the search covers turns within POSE_HINT_DEG of it (None: all turns).
     prior: the turn the picture is expected at, window: how far from it a pose still agrees (_settle_by_prior); the
@@ -2330,7 +2375,7 @@ def _pose_fit(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared"
     Returns (view, record). The view is None when the search fails outright (the caller keeps its turn-only fit, logged);
     otherwise it is ok, or refused for D2 (the reason names the rival) or for its silhouette."""
     picked = _pose_pick(mesh, tex, prepared, src, src_n, name, centre, scale, min_iou, atlas_job, log, hint, turns, tilts,
-                        lenses, prior, window, keep, turn_limit, breadth)
+                        lenses, prior, window, keep, turn_limit, breadth, half_turn_ref)
     return _pose_view(mesh, tex, prepared, src, src_n, name, centre, scale, size, min_iou, log, picked)
 
 
@@ -2339,7 +2384,7 @@ def _pose_pick(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared
                hint: float | None = None, turns: list[float] | None = None, tilts: list[float] | None = None,
                lenses: list[float | None] | None = None, prior: float | None = None, window: float = PRIOR_DEG,
                keep: int = 3, turn_limit: tuple[float, float] | None = None,
-               breadth: int = 1) -> tuple[Any, dict[str, Any], str | None]:
+               breadth: int = 1, half_turn_ref: float | None = None) -> tuple[Any, dict[str, Any], str | None]:
     """_pose_fit's choice of pose, before the picture is fitted at it at full size: (pose or None when the search failed
     outright, record, refusal reason or None). The record is ready as soon as this returns (the drawn views take the
     step 1 picture's tilt and lens from it while the picture itself is still being fitted)."""
@@ -2361,6 +2406,14 @@ def _pose_pick(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared
     top = poses[0]
     refuse_why = None
     prior_rec: dict[str, Any] | None = None
+    half_rec: dict[str, Any] | None = None
+    if half_turn_ref is not None:
+        t_h = time.time()
+        top, poses, half_rec = _half_turn_guard(mesh, alpha, pic, tex, centre, scale, poses, float(half_turn_ref), min_iou,
+                                                turn_limit)
+        tm["half_turn"] = round(time.time() - t_h, 2)
+        if log and half_rec.get("decision") == "switched":
+            log(f"view {name}: the half turn nearer the facing taken: {half_rec}")
     if prior is not None:  # also when the best pose misses the outline bar: the expected turn still decides (round 5)
         t_s = time.time()
         top, prior_rec, refuse_why = _settle_by_prior(mesh, alpha, pic, tex, centre, scale, poses, float(prior), min_iou,
@@ -2373,6 +2426,8 @@ def _pose_pick(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared
         rec["prior"] = prior_rec
         if log and prior_rec["decision"] != "kept":
             log(f"view {name}: {prior_rec['decision']} by the expected turn {prior:.0f}: {prior_rec}")
+    if half_rec is not None:
+        rec["half_turn"] = half_rec
     t_d = time.time()
     lab = face.to_lab(np.clip(small(pic, D2_N)[..., :3], 0.0, 1.0))
     valid = small(alpha, D2_N) > 0.5
@@ -2467,7 +2522,8 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
                      else 0.0)
             pv, _ = _pose_fit(mesh, tex, prepared, src, pic_n, name, centre, scale, size, bar, atlas_job, log,
                               turns=wide if front_known else None, prior=prior,
-                              breadth=_breadth(wide if front_known else ps_turns()) if objects else 1)
+                              breadth=_breadth(wide if front_known else ps_turns()) if objects else 1,
+                              half_turn_ref=float(head_yaw) if objects else None)
             if pv is not None and (pv.ok or not _silhouette_refused(pv)):
                 return pv
             return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, bar, log=log, outlines=outlines)
@@ -2530,7 +2586,8 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         picture_pick_job = pool.submit(contextvars.copy_context().run, _pose_pick, mesh, tex, prepared, picture, pic_n,
                                        "picture", centre, scale, min_iou, atlas_job, log, None, picture_turns, None, None,
                                        None if objects else picture_prior, PRIOR_DEG, 3, picture_limit,
-                                       _breadth(picture_turns) if objects else 1)
+                                       _breadth(picture_turns) if objects else 1,
+                                       float(head_yaw) + picture_prior if objects else None)
         picture_pose_job = pool.submit(contextvars.copy_context().run, lambda: _pose_view(
             mesh, tex, prepared, picture, pic_n, "picture", centre, scale, size, min_iou, log, picture_pick_job.result()))
         jobs = {n: pool.submit(fit, n, s, y) for n, s, y in wanted}

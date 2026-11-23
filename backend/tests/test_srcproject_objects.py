@@ -23,13 +23,20 @@ WALLS = {
 }
 
 
-def box() -> tuple[dict[str, np.ndarray], np.ndarray]:
-    """The box and its true texture: each wall an 8 x 8 grid with its own island, coloured with its own stripes."""
+def box(alike: bool = False) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """The box and its true texture: each wall an 8 x 8 grid with its own island, coloured with its own stripes. alike:
+    the back wall is coloured and striped as the front, and the left as the right, so the box looks the same after a
+    half turn (a crate)."""
     verts, faces, uv = [], [], []
     tex = np.full((T, T, 3), 0.4)
     n = 8
-    for k, (o, e1, e2, col, stripe) in enumerate(WALLS.values()):
+    walls = list(WALLS.values())
+    if alike:
+        walls[2] = walls[2][:3] + walls[0][3:]
+        walls[3] = walls[3][:3] + walls[1][3:]
+    for k, (o, e1, e2, col, stripe) in enumerate(walls):
         u0, v0 = 0.04 + 0.32 * (k % 3), 0.04 + 0.48 * (k // 3)
+        ks = {2: 0, 3: 1}.get(k, k) if alike else k  # the stripes' slant: the same on walls that are alike
         base = len(verts)
         for j in range(n + 1):
             for i in range(n + 1):
@@ -44,7 +51,7 @@ def box() -> tuple[dict[str, np.ndarray], np.ndarray]:
         tex[y0:y1, x0:x1] = col
         # stripes at a slant that differs per wall, so no two walls look alike in detail either
         ys, xs = np.mgrid[y0:y1, x0:x1]
-        tex[y0:y1, x0:x1][((xs * (k + 1) + ys * 2) // 6) % 3 == 0] = stripe
+        tex[y0:y1, x0:x1][((xs * (ks + 1) + ys * 2) // 6) % 3 == 0] = stripe
     v, f = np.array(verts, dtype=np.float64), np.array(faces)
     return {"verts": v, "faces": f, "uv": np.array(uv), "vnormals": face.smooth_normals(v, f)}, tex
 
@@ -94,10 +101,11 @@ def test_a_character_picture_keeps_its_expected_turn(scene, monkeypatch: pytest.
     real = srcproject._pose_pick
 
     def spy(mesh, tex, prepared, src, src_n, name, centre, scale, min_iou, atlas_job, log, hint=None, turns=None,  # noqa: ANN001
-            tilts=None, lenses=None, prior=None, window=srcproject.PRIOR_DEG, keep=3, turn_limit=None, breadth=1):
-        seen[(cat, name)] = (prior, sorted(turns) if turns else None, turn_limit, breadth)
+            tilts=None, lenses=None, prior=None, window=srcproject.PRIOR_DEG, keep=3, turn_limit=None, breadth=1,
+            half_turn_ref=None):
+        seen[(cat, name)] = (prior, sorted(turns) if turns else None, turn_limit, breadth, half_turn_ref)
         return real(mesh, tex, prepared, src, src_n, name, centre, scale, min_iou, atlas_job, log, hint, turns, tilts,
-                    lenses, prior, window, keep, turn_limit, breadth)
+                    lenses, prior, window, keep, turn_limit, breadth, half_turn_ref)
 
     monkeypatch.setattr(srcproject, "_pose_pick", spy)
     pic = drawn(mesh, tex, 40.0, 0.0)
@@ -106,9 +114,25 @@ def test_a_character_picture_keeps_its_expected_turn(scene, monkeypatch: pytest.
     q = srcproject.INTENDED_TURN["quarter"]
     want = sorted(q + float(d) for d in np.arange(-srcproject.PICTURE_SEARCH_DEG, srcproject.PICTURE_SEARCH_DEG + 1e-6, 10.0))
     for cat in ("humanoid", None):
-        assert seen[(cat, "picture")] == (q, want, (q, srcproject.PICTURE_SEARCH_DEG), 1)
-        assert seen[(cat, "source")][0] is not None and seen[(cat, "source")][3] == 1
+        assert seen[(cat, "picture")] == (q, want, (q, srcproject.PICTURE_SEARCH_DEG), 1, None)
+        assert seen[(cat, "source")][0] is not None and seen[(cat, "source")][3:] == (1, None)
     assert seen[("humanoid", "source")] == seen[(None, "source")]
     assert seen[("prop_rigid", "picture")][0] is None and len(seen[("prop_rigid", "picture")][1]) == 36
     assert seen[("prop_rigid", "picture")][3] == 4   # the whole circle: four times the outline poses get the colour terms
     assert seen[("prop_rigid", "source")][0] is None
+    assert seen[("prop_rigid", "picture")][4] == q and seen[("prop_rigid", "source")][4] == 0.0  # the half-turn guard's facing
+
+
+@pytest.mark.parametrize("head_yaw, want", [(0.0, 30.0), (180.0, 210.0)])
+def test_a_box_alike_after_a_half_turn_paints_on_the_half_nearer_the_facing(head_yaw: float, want: float) -> None:
+    """A crate-like box (the back looks like the front) drawn at turn 30: the outline and the colour fit turn 210 as well,
+    and the half-turn guard takes the half nearer the facing the app knows (head_yaw plus the build view's turn). With
+    the facing turned a half turn the other half is taken, so the guard, not chance, decides."""
+    mesh, tex = box(alike=True)
+    soft = np.clip(np.stack([face.blur(tex[..., c], 1.5) for c in range(3)], -1) * 0.9, 0, 1)
+    lines: list[str] = []  # with a log, as the clean-up calls it (a record read for the log must exist for objects too)
+    r = paint_as("prop_rigid", mesh, soft, drawn(mesh, tex, 30.0, 20.0), mode="off", size=SIZE, built_from="front",
+                 head_yaw=head_yaw, log=lines.append)
+    v = r["metrics"]["srcproject_views"]["picture"]
+    assert "refused" not in v, v.get("refused")
+    assert srcproject._angdiff(v["yaw"], want) <= 10.0, (v["yaw"], v["pose_search"].get("half_turn"))
