@@ -984,9 +984,27 @@ async def fidelity_checks(sc: StageContext, rec: dict[str, Any], input_view: str
             if not hairlib.is_library(sc) and not (mv is not None and (mv.params or {}).get("picture_edit")):
                 orig = sc.lineage_file("cutout", ("concept",))
             original = orig is not None and Path(orig).is_file()
-            pic = Path(orig) if original else _input_image(sc, input_view or sc.category.get("input_view_default") or "concept")
+            view = input_view or sc.category.get("input_view_default") or "concept"
+            try:
+                built_from: Path | None = _input_image(sc, view)
+            except FileNotFoundError:
+                if not original:
+                    raise
+                built_from = None
+            pic = Path(orig) if original else built_from
             fid = await asyncio.to_thread(texfidelity.measure_for_stage, glb, pic, base)
             fid["against"] = "original" if original else "built_from"
+            front = sc.lineage_file("front_cutout", ("turnaround",)) if original else None
+            redrawn = texfidelity.outline_overlap(orig, front) if front is not None and Path(front).is_file() else None
+            if redrawn is not None:
+                fid["step1_vs_drawn_front"] = redrawn
+            if redrawn is not None and redrawn < texfidelity.REDRAWN_IOU and not fid.get("fit_ok") and built_from is not None and Path(built_from) != Path(orig):
+                # step 2 redrew the picture (a new pose or view) and the model was built from the redrawn views: when the
+                # step 1 picture does not line up, the built-from picture is compared, and the record says so
+                alt = await asyncio.to_thread(texfidelity.measure_for_stage, glb, built_from, base)
+                if alt.get("fit_ok"):
+                    fid = {**alt, "against": "built_from", "why": "redrawn", "step1_vs_drawn_front": redrawn,
+                           "original_silhouette_iou": fid.get("silhouette_iou")}
         except Exception as e:  # noqa: BLE001  (no picture to compare with)
             fid = {"error": str(e)[:200]}
         sc.set_metrics(texture_fidelity=fid)

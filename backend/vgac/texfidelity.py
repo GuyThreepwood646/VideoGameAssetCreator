@@ -42,6 +42,9 @@ LOWPASS_FRAC = 0.02   # colour low-pass sigma, as a share of the frame
 ALPHA_OPAQUE = 128
 FRONT_IOU_OK = 0.85  # a model whose front already fits the picture this well is not turned
 IOU_FIT_MIN = 0.80    # below this the render and the picture do not line up well enough to trust the numbers
+# Camera heights (degrees looking down) tried when the level camera does not fit: most step 1 pictures look down on the
+# subject a little. On the golden set the crate's fit rose from 0.77 level to 0.93 at 15 (bakeoff/facing/tiltfit.json).
+FIT_TILTS = (15.0, 30.0)
 
 # Report-only limits for the two checks (set from the bake-off baseline, docs/TEXTURE-FIDELITY-PLAN.md).
 SHARP_RATIO_MIN = 0.5
@@ -192,19 +195,19 @@ def _pad_to(mask: np.ndarray, size: int) -> np.ndarray:
     return m
 
 
-def _frame_camera(mesh: dict[str, np.ndarray], yaw: float, pic_extent_px: float, size: int) -> face.Camera:
+def _frame_camera(mesh: dict[str, np.ndarray], yaw: float, pic_extent_px: float, size: int, tilt: float = 0.0) -> face.Camera:
     """A camera whose render has the figure about as many pixels across as the picture does, so the picture is hardly
     resampled and sharpness compares at one scale."""
     v = mesh["verts"]
     lo, hi = v.min(0), v.max(0)
     centre = (lo + hi) / 2
-    cam0 = face.Camera(target=centre, yaw_deg=yaw, scale=float(np.linalg.norm(hi - lo)) * 1.5, size=size)
+    cam0 = face.Camera(target=centre, yaw_deg=yaw, scale=float(np.linalg.norm(hi - lo)) * 1.5, size=size, tilt_deg=tilt)
     p, _ = cam0.project(v)
     ext = float(max(np.ptp(p[:, 0]), np.ptp(p[:, 1])))
     scale = cam0.scale * ext / max(pic_extent_px, 1.0)
     # never let the figure leave the frame
     scale = max(scale, cam0.scale * ext / (size * 0.96))
-    return face.Camera(target=centre, yaw_deg=yaw, scale=scale, size=size)
+    return face.Camera(target=centre, yaw_deg=yaw, scale=scale, size=size, tilt_deg=tilt)
 
 
 # --- the measures --------------------------------------------------------------------------------------------
@@ -256,10 +259,10 @@ def compare(render: np.ndarray, render_mask: np.ndarray, pic: np.ndarray, pic_ma
 
 
 def _front_candidate(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, pic_mask: np.ndarray, yaw: float, size: int,
-                     want_images: bool) -> dict[str, Any]:
+                     want_images: bool, tilt: float = 0.0) -> dict[str, Any]:
     ys, xs = np.nonzero(pic_mask)
     extent = float(max(np.ptp(xs), np.ptp(ys)) + 1) * size / max(pic.shape[:2])
-    cam = _frame_camera(mesh, yaw, extent, size)
+    cam = _frame_camera(mesh, yaw, extent, size, tilt)
     r = face.render_view(mesh, tex, cam, background=0.5)
     pic_sq = _pad_square(pic)
     mask_sq = _pad_square(pic_mask)
@@ -270,7 +273,7 @@ def _front_candidate(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarr
     # Both sides at 8 bits, as a texture or a picture on disk is: float rendering would show less quantisation noise than the picture.
     r["image"] = face.to_uint8(r["image"]).astype(np.float64) / 255.0
     m = compare(r["image"], r["mask"], warped, wmask)
-    res = {"yaw": yaw, "silhouette_iou": round(fit["iou"], 4), "fit_scale": round(fit["scale"], 3), "fit_shift_px": [round(fit["tx"], 1), round(fit["ty"], 1)], **m}
+    res = {"yaw": yaw, "tilt": tilt, "silhouette_iou": round(fit["iou"], 4), "fit_scale": round(fit["scale"], 3), "fit_shift_px": [round(fit["tx"], 1), round(fit["ty"], 1)], **m}
     if want_images:
         res["_images"] = {"render": r["image"], "picture": warped, "render_mask": r["mask"], "picture_mask": wmask}
     return res
@@ -290,13 +293,16 @@ def score(glb: Path | str, picture: Path | str | np.ndarray | Image.Image, base_
     pic, pic_mask = load_picture(picture)
     if pic_mask.sum() < 100:
         return {"error": "the picture has no cut-out to compare against"}
-    tried: dict[float, dict[str, Any]] = {}
+    tried: dict[tuple[float, float], dict[str, Any]] = {}
 
-    def run(y: float) -> dict[str, Any]:
-        y = float(y) % 360
-        if y not in tried:
-            tried[y] = _front_candidate(mesh, tex, pic, pic_mask, y, size, keep_images)
-        return tried[y]
+    def run(y: float, t: float = 0.0) -> dict[str, Any]:
+        k = (float(y) % 360, float(t))
+        if k not in tried:
+            tried[k] = _front_candidate(mesh, tex, pic, pic_mask, k[0], size, keep_images, k[1])
+        return tried[k]
+
+    def best_iou() -> float:
+        return max(r["silhouette_iou"] for r in tried.values())
 
     if yaw != "auto":
         run(float(yaw))
@@ -309,7 +315,19 @@ def score(glb: Path | str, picture: Path | str | np.ndarray | Image.Image, base_
             top = max(tried.values(), key=lambda r: r["silhouette_iou"])["yaw"]
             for dy in (-30, -15, 15, 30):
                 run(top + dy)
-    top_iou = max(r["silhouette_iou"] for r in tried.values())
+        if best_iou() < IOU_FIT_MIN:
+            # the level camera does not line up: a picture drawn from above. The two best turns at each camera height,
+            # then 15 degree steps around the best of those (a level fit that already lines up is never re-searched)
+            level = sorted(tried.values(), key=lambda r: -r["silhouette_iou"])
+            tops = [level[0]["yaw"]] + [r["yaw"] for r in level[1:] if _yaw_apart(r["yaw"], level[0]["yaw"]) >= 45][:1]
+            for t in FIT_TILTS:
+                for y in tops:
+                    run(y, t)
+            b = max(tried.values(), key=lambda r: r["silhouette_iou"])
+            if b["tilt"]:
+                for dy in (-15, 15):
+                    run(b["yaw"] + dy, b["tilt"])
+    top_iou = best_iou()
     # A boxy or round subject fits the silhouette at several turns: among the turns that fit about equally well, the one
     # whose low-pass colour agrees best with the picture wins.
     pool = [r for r in tried.values() if r["silhouette_iou"] >= top_iou - 0.03]
@@ -330,6 +348,11 @@ def score(glb: Path | str, picture: Path | str | np.ndarray | Image.Image, base_
     if keep_images and "_images" in best:
         out["_images"] = best["_images"]
     return out
+
+
+def _yaw_apart(a: float, b: float) -> float:
+    d = abs(float(a) - float(b)) % 360
+    return min(d, 360 - d)
 
 
 def save_comparison(result: dict[str, Any], dest: Path | str) -> Path | None:
@@ -357,6 +380,37 @@ def save_comparison(result: dict[str, Any], dest: Path | str) -> Path | None:
     Path(dest).parent.mkdir(parents=True, exist_ok=True)
     sheet.save(dest)
     return Path(dest)
+
+
+# --- whether step 2 redrew the picture ------------------------------------------------------------------------
+
+# The step 1 picture's outline against step 2's drawn front, each cropped to its figure and scaled to one height: below
+# this, step 2 redrew the subject (the golden knight's arms-down picture became a T-pose: 0.69; the wheelbarrow's
+# three-quarter picture a true front: 0.56; every other golden build 0.92 or more), and a model built from the redrawn
+# views is compared with the built-from picture when the step 1 picture does not line up.
+REDRAWN_IOU = 0.85
+OUTLINE_N = 128
+
+
+def _outline(path: Path | str) -> np.ndarray | None:
+    a = np.asarray(Image.open(path).convert("RGBA"))[..., 3] > ALPHA_OPAQUE
+    ys, xs = np.nonzero(a)
+    if len(xs) < 20:
+        return None
+    c = a[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+    w = min(2 * OUTLINE_N, max(1, int(round(c.shape[1] * OUTLINE_N / c.shape[0]))))
+    r = np.asarray(Image.fromarray((c * 255).astype(np.uint8)).resize((w, OUTLINE_N), Image.BILINEAR)) >= 128
+    out = np.zeros((OUTLINE_N, 2 * OUTLINE_N), bool)
+    x0 = (2 * OUTLINE_N - w) // 2
+    out[:, x0:x0 + w] = r
+    return out
+
+
+def outline_overlap(a: Path | str, b: Path | str) -> float | None:
+    """IoU of two cut-outs' outlines, each cropped to its figure, scaled to one height and centred (scale and shift free).
+    None when either has no cut-out."""
+    oa, ob = _outline(a), _outline(b)
+    return None if oa is None or ob is None else round(_iou(oa, ob), 4)
 
 
 # --- report-only quality checks --------------------------------------------------------------------------------
@@ -404,7 +458,7 @@ def texture_checks_for(glb: Path | str, picture: Path | str | np.ndarray | Image
         return []
 
 
-STAGE_KEYS = ("yaw", "silhouette_iou", "fit_ok", "ssim", "delta_e", "delta_l", "delta_chroma", "sharpness_ratio")
+STAGE_KEYS = ("yaw", "tilt", "silhouette_iou", "fit_ok", "ssim", "delta_e", "delta_l", "delta_chroma", "sharpness_ratio")
 
 
 def measure_for_stage(glb: Path | str, picture: Path | str, base_color: Path | str | None = None) -> dict[str, Any]:
