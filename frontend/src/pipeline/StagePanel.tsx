@@ -825,7 +825,7 @@ function StageViewer({ stage, version, asset, viewTool, onFix, category, assetNa
     case 'rig':
       return (
         <>
-          <RigView version={version} />
+          <RigView version={version} category={category} />
           <ShapeTab version={version} onChanged={onChanged} />
         </>
       )
