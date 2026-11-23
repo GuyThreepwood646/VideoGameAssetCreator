@@ -10,7 +10,7 @@ size_axis: horizontal
 size_word: long
 size_label: "How long is it?"
 size_hint: "In metres, front to back. A car is about 4.5 m; a tank about 7 m."
-parts_default: [wheels, doors]
+parts_default: [wheels]  # a door is named from the item (declared_parts.item_defaults)
 topology: triangle
 # The step 1 wording below asks for a level, square-on front (vgac/picture_view.py).
 picture_view: front

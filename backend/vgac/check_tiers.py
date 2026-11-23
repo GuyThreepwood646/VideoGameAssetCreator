@@ -21,6 +21,7 @@ from typing import Any
 from .check_headlines import headline_for
 
 NEAR_MISS = 0.05
+BOTH_HITBOX_HEADLINE = "The hit boxes are the wrong size in places"
 
 TIERS: list[dict[str, str]] = [
     {"id": "likely", "label": "Likely to show in the game"},
@@ -35,15 +36,15 @@ DEFAULT_TIER = "look"
 _LIKELY = """
 size_m facing_tests clips_face_forward skin_not_metal materials_connected normal_map_upright baked_light uv_set
 bones single_root weight_coverage legs_moved wings_found clips controller_ready library_missing unity_import
-collider_present limb_joins model_whole
+collider_present limb_joins model_whole hitbox_cover hitbox_overreach moving_parts
 """
 _LOOK = """
 triangle_budget manifold watertight silhouette_iou seam_error openings_clear grid_fit placement_exact
 textures_full_size metal_mixed albedo_range texture_padding atlas_used texture_sharp texture_matches_picture
 texture_colour_matches_picture bake_matches picture_projection neck_join look_applied face_matches_picture face_finder
 hair_matches_picture hair_fit hair_skin_through hair_bound hair_off_eyes max_influences weights_normalised fingers
-clips_loop library_clips rig_restore moving_parts unity_humanoid_avatar collider_vertices lod_count
-hitbox_cover hitbox_overreach hitbox_fit grip_found item_clear_of_body item_above_ground one_subject in_frame big_enough
+clips_loop library_clips rig_restore moving_cut unity_humanoid_avatar collider_vertices lod_count
+hitbox_fit grip_found item_clear_of_body item_above_ground one_subject in_frame big_enough
 same_side facing joins height_m tiles_cleanly
 """
 _ADVICE = """
@@ -132,6 +133,15 @@ def tier_of(check: dict[str, Any]) -> str:
     return tier_for(str(check.get("id") or check.get("name") or ""))
 
 
+def is_problem(check: dict[str, Any]) -> bool:
+    """A failed check that counts against the asset: failed, and actually measured. A check that could not be measured
+    (quality.not_measured, vars.measured False) is a note on the finished page, never a problem: it never makes an asset
+    not ready and never stops autopilot."""
+    if bool(check.get("passed", check.get("ok", True))):
+        return False
+    return (check.get("vars") or {}).get("measured") is not False
+
+
 def annotate_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     """A copy of metrics with `tier` (and `near_miss` when true) on every failed check; the stored metrics never change, so a
     change to this table reaches versions made before it. Never raises."""
@@ -146,7 +156,10 @@ def annotate_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
                 continue
             d = dict(c)
             d["tier"] = tier_of(c)
-            hl = None if (c.get("vars") or {}).get("measured") is False else headline_for(str(c.get("id") or c.get("name") or ""))
+            if (c.get("vars") or {}).get("both"):  # the hit boxes too small and too big in places: one item (rig.hitbox_checks)
+                hl = BOTH_HITBOX_HEADLINE
+            else:
+                hl = None if (c.get("vars") or {}).get("measured") is False else headline_for(str(c.get("id") or c.get("name") or ""))
             if hl:
                 d["headline"] = hl
             if is_near_miss(c):

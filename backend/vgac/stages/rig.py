@@ -99,9 +99,15 @@ def hitbox_checks(doc: dict[str, Any] | None, error: str | None = None) -> list[
     n = int(doc["count"])
     out = []
     cover, cmin = doc.get("cover"), float(doc.get("cover_min") or 0.85)
+    over, omax = doc.get("overreach"), float(doc.get("overreach_max") or 1.6)
+    short = cover is not None and float(cover) < cmin
+    too_big = over is not None and float(over) > omax
+    if short and too_big:
+        # Too few boxes in one place and too big in another: one item with one re-fit (the two fixes would undo each other).
+        return [_check("hitbox_cover", False, round(float(cover), 4), cmin, n=n, cover=f"{round(float(cover) * 100)}%",
+                       times=f"{float(over):.1f}", both=True)]
     if cover is not None:
         out.append(_check("hitbox_cover", float(cover) >= cmin, round(float(cover), 4), cmin, n=n, cover=f"{round(float(cover) * 100)}%"))
-    over, omax = doc.get("overreach"), float(doc.get("overreach_max") or 1.6)
     if over is not None:
         out.append(_check("hitbox_overreach", float(over) <= omax, round(float(over), 2), omax, n=n, times=f"{float(over):.1f}"))
     return out
@@ -156,7 +162,7 @@ async def _skip(sc: StageContext, reason: str, src: Path | None) -> None:
     checks = quality.rig_checks({"bones": 0}, rig_expected=False, moving_parts=moving)
     cut = await _cut_moving_parts(sc, src)
     if cut is not None:
-        checks.append(cut)
+        checks.extend(cut)
     sc.set_metrics(**quality.summarise(checks))
 
 
@@ -177,7 +183,7 @@ def moving_points_for(sc: StageContext) -> list[dict[str, Any]]:
     return [{**r, "locations": [[round(float(v), 4) for v in loc] for loc in r["locations"]]} for r in rows]
 
 
-async def _cut_moving_parts(sc: StageContext, src: Path | None) -> dict[str, Any] | None:
+async def _cut_moving_parts(sc: StageContext, src: Path | None) -> list[dict[str, Any]] | None:
     """Hinged lids and doors, spinning wheels and sliding drawers on an object with no skeleton (blender/moving_parts.py,
     WP-29). Each placed part is cut from the model, capped, and put under a still pivot node and a moving node with its
     clips; rig.glb becomes that model at rest and anim.glb the same with the clips (anim_clips.json beside it, as the
@@ -189,8 +195,8 @@ async def _cut_moving_parts(sc: StageContext, src: Path | None) -> dict[str, Any
         return None
     sc.set_params(**{MOVING_PARAM: points or None})
     unplaced = declared_parts.unplaced_moving(sc.asset.parts or [], points)
-    missing: list[str] = []
     done: list[str] = []
+    pass_failed: str | None = None  # why the Blender pass could not run (moving_cut), when it could not
     if points and src is not None:
         sc.progress(0.3, "cutting the moving parts free")
         rig_glb, anim_glb = sc.dir / "rig.glb", sc.dir / "anim.glb"
@@ -220,12 +226,22 @@ async def _cut_moving_parts(sc: StageContext, src: Path | None) -> dict[str, Any
         cut["parts"] = [{k: r.get(k) for k in ("name", "kind", "piece", "node", "how", "amount", "unit", "clips")} for r in rep.get("parts", [])]
         cut["clips"] = [c.get("name") for c in rep.get("clips", [])]
         sc.set_metrics(moving_cut=cut)
-        done = sorted({r["name"] for r in rep.get("parts", [])}) if rep.get("ok") else []
-        missing = [p["name"] for p in points if p["name"] not in done]
+        if rep.get("ok"):
+            done = sorted({r["name"] for r in rep.get("parts", [])})
+        else:
+            pass_failed = str(rep.get("reason") or "the Blender pass did not finish")
     elif points:
-        missing = [p["name"] for p in points]
-    return quality.check("moving_parts", not unplaced and not missing, len(done), len(declared) or len(points),
-                         vars={"moved": done, "unplaced": unplaced, "not_found": missing})
+        pass_failed = "there is no model to cut the parts from"
+    # moving_parts (likely to show): a declared part with no points, or a point that found no piece when the pass ran.
+    # moving_cut (worth a look): the Blender pass itself failed, so the points could not be tried; a retry may fix it.
+    missing = [] if pass_failed else [p["name"] for p in points if p["name"] not in done]
+    checks: list[dict[str, Any]] = []
+    if unplaced or not pass_failed:
+        checks.append(quality.check("moving_parts", not unplaced and not missing, len(done), len(declared) or len(points),
+                                    vars={"moved": done, "unplaced": unplaced, "not_found": missing}))
+    if pass_failed:
+        checks.append(quality.check("moving_cut", False, 0, len(points), vars={"reason": pass_failed}))
+    return checks
 
 
 def guard_budget(sc: StageContext, src: Path) -> None:
@@ -982,6 +998,11 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
         sc.progress(0.75, "making the moves")
         await sc.blender("procanim.py", args, log_name="procanim.log", timeout=sc.settings.blender_timeout_seconds)
         report_path, clips_path = sc.dir / "anim_anim.json", sc.dir / "anim_clips.json"
+        if not anim_glb.is_file():
+            # F14: Blender exits 0 when the script stops on an error, so a missing anim.glb is the only sign of it.
+            # Every chosen move is then missing, so the step's clips check names them.
+            sc.set_metrics(clips=[], missing_clips=list(moves) if isinstance(moves, (list, tuple)) else [])
+            raise RuntimeError("the moves script stopped before writing anim.glb: " + _log_error(sc.dir / "procanim.log"))
         sc.register("anim_glb", anim_glb)
         if clips_path.is_file():
             sc.register("anim_clips", clips_path)
@@ -997,6 +1018,17 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
         await _after_moves(sc, anim_glb, params)
     except Exception as e:
         sc.set_metrics(anim_error=str(e)[:500])
+
+
+def _log_error(log: Path) -> str:
+    """The end of the last Python traceback in a Blender log (its last 3 lines), or a note that there is none."""
+    from ..tools import traceback_tail
+
+    try:
+        text = log.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "no log"
+    return traceback_tail(text) or "no error in the log"
 
 
 async def _after_moves(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> None:
@@ -2013,7 +2045,7 @@ async def judge(sc: StageContext) -> None:
                                     group_per_vertex=sc.version.params.get("group_per_vertex"))
     else:
         checks = quality.rig_checks({"bones": sc.version.metrics.get("bones", 0)}, rig_expected=True)
-    if sc.version.metrics.get("anim_glb") or sc.file("anim_glb"):
+    if sc.version.metrics.get("anim_glb") or sc.file("anim_glb") or sc.version.metrics.get("anim_error"):
         m = sc.version.metrics
         if m.get("rig_restore") is not None:
             checks.append(quality.check("rig_restore", bool(m["rig_restore"].get("ok")), bool(m["rig_restore"].get("ok")), True))

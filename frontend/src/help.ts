@@ -280,7 +280,7 @@ export const CATEGORY_HELP: Record<string, HelpEntry> = {
   serpent: H('Snake or fish', 'A long creature without legs.', 'Gets a spine-chain skeleton; for now it sways rather than slithers.', 'serpent'),
   vehicle: H('Vehicle or mech', 'A car, tank, ship or walking machine.', 'No skeleton; for now it comes out as one solid piece with a collision shape.', 'vehicle'),
   prop_rigid: H('Solid object', 'A solid object that does not bend or open, such as a barrel.', 'No skeleton; just a model with a collision shape.', 'prop_rigid'),
-  prop_articulated: H('Object with moving parts', 'An object with a moving part, such as a chest with a lid.', 'For now it comes out as one solid piece; the lid or door does not open yet.', 'prop_articulated'),
+  prop_articulated: H('Object with moving parts', 'An object with a moving part, such as a chest with a lid.', 'Its moving parts are marked in step 5, then they turn or slide in the game; the moving part is named from the item.', 'prop_articulated'),
   environment: H('Building or scenery piece', 'A piece of scenery that snaps to a grid, such as a wall or floor tile.', 'No skeleton; sized to the grid with its anchor on a corner, so pieces line up.', 'environment'),
   foliage: H('Plant or tree', 'A plant, tree or bush.', 'No skeleton; made to be scattered around a scene.', 'foliage'),
   material: H('Repeating surface', 'A flat, repeating surface such as grass, stone or brick, for floors, walls and ground.', 'Produces a texture only, no 3D model. For a rock, a bush or another object, choose Rigid prop or Foliage.', 'material'),
@@ -761,6 +761,11 @@ const CHECK_TEXT: Record<string, CheckText> = {
   wings_found: (_v, _l, ok) => (ok ? 'Both wings were found, so it can fly and glide.' : 'We could not find the wings in the skeleton, so it walks but cannot fly.'),
   hitbox_cover: (v, _l, ok, _ctx, vars) => {
     const cover = str(vars.cover) || pct(v)
+    // Both faults on one skeleton (backend rig.hitbox_checks, vars.both): one sentence with both halves.
+    if (!ok && vars.both) {
+      const times = str(vars.times) || num(vars.times)?.toFixed(1) || ''
+      return `The hit boxes are the wrong size in places: they cover only ${cover} of the body, so some hits would pass through, and some boxes stick out ${times} times the body's size, so other hits would land in thin air.`
+    }
     return ok ? `${str(vars.n) || 'The'} hit boxes cover ${cover} of the body and follow the skeleton.` : `The hit boxes cover only ${cover} of the body, so some hits would pass through.`
   },
   hitbox_overreach: (v, _l, ok, _ctx, vars) => (ok ? 'The hit boxes stay close to the body.' : `The hit boxes stick out well past the body (${str(vars.times) || num(v)?.toFixed(1) || v} times its size), so hits would land in thin air.`),
@@ -1155,11 +1160,15 @@ export function checkFixNote(check: Check): string | null {
   return check.fix_note?.trim() || null
 }
 
+export const BOTH_HITBOX_FIX_LABEL = 'Fit the hit boxes again'
+
 // Where the app can fix a failing check (the backend's check.fix wins). Passing checks have no fix.
 export function checkFix(check: Check): FixAction | null {
   if (checkPassed(check)) return null
   const id = check.id ?? check.name
-  const label = check.fix?.label || check.fix_label || FIX_LABELS[id] || DEFAULT_FIX_LABEL
+  // The one re-fit for both hit-box faults on one skeleton (vars.both), when the backend's own label is not there.
+  const bothHitboxes = id === 'hitbox_cover' && check.vars?.both === true
+  const label = check.fix?.label || check.fix_label || (bothHitboxes ? BOTH_HITBOX_FIX_LABEL : FIX_LABELS[id]) || DEFAULT_FIX_LABEL
   const f = check.fix
   if (f && f.ui) {
     const tool = FIX_TOOLS[f.ui]
@@ -1179,6 +1188,7 @@ export function checkFix(check: Check): FixAction | null {
   // The two facing tests disagreeing (facing_tests): turn to the turn the clean-up decided on, which the check carries.
   const turn = quarterTurn(num(check.vars?.fix_yaw))
   if (id === 'facing_tests' && turn !== null) return { stage: 'prep', params: { face_yaw: turn }, label }
+  if (bothHitboxes) return { stage: 'rig', params: { hitbox_fit: 'normal' }, label }
   if (id === 'hitbox_cover') return { stage: 'rig', params: { hitbox_fit: 'loose' }, label }
   if (id === 'hitbox_overreach') return { stage: 'rig', params: { hitbox_fit: 'snug' }, label }
   if (id === 'hitbox_fit' || id === 'clips' || id === 'legs_moved') return { stage: 'rig', params: {}, label }

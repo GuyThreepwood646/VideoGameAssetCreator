@@ -1,6 +1,7 @@
 import { openFolderAndSay } from '../notify'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
+import { assetAttention } from '../pipeline/finish'
 import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type Category, type EditChoice, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
 import { ImageDrop, nameFromFile, type PickedImage } from '../components/ImageDrop'
 import { FeaturePhotos } from '../components/FeaturePhotos'
@@ -24,6 +25,8 @@ import { useConfirm } from '../components/Confirm'
 
 // Shown as soon as Repeating surface is chosen, so nobody picks it for a rock or a bush and is surprised by a flat swatch.
 const MATERIAL_NOTE = `${CATEGORY_HELP.material.meaning} ${CATEGORY_HELP.material.why}`
+// Categories whose objects have moving parts named from the item (declared_parts.item_defaults); their note says so.
+const MOVING_PARTS_CATEGORIES = ['vehicle', 'prop_articulated']
 
 export default function ProjectPage() {
   const { pid = '' } = useParams()
@@ -135,7 +138,11 @@ const FILTER_LABEL: Record<AssetFilter, string> = { all: 'All', progress: 'In pr
 function assetStatus(a: AssetSummary): Exclude<AssetFilter, 'all'> {
   const sts = STAGES.map((x) => stageState(a, x))
   if (sts.includes('error')) return 'needs'
-  if (sts.every((x) => x === 'done')) return 'ready'
+  if (sts.every((x) => x === 'done')) {
+    // Finished, but a check the app counts against it (likely to show, or worth a look) means it needs a look.
+    const att = assetAttention(a)
+    return att.likely + att.look > 0 ? 'needs' : 'ready'
+  }
   return 'progress'
 }
 
@@ -175,8 +182,13 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
         {(() => {
           const sts = STAGES.map((x) => stageState(asset, x))
           const failedAt = sts.indexOf('error')
-          const label = failedAt >= 0 ? `Needs a look: ${stagePlain(STAGES[failedAt])}` : sts.some((x) => x === 'running') ? 'Working' : sts.every((x) => x === 'done') ? 'Ready' : sts.every((x) => x === 'none') ? 'Not started' : 'In progress'
-          return <div className={'small ' + (failedAt >= 0 ? 'bad-text' : 'muted')}>{label}</div>
+          const att = sts.every((x) => x === 'done') ? assetAttention(asset) : { likely: 0, look: 0 }
+          const label = failedAt >= 0 ? `Needs a look: ${stagePlain(STAGES[failedAt])}`
+            : sts.some((x) => x === 'running') ? 'Working'
+            : att.likely ? `Not ready to use yet: ${att.likely} likely to show in the game`
+            : att.look ? `Needs a look: ${att.look} worth a look`
+            : sts.every((x) => x === 'done') ? 'Ready' : sts.every((x) => x === 'none') ? 'Not started' : 'In progress'
+          return <div className={'small ' + (failedAt >= 0 || att.likely || att.look ? 'bad-text' : 'muted')}>{label}</div>
         })()}
         <div className="stage-dots" role="img" aria-label={`${doneSteps} of ${STAGES.length} steps done`} title={`${doneSteps} of ${STAGES.length} steps done`}>
           {STAGES.map((s) => {
@@ -293,6 +305,8 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
   const [platform, setPlatform] = useState<PlatformId>(project.platform_target)
   const [prompt, setPrompt] = useState('')
   const [parts, setParts] = useState<string[]>([])
+  // Sent only when the person typed parts: otherwise the backend names the moving part from the item (F15).
+  const [partsTyped, setPartsTyped] = useState(false)
   const [model, setModel] = useState<string>('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -332,7 +346,8 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
     if (!category && ref.categories[0] && assets) {
       const first = ref.categories.find((c) => c.id === mostUsedCategory(assets)) ?? ref.categories.find((c) => c.id === 'humanoid') ?? ref.categories[0]
       setCategory(first.id)
-      setParts(first.parts_default ?? [])
+      setParts([])
+      setPartsTyped(false)
     }
   }, [ref, category, assets])
 
@@ -375,8 +390,8 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
 
   const changeCategory = (id: string) => {
     setCategory(id)
-    const c = ref?.categories.find((x) => x.id === id)
-    if (c) setParts(c.parts_default ?? [])
+    setParts([])
+    setPartsTyped(false)
   }
 
   const cat = ref?.categories.find((c) => c.id === category)
@@ -419,7 +434,7 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
         ...(differs ? { different_look: true } : {}),
         platform_target: platform,
         prompt: prompt.trim(),
-        parts: parts.map((name) => ({ name })),
+        ...(partsTyped ? { parts: parts.map((name) => ({ name })) } : {}),
         ...(chosenModel && !fromPicture && !fromModel ? { concept_model: chosenModel } : {}),
         ...(fromPicture && picture ? { image: picture.dataUrl } : {}),
         // A box round the main person cuts the photo first; the people found are recorded with it (no box = the whole photo).
@@ -533,7 +548,7 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
                 ))}
               </div>
               {cat && g.items.some((c) => c.id === cat.id) && (
-                <div className="field-hint category-note">{cat.label}: {cat.id === 'material' ? MATERIAL_NOTE : cat.rig_engine === 'none' ? 'no skeleton; it will not animate.' : 'it will get a skeleton and can be animated.'}</div>
+                <div className="field-hint category-note">{cat.label}: {cat.id === 'material' ? MATERIAL_NOTE : MOVING_PARTS_CATEGORIES.includes(cat.id) ? 'no skeleton; its moving parts (a lid, a door, a wheel) turn or slide once they are marked in step 5.' : cat.rig_engine === 'none' ? 'no skeleton; it will not animate.' : 'it will get a skeleton and can be animated.'}</div>
               )}
             </div>
           ))}
@@ -722,8 +737,8 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
               {chosenModel && <Info term={'model.' + chosenModel} />}
             </span>
           </Field>
-          <Field label="Parts" term="term.parts" hint="Pieces that must move or swap on their own. Enter adds one.">
-            <ChipInput value={parts} onChange={setParts} placeholder="e.g. weapon" />
+          <Field label="Parts" term="term.parts" hint={cat && MOVING_PARTS_CATEGORIES.includes(cat.id) ? 'Pieces that move. Left empty, the moving part is named from the item: a gate gets a gate leaf, a chest a lid. Enter adds one.' : 'Pieces that must move or swap on their own. Enter adds one.'}>
+            <ChipInput value={parts} onChange={(v) => { setParts(v); setPartsTyped(true) }} placeholder="e.g. weapon" />
           </Field>
         </div>
       </Disclosure>

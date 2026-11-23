@@ -122,6 +122,7 @@ SAMPLES = {
     "straight_on": ((1.1, 2.0), (3.5, 2.0)),
     "body_marks": ((0, 0), (3, 0)),  # marks on the body still to check (bodymarks.py)
     "moving_parts": ((2, 2), (1, 2)),  # WP-29: moving parts cut free against the parts declared (stages/rig.py)
+    "moving_cut": ((1, 1), (0, 1)),  # WP-29: the Blender pass itself did not finish (stages/rig.py), a look check
     "outline_kept": ((0.99, 0.92), (0.6, 0.92)),  # WP-16: outline overlap before and after the reduction (stages/prep.py)
 }
 
@@ -343,10 +344,14 @@ def test_prep_resolves_size_and_facing():
 
     report = {"dims_m": [0.42, 1.5, 1.21], "triangles": 19000}
     checks = prep_stage.prep_checks(report, {"size_m": 1.5, "size_axis": "horizontal", "size_word": "long"},
-                                    {"face_best_turn": 0, "face_yaw_applied": 180}, "quadruped", 20000)
+                                    {"face_best_turn": 0, "face_yaw_applied": 180, "facing_source": "chosen"}, "quadruped", 20000)
     by = {c["name"]: c for c in checks}
     assert by["size_m"]["passed"] and by["size_m"]["help"] == "The model is 1.5 m long, as intended."
     assert "facing" not in by and "facing_tests" not in by  # no second test for a four-legged model, and no circular check
+    # left automatically half a circle from its decided front: warned about (bakeoff/facing), whatever the kind of model
+    off = {c["name"]: c for c in prep_stage.prep_checks(report, {"size_m": 1.5, "size_axis": "horizontal", "size_word": "long"},
+                                                       {"face_best_turn": 0, "face_yaw_applied": 180}, "quadruped", 20000)}
+    assert not off["facing_tests"]["passed"] and off["facing_tests"]["vars"]["fix_yaw"] == 0
     # An old version with only height_m is judged on the height.
     old = prep_stage.prep_checks({"dims_m": [0.42, 1.49, 1.2]}, {"height_m": 1.2}, {}, "quadruped", None)
     assert old[0]["passed"] and old[0]["help"] == "The model is 1.2 m tall, as intended."

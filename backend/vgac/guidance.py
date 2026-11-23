@@ -381,6 +381,10 @@ def _facing_ok(c: dict[str, Any]) -> str:
 
 
 def _facing_fail(c: dict[str, Any]) -> str:
+    if _var(c, "off"):
+        return ("The model may face the wrong way: its outline against the side pictures says its front is {value} degrees "
+                "from where it was left (turn it {decided} degrees; it was turned {applied}). Look at the model from the front "
+                "and turn it if it is side-on or backwards.")
     if _var(c, "unsure"):
         return FACING_UNSURE_FLAT if _var(c, "flat") else FACING_UNSURE
     text = ("The model may face the wrong way: its outline against the side pictures says turn it {outline_turn} degrees, but "
@@ -429,7 +433,7 @@ def _moving_ok(c: dict[str, Any]) -> str:
 def _moving_fail(c: dict[str, Any]) -> str:
     out = []
     if _var(c, "unplaced"):
-        out.append(f"These moving parts have no points yet, so they stay fixed: {_names(c, 'unplaced')}.")
+        out.append(f"Mark these moving parts in step 5 (one click on each piece), then press Make it move again: {_names(c, 'unplaced')}. Until then they stay fixed in the game.")
     if _var(c, "not_found"):
         out.append(f"No piece was found at the points of: {_names(c, 'not_found')}, so they stay fixed.")
     return " ".join(out) or "The moving parts could not be cut free, so they stay fixed."
@@ -671,6 +675,12 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": _moving_ok,
         "fail": _moving_fail,
     },
+    "moving_cut": {
+        "severity": "warn",
+        "ok": "The moving parts are cut free.",
+        "fail": lambda c: "The moving-part cut did not finish ({reason}), so the parts stay fixed for now. Press Make it move again to retry.".format(
+            reason=str(_var(c, "reason") or "no reason was given").replace("{", "{{").replace("}", "}}")),
+    },
     "single_root": {
         "severity": "warn",
         "ok": "The skeleton starts from one root bone.",
@@ -685,10 +695,15 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     },
     "hitbox_cover": {
         "severity": "warn",
+        # Both faults on one skeleton (rig.hitbox_checks, vars both): one item. Bigger and smaller would undo each other, so
+        # the one fix is a re-fit with the normal setting; the sentence does not promise that it will fix it (the check re-measures).
         "ok": "{n} hit boxes cover {cover} of the body and follow the skeleton.",
-        "fail": "The hit boxes cover only {cover} of the body, so some hits would pass through.",
-        "fix": lambda c: {"stage": "rig", "params": {"hitbox_fit": "loose"}},
-        "fix_label": "Make the hit boxes bigger",
+        "fail": lambda c: ("The hit boxes are the wrong size in places: they cover only {cover} of the body, so some hits would pass through, "
+                           "and some boxes stick out {times} times the body's size, so other hits would land in thin air."
+                           if _var(c, "both") else "The hit boxes cover only {cover} of the body, so some hits would pass through."),
+        "fix": lambda c: ({"stage": "rig", "params": {"hitbox_fit": "normal"}} if _var(c, "both")
+                          else {"stage": "rig", "params": {"hitbox_fit": "loose"}}),
+        "fix_label": lambda c: "Fit the hit boxes again" if _var(c, "both") else "Make the hit boxes bigger",
     },
     "hitbox_overreach": {
         "severity": "warn",

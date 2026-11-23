@@ -102,8 +102,9 @@ DELIGHT_MODES = ("auto", "remove", "keep")
 
 def resolve_size(category_id: str, params: dict[str, Any], description: str | None) -> dict[str, Any]:
     """{size_m, size_axis, size_word, size_source}: the version's size_m (or the old height_m, which means the
-    height), else a size from the description, else the category size. An explicit size_axis in params wins (a Fix
-    or an earlier description size carries one)."""
+    height), else a size from the description, else a common object named in the description (object_sizes.yaml,
+    object categories only), else the category size. An explicit size_axis in params wins (a Fix or an earlier
+    description size carries one)."""
     spec = reference.size_spec(category_id)
     axis = params.get("size_axis") if params.get("size_axis") in reference.SIZE_AXES else None
     word = params.get("size_word") or None
@@ -114,10 +115,14 @@ def resolve_size(category_id: str, params: dict[str, Any], description: str | No
         axis = axis or "height"
     else:
         found = reference.parse_size(description, spec["default"])
+        obj = None if found else reference.object_size(category_id, description)
         if found:
             size, source = float(found["size_m"]), "description"
             if found["axis"]:
                 axis, word = found["axis"], found["word"]
+        elif obj:
+            size, source = obj["size_m"], "object"
+            axis, word = obj["axis"], None
         else:
             size, source = spec["default"], "category"
     axis = axis or spec["axis"]
@@ -162,15 +167,17 @@ def resolve_facing(category: dict[str, Any], face_yaw: Any, mesh_metrics: dict[s
         outline = quality.best_turn(offset, int(m.get("silhouette_sign") or 1))
     d = facing.decide(outline, m.get("silhouette_turn_scores"), toes, colour)
     best = d["turn"]
+    # The feet give a finer reading than the outline's 15 degree steps, so the quarter turn is taken from them when they
+    # were found and agree with the decision (a knight planted at 60: outline 45, which rounds to 0; toes 60, to 90).
+    # (with no outline answer the toes alone do not turn it: facing.decide)
+    basis = d["toes_turn"] if d["toes_found"] and d["agree"] else best
     if face_yaw in (None, "", "auto"):
-        applied = quality.auto_turn(best)
+        applied = quality.auto_turn(basis if best is not None else None, sure=bool(d.get("sure", True)))
         source = ("toes" if d["source"] == "toes" else "audit") if best is not None else "as built"
     else:
         applied = int(float(face_yaw)) % 360
         source = "chosen"
-    # The head's turn left over after the applied turn. The feet give a finer reading than the outline's 15 degree steps,
-    # so they are used when they were found and agree with the decision; else the decided turn itself.
-    basis = d["toes_turn"] if d["toes_found"] and d["agree"] else best
+    # The head's turn left over after the applied turn, from the same basis.
     remainder = None if basis is None else round(max(-45.0, min(45.0, facing.signed(basis - applied))), 1)
     return {"face_yaw_applied": applied, "facing_source": source, "face_remainder_deg": remainder, **facing.metrics_of(d)}
 
@@ -1198,6 +1205,13 @@ def facing_check(metrics: dict[str, Any], category_id: str | None = None) -> dic
     (fails as "not measured": the outline test alone cannot be checked against anything, so it is not called good).
     Nothing when the outline test has no answer either (no trusted fit: nothing was decided)."""
     m = metrics or {}
+    best, applied_ = m.get("face_best_turn"), int(m.get("face_yaw_applied") or 0) % 360
+    # a person whose toes were read, or whose front could not be told from the back, has its own checks below
+    person_checked = category_id in facing.TOES_CATEGORIES and (m.get("face_decision_sure") is False or bool(m.get("face_toes_found")))
+    if (m.get("facing_source") != "chosen" and best is not None and not person_checked
+            and quality.angle_diff(best, applied_) > quality.FACING_TOLERANCE_DEG):
+        # any kind of model left further from its decided front than the tolerance
+        return quality.facing_off_check(best, applied_)
     if category_id not in facing.TOES_CATEGORIES:
         return None  # no second test exists for this kind of model, and the outline test alone is not a check
     if m.get("face_outline_turn") is None and not m.get("face_toes_found"):
@@ -1206,7 +1220,7 @@ def facing_check(metrics: dict[str, Any], category_id: str | None = None) -> dic
     reason = quality.plain_reason(m.get("face_toes_reason") or "the feet were not found")
     if m.get("facing_source") == "chosen":
         # the person chose the turn: say so, and what the app's own tests would have done
-        return quality.facing_settled_check("chosen", applied, decided=quality.auto_turn(m.get("face_best_turn"))
+        return quality.facing_settled_check("chosen", applied, decided=quality.auto_turn(m.get("face_best_turn"), sure=m.get("face_decision_sure") is not False)
                                             if m.get("face_best_turn") is not None else None)
     if m.get("face_decision_sure") is False:
         # a near-tie nothing settled (facing.decide): it kept the side the 3D step built as the front, and says so
