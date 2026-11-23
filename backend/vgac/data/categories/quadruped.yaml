@@ -24,10 +24,10 @@ lod_ratios: [0.5, 0.25, 0.1]
 views: [front, left, back, right, quarter]
 pose_block: >-
   The animal stands in a neutral four-legged standing pose, all four feet on the ground, head level
-  and facing the camera, seen straight from the front at eye level, square-on, whole body visible with
-  margin around it, centred in frame. Plain flat light grey background. Soft even studio lighting from
-  the front with no hard shadows. No text, no logos, no background scenery, no motion blur, no
-  cropping.
+  and facing the camera, seen straight from the front at eye level, square-on, so the face and chest
+  are visible, whole body visible with margin around it, centred in frame. Plain flat light grey
+  background. Soft even studio lighting from the front with no hard shadows. No text, no logos, no
+  background scenery, no motion blur, no cropping.
 budgets:
   mobile_low: {triangles: 5000, texture: 1024}
   pc_mid: {triangles: 20000, texture: 2048}
