@@ -15,6 +15,12 @@ import { showsDescriptionNote } from '../pipeline/descriptionNote'
 import { ViewerLookContext, ViewerPausedContext } from '../previewLight'
 import { categoryLabel, useRefData, type RefData } from '../refdata'
 
+// A narrow window lets the whole page scroll instead of the step's own box (styles.css), so the step box only
+// scrolls when its overflow says so.
+function stepScrolls(main: Element): boolean {
+  return getComputedStyle(main).overflowY !== 'visible'
+}
+
 export default function AssetPage() {
   const { aid = '', stage: stageParam } = useParams()
   const navigate = useNavigate()
@@ -51,7 +57,7 @@ export default function AssetPage() {
       setGuideVisible(false)
       return
     }
-    const io = new IntersectionObserver(([e]) => setGuideVisible(e.isIntersecting), { root: main, threshold: 0.2 })
+    const io = new IntersectionObserver(([e]) => setGuideVisible(e.isIntersecting), { root: stepScrolls(main) ? main : null, threshold: 0.2 })
     io.observe(card)
     return () => io.disconnect()
   })
@@ -89,7 +95,15 @@ export default function AssetPage() {
   }, [aid, navigate])
   // A new step opens at its top, not where the last one was scrolled to (UI-15).
   useEffect(() => {
-    document.querySelector('.stage-main')?.scrollTo({ top: 0 })
+    const main = document.querySelector('.stage-main')
+    if (main) (stepScrolls(main) ? main : main.closest('.page'))?.scrollTo({ top: 0 })
+    // In a narrow window the step list is a sideways strip; bring the open step into it.
+    const strip = document.querySelector('.rail-stages')
+    const open = strip?.querySelector<HTMLElement>('.rail-stage.active')
+    if (strip && open && strip.scrollWidth > strip.clientWidth) {
+      const at = open.getBoundingClientRect().left - strip.getBoundingClientRect().left + strip.scrollLeft
+      strip.scrollTo({ left: at - (strip.clientWidth - open.offsetWidth) / 2 })
+    }
   }, [stage, aid, haveAsset])
   const hair = useHairPanel(asset && asset.id === aid ? asset : null)
 

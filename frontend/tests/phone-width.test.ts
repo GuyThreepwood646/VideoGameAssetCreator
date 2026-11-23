@@ -48,6 +48,15 @@ test('the stylesheet has phone-width breakpoints at 700 px and 420 px', () => {
   assert.match(css, /@media \(max-width: 420px\)/)
 })
 
+test('an asset page under 700 px turns the step list into a sideways strip and scrolls as one page', () => {
+  const narrow = (sel: string) => all.filter((r) => r.narrow && r.selector.split(',').map((x) => x.trim()).includes(sel)).map((r) => r.body).join(';')
+  assert.match(narrow('.rail-stages'), /flex-direction:\s*row/)
+  assert.match(narrow('.rail-stages'), /overflow-x:\s*auto/)
+  assert.match(narrow('.stage-main'), /overflow:\s*visible/)
+  assert.match(narrow('.stage-rail'), /display:\s*contents/)
+  assert.match(css, /@media \(max-width: 480px\)[\s\S]*?\.stage-main \.section-head \{[\s\S]*?flex-wrap: wrap/)
+})
+
 test('no rule outside a narrow query sets a min-width above 360 px', () => {
   const wide = all.filter((r) => !r.narrow && px(r.body, 'min-width').some((v) => v > FLOOR))
   assert.deepEqual(wide.map((r) => r.selector), [])
