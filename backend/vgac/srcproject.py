@@ -50,7 +50,7 @@ from typing import Any, Callable
 import numpy as np
 from PIL import Image
 
-from . import face, imaging
+from . import face, imaging, picture_view
 
 SIZE = 2048              # working render size; the picture is sampled bicubic (Catmull-Rom) once, at this size
 PIC_N = 1024            # side the pictures are worked at when they come as they are
@@ -2501,7 +2501,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
           yaw_hint: Callable[[], float | None] | None = None, source: Any = None, front_view: Any = None,
           pic_n: int | None = None, log: Callable[[str], None] | None = None,
           keep: dict[str, Any] | None = None, head_yaw: float = 0.0, built_from: str | None = None,
-          front_known: bool = False, category: str | None = None) -> dict[str, Any]:
+          front_known: bool = False, category: str | None = None, picture_known: bool = True) -> dict[str, Any]:
     """Paint the picture (and the turnaround views, mode "full" or "detail"; "off" leaves them out) into tex (T,T,3) through
     the mesh's UVs. Returns {applied, base_color (T,T,3), reason, metrics}. Nothing is applied when the picture does not
     fit the model, or when the result is no closer to the picture than what the model had. `picture` is the one the 3D
@@ -2585,6 +2585,10 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     # searched within PICTURE_SEARCH_DEG of that
     picture_prior = INTENDED_TURN[built_from] if built_from in QUARTERS else 0.0
     objects = category in OBJECT_CATEGORIES  # no expected turn for either picture (OBJECT_CATEGORIES)
+    # A character's picture whose angle nobody asked for (the person's own: picture_known False, see picture_known_of) is
+    # searched as an object's is, over every turn (the front half once the facing is decided), unless the model was built
+    # from a drawn three-quarter view, whose turn the app chose. A picture the app drew keeps the expected turn above.
+    wide_pic = objects or (not picture_known and built_from not in QUARTERS)
     # the step 1 picture is fitted by its pose search; its turn-only fit is made only when that fails (below)
     wanted: list[tuple[str, Any, list[float]]] = []
     wanted += [(n, s, y) for n, s, y in (("source", source, wide), ("front", front_view, front_view_yaws(head_yaw, front_known))) if s is not None]
@@ -2601,15 +2605,15 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         # WP-61: the picture's pose search first; the drawn views wait for its tilt and lens (submitted earlier, so a
         # view waiting on it never holds back a job it needs)
         # the turns the caller allows (picture_yaws), else the front half when the facing is decided, else the whole circle
-        picture_turns = ([float(y) for y in picture_yaws] if picture_yaws else [float(y) for y in wide] if objects else
+        picture_turns = ([float(y) for y in picture_yaws] if picture_yaws else [float(y) for y in wide] if wide_pic else
                          [picture_prior + float(d) for d in np.arange(-PICTURE_SEARCH_DEG, PICTURE_SEARCH_DEG + 1e-6, 10.0)])
-        picture_limit = (None if picture_yaws or (objects and not front_known) else (float(head_yaw), FRONT_HALF) if objects
+        picture_limit = (None if picture_yaws or (wide_pic and not front_known) else (float(head_yaw), FRONT_HALF) if wide_pic
                          else (picture_prior, PICTURE_SEARCH_DEG))
         picture_pick_job = pool.submit(contextvars.copy_context().run, _pose_pick, mesh, tex, prepared, picture, pic_n,
                                        "picture", centre, scale, min_iou, atlas_job, log, None, picture_turns, None, None,
-                                       None if objects else picture_prior, PRIOR_DEG, 3, picture_limit,
-                                       _breadth(picture_turns) if objects else 1,
-                                       float(head_yaw) + picture_prior if objects else None)
+                                       None if wide_pic else picture_prior, PRIOR_DEG, 3, picture_limit,
+                                       _breadth(picture_turns) if wide_pic else 1,
+                                       float(head_yaw) + picture_prior if wide_pic else None)
         picture_pose_job = pool.submit(contextvars.copy_context().run, lambda: _pose_view(
             mesh, tex, prepared, picture, pic_n, "picture", centre, scale, size, min_iou, log, picture_pick_job.result()))
         jobs = {n: pool.submit(fit, n, s, y) for n, s, y in wanted}
@@ -2798,7 +2802,7 @@ def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, tu
                 front_view: Path | str | None = None, pic_n: int | None = None,
                 log: Callable[[str], None] | None = None, keep: dict[str, Any] | None = None,
                 head_yaw: float = 0.0, built_from: str | None = None, front_known: bool = False,
-                category: str | None = None) -> dict[str, Any]:
+                category: str | None = None, picture_known: bool = True) -> dict[str, Any]:
     """paint() on files: reads the model and its base colour, writes the new base colour to out_png when it applies.
     Returns {applied, reason, base_color (the path to use), metrics}."""
     mesh = face.load_mesh(glb)
@@ -2815,7 +2819,8 @@ def apply_files(glb: Path | str, base_color: Path | str, picture: Path | str, tu
 
     r = paint(mesh, tex, picture, {k: p for k, p in (turnaround or {}).items() if p is not None and Path(p).is_file()},
               mode=mode, size=size, yaw_hint=hint, source=source, front_view=front_view, pic_n=pic_n, log=log, keep=keep,
-              head_yaw=head_yaw, built_from=built_from, front_known=front_known, category=category)
+              head_yaw=head_yaw, built_from=built_from, front_known=front_known, category=category,
+              picture_known=picture_known)
     path = Path(base_color)
     if r["applied"]:
         path = face.save_rgb(r["base_color"], out_png)
@@ -2988,6 +2993,14 @@ def upscale_note(info: dict[str, Any]) -> str | None:
     return None
 
 
+def picture_known_of(concept_params: dict[str, Any] | None) -> bool:
+    """Whether the step 1 picture's angle may be expected (paint's picture_known): yes for a picture the app drew (a
+    recorded square-on front, picture_view.assumed, or one drawn before views were recorded), no for the person's own
+    (an upload, an edit of one, a picture combined from their photos: picture_view.PERSON_SOURCES), searched widely."""
+    p = concept_params or {}
+    return picture_view.assumed(p) is not None or p.get("source") not in picture_view.PERSON_SOURCES
+
+
 async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[str, Any],
                     keep: dict[str, Any] | None = None, head_yaw: float = 0.0,
                     front_known: bool = False) -> dict[str, Path]:
@@ -3004,6 +3017,12 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
         built_from = ((mv.params or {}) if mv is not None else {}).get("input_view")
     except Exception:  # noqa: BLE001  (no lineage to read: the first three-quarter view, as before)
         built_from = None
+    try:
+        cv = sc.stage_version("concept")
+        picture_known = picture_known_of(cv.params if cv is not None else None)
+    except Exception:  # noqa: BLE001  (no lineage to read: expected, as before)
+        picture_known = True
+    sc.set_metrics(srcproject_picture_known=picture_known)
     if base is None or picture is None:
         sc.set_metrics(srcproject_applied=False, srcproject_reason="no base colour or no picture to paint from")
         return current
@@ -3046,7 +3065,7 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
     try:
         r = await asyncio.to_thread(apply_files, glb, base, picture, turn, work / "base_color.png", mode=mode, source=source,
                                     front_view=front_view, pic_n=PIC_N_BIG if big else None, keep=keep, head_yaw=head_yaw,
-                                    built_from=built_from, front_known=front_known,
+                                    built_from=built_from, front_known=front_known, picture_known=picture_known,
                                     category=getattr(getattr(sc, "asset", None), "category", None))
     except Exception as e:  # noqa: BLE001  (the pass never fails a run: the colour stays as it was)
         sc.set_metrics(srcproject_applied=False, srcproject_reason=f"failed: {str(e)[:200]}")
