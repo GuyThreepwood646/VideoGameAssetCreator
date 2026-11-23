@@ -136,14 +136,14 @@ def test_colour_per_face_makes_each_triangle_one_colour():
     T = 64
     yy, xx = np.mgrid[0:T, 0:T] / (T - 1)
     base = np.stack([xx, yy, 0.5 * np.ones_like(xx)], axis=2)  # a gradient: many colours per triangle
-    r = looktex.colour_per_face(base, m)
+    r = looktex.colour_per_face(base, m, detail=False)
     tri = looktex.triangle_map(m, T)
     for t in (0, 1):
         texels = r["base_color"][tri == t]
         assert len(texels) > 20 and np.ptp(texels, axis=0).max() < 1e-9
     assert not np.allclose(r["base_color"][tri == 0][0], r["base_color"][tri == 1][0])
     # a kept triangle keeps its texels
-    k = looktex.colour_per_face(base, m, keep=np.array([1]))
+    k = looktex.colour_per_face(base, m, keep=np.array([1]), detail=False)
     assert np.allclose(k["base_color"][tri == 1], base[tri == 1]) and k["kept"] == int((tri == 1).sum())
 
 
@@ -239,3 +239,34 @@ def test_whole_front_keeps_the_finders_region_together_with_the_front_of_the_hea
     both = looktex.front_of_head(m, tex, 0.0, whole_front=True)
     assert both["how"] == "face finder and front of the head"
     assert set(finder) <= set(both["tris"]) and set(looktex.front_geometry(m, 0.0, neck=True)) <= set(both["tris"])
+
+
+def test_colour_per_face_keeps_a_triangle_with_painted_detail_and_flattens_a_noisy_one():
+    m = _quad_mesh()
+    T = 128
+    tri = looktex.triangle_map(m, T)
+    rng = np.random.default_rng(1)
+    base = np.full((T, T, 3), 0.6)
+    base += rng.normal(0, 0.01, base.shape)             # triangle 1: near one colour, noise only
+    ys, xs = np.where(tri == 0)
+    cy, cx = int(ys.mean()), int(xs.mean())
+    window = np.zeros((T, T), dtype=bool)
+    window[cy - 12:cy + 12, cx - 12:cx + 12] = True          # triangle 0: a dark window in the middle
+    base[window & (tri == 0)] = 0.1
+    r = looktex.colour_per_face(base, m)
+    assert r["detailed_faces"] == 1 and r["kept_faces"] == 1
+    inner = (tri == 0) & window
+    assert np.allclose(r["base_color"][inner], base[inner])                       # the window is still there
+    flat = r["base_color"][tri == 1]
+    assert np.ptp(flat, axis=0).max() < 1e-9                                     # the noisy triangle is one colour
+    old = looktex.colour_per_face(base, m, detail=False)
+    assert np.ptp(old["base_color"][tri == 0], axis=0).max() < 1e-9               # without the test the window is erased
+
+
+def test_detail_does_not_unflatten_a_keep_list_and_keep_still_wins():
+    m = _quad_mesh()
+    base = np.full((128, 128, 3), 0.5)
+    k = looktex.colour_per_face(base, m, keep=np.array([0]))
+    tri = looktex.triangle_map(m, 128)
+    assert k["kept_faces"] == 1 and k["detailed_faces"] == 0
+    assert np.allclose(k["base_color"][tri == 0], base[tri == 0])
