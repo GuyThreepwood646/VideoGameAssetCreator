@@ -102,8 +102,9 @@ DELIGHT_MODES = ("auto", "remove", "keep")
 
 def resolve_size(category_id: str, params: dict[str, Any], description: str | None) -> dict[str, Any]:
     """{size_m, size_axis, size_word, size_source}: the version's size_m (or the old height_m, which means the
-    height), else a size from the description, else the category size. An explicit size_axis in params wins (a Fix
-    or an earlier description size carries one)."""
+    height), else a size from the description, else a common object named in the description (object_sizes.yaml,
+    object categories only), else the category size. An explicit size_axis in params wins (a Fix or an earlier
+    description size carries one)."""
     spec = reference.size_spec(category_id)
     axis = params.get("size_axis") if params.get("size_axis") in reference.SIZE_AXES else None
     word = params.get("size_word") or None
@@ -114,10 +115,14 @@ def resolve_size(category_id: str, params: dict[str, Any], description: str | No
         axis = axis or "height"
     else:
         found = reference.parse_size(description, spec["default"])
+        obj = None if found else reference.object_size(category_id, description)
         if found:
             size, source = float(found["size_m"]), "description"
             if found["axis"]:
                 axis, word = found["axis"], found["word"]
+        elif obj:
+            size, source = obj["size_m"], "object"
+            axis, word = obj["axis"], None
         else:
             size, source = spec["default"], "category"
     axis = axis or spec["axis"]
