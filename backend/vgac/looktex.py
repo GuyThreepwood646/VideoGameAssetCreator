@@ -12,7 +12,8 @@ each eye into a single dark triangle; the front of the head (170 and 213 triangl
 64 face layout keeps the finder's region alone, as before.
 
 colour_per_face: every triangle one colour, the median of the texels inside it (Low-poly: each plane one tone); the
-kept triangles keep their texels. Look research 2026-11-16 (docs/research/looks/retro64-lowpoly.md, sheet
+kept triangles keep their texels, and so does any triangle the painted picture gives real detail (detailed_triangles:
+a window, a sign or lettering inside one triangle would otherwise be averaged away). Look research 2026-11-16 (docs/research/looks/retro64-lowpoly.md, sheet
 lowpoly_L1_sheet.png rows 3 and 6).
 """
 
@@ -108,16 +109,48 @@ def head_share(y: np.ndarray, x: np.ndarray, top: float, h: float, head_w: float
     return hi
 
 
+DETAIL_OFF_DE = 10.0      # Lab distance from a triangle's median colour at which a texel counts as differing from it
+DETAIL_SHARE = 0.10       # share of a triangle's texels that differ: at or above this the triangle holds painted detail
+DETAIL_MIN_TEXELS = 12    # a triangle owning fewer texels is too small to tell detail from noise: flattened
+
+
+def detailed_triangles(base: np.ndarray, tri: np.ndarray, n_faces: int, off_de: float = DETAIL_OFF_DE,
+                       share: float = DETAIL_SHARE, min_texels: int = DETAIL_MIN_TEXELS) -> np.ndarray:
+    """(n_faces,) bool: the triangles whose texels hold real detail, i.e. at least `share` of the texels inside differ from
+    the triangle's median colour by more than off_de (Lab). A near-one-colour triangle, noise and soft shading included,
+    is not detailed. tri is the triangle map (triangle_map), base (T, T, 3) floats 0..1."""
+    # texels on a triangle's edge blend with the neighbour across it (the picture's own softness and the dilation
+    # between islands), which reads as a second colour: only the texels all four neighbours of which are in the same
+    # triangle are looked at
+    p = np.pad(tri, 1, constant_values=-1)
+    inside = (tri >= 0) & (p[:-2, 1:-1] == tri) & (p[2:, 1:-1] == tri) & (p[1:-1, :-2] == tri) & (p[1:-1, 2:] == tri)
+    t = tri[inside]
+    lab = face.to_lab(base[inside])
+    order = np.argsort(t, kind="stable")
+    t, lab = t[order], lab[order]
+    ids, start = np.unique(t, return_index=True)
+    ends = np.append(start[1:], len(t))
+    out = np.zeros(n_faces, dtype=bool)
+    for i, (s, e) in enumerate(zip(start, ends)):
+        if e - s < min_texels:
+            continue
+        d = np.linalg.norm(lab[s:e] - np.median(lab[s:e], axis=0), axis=1)
+        out[ids[i]] = float((d > off_de).mean()) >= share
+    return out
+
+
 def triangle_map(mesh: dict[str, np.ndarray], size: int) -> np.ndarray:
     """(size, size) int: the triangle each texel belongs to, -1 where none (the UV layout rasterised)."""
     uvp = face.uv_pixels(mesh["uv"], size)
     return face.rasterise(uvp, np.zeros(len(mesh["uv"])), mesh["faces"], size)["tri"]
 
 
-def colour_per_face(base: np.ndarray, mesh: dict[str, np.ndarray], keep: np.ndarray | None = None) -> dict[str, Any]:
+def colour_per_face(base: np.ndarray, mesh: dict[str, np.ndarray], keep: np.ndarray | None = None, detail: bool = True,
+                    off_de: float = DETAIL_OFF_DE, share: float = DETAIL_SHARE) -> dict[str, Any]:
     """base (T, T, 3) floats 0..1 -> {base_color (T, T, 3), faces (triangles made one colour), kept (texels left as
     painted)}. Every triangle takes the median of the texels inside it; one too small to own a texel takes the colour
-    at its UV centre. The triangles in keep stay as painted. The empty space is grown from the islands again."""
+    at its UV centre. The triangles in keep stay as painted, and so do the triangles holding painted detail
+    (detailed_triangles; detail=False turns that off). The empty space is grown from the islands again."""
     T = base.shape[0]
     tri = triangle_map(mesh, T)
     inside = tri >= 0
@@ -132,13 +165,15 @@ def colour_per_face(base: np.ndarray, mesh: dict[str, np.ndarray], keep: np.ndar
         colour[ids[i]] = np.median(col[s:e], axis=0)
     out = base.copy()
     flat = inside.copy()
+    kept = np.zeros(len(mesh["faces"]), dtype=bool)
     if keep is not None and len(keep):
-        kept = np.zeros(len(mesh["faces"]), dtype=bool)
         kept[np.asarray(keep, dtype=np.int64)] = True
-        flat &= ~kept[np.maximum(tri, 0)]
+    detailed = detailed_triangles(base, tri, len(mesh["faces"]), off_de, share) if detail else np.zeros_like(kept)
+    kept |= detailed
+    flat &= ~kept[np.maximum(tri, 0)]
     out[flat] = colour[tri[flat]]
     grown = np.empty_like(out)
     for ch in range(3):
         grown[..., ch] = imaging.dilate(out[..., ch], inside, imaging.dilation_px(T))
-    return {"base_color": grown, "faces": int(len(mesh["faces"]) - (0 if keep is None else len(keep))),
-            "kept": int((inside & ~flat).sum())}
+    return {"base_color": grown, "faces": int(len(mesh["faces"]) - kept.sum()), "kept": int((inside & ~flat).sum()),
+            "detailed_faces": int(detailed.sum()), "kept_faces": int(kept.sum())}
