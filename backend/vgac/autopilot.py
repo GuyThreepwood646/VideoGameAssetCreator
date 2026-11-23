@@ -19,7 +19,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from . import pipeline
+from . import check_tiers, meshgeom, pipeline
 from .db import SET_ASIDE_ERROR, Asset, Version, _iso, is_stopped, job_to_dict, session_factory, utcnow, version_to_dict
 from .events import bus
 from .jobs import active_queue
@@ -152,6 +152,20 @@ def attention_reason(v: Version, stop_on: str) -> str | None:
     "warn" has stopped on any failed check already and "never" never stops."""
     if stop_on != "block":
         return None
+    # A failed check the app shows as "likely to show in the game" stops the autopilot after its step (honest Ready: the
+    # check's own sentence, first). A check that was not measured is a note, never a stop (check_tiers.is_problem), and the
+    # named STOP_AND_ASK checks keep their own wording and step.
+    named = {name for _, name, _, _ in STOP_AND_ASK}
+    likely: list[str] = []
+    for c in _failed_checks(v):
+        if c.get("name") in named or not check_tiers.is_problem(c) or check_tiers.tier_of(c) != "likely":
+            continue
+        # A torn model on a route that rebuilds (buildings, D23) was already built again; what is left only warns.
+        if c.get("name") == "model_whole" and (c.get("vars") or {}).get("route") in meshgeom.REBUILD_ROUTES:
+            continue
+        sentence = str(c.get("help") or c.get("message") or c.get("name") or "").strip()
+        if sentence and sentence not in likely:
+            likely.append(sentence)
     out: list[str] = []
     for stage, name, test, text in STOP_AND_ASK:
         if v.stage != stage:
@@ -165,7 +179,9 @@ def attention_reason(v: Version, stop_on: str) -> str | None:
                 out.append(text.format(value=f"{value:g}" if isinstance(value, (int, float)) else value,
                                        limit=f"{limit:g}" if isinstance(limit, (int, float)) else limit))
                 break
-    return " ".join(out) or None
+    if likely:
+        likely.append("Look at this step's checks; press Resume to carry on as it is.")
+    return " ".join([*likely, *out]) or None
 
 
 def _asked_with(state: dict[str, Any], vid: str) -> list[str]:

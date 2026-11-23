@@ -12,7 +12,7 @@ import Viewer from '../Viewer'
 import { ViewerPausedContext } from '../previewLight'
 import { versionLook } from '../recipe'
 import { useConfirm } from '../components/Confirm'
-import { attentionItems, finishLineFix, finishLines, unityHowto, verdictLine } from './finish'
+import { attentionItems, finishLineFix, finishLines, notMeasuredNotes, unityHowto, verdictLine } from './finish'
 import { TieredChecks } from './TieredChecks'
 import { StepSettingsChoice } from './StepSettingsChoice'
 import { type StepParams } from './stepSettings'
@@ -404,6 +404,7 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
   const exp = selectedVersion(asset, 'export')
   const lines = finishLines(asset)
   const attention = attentionItems(asset)
+  const notMeasured = notMeasuredNotes(asset)
   const howto = unityHowto(asset)
   const rig = selectedVersion(asset, 'rig')
   const mainFile = exp?.files.fbx ?? exp?.files.glb
@@ -435,8 +436,9 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
     <section className="guide guide-finished finish-card" aria-live="polite">
       <div className="guide-body">
         <div className="guide-kicker">{byAutopilot ? `Autopilot finished all ${STAGES.length} steps` : 'Finished'}</div>
-        <div className="guide-happened finish-title">Your asset is ready</div>
+        <div className="guide-happened finish-title">{attention.some((i) => i.tier === 'likely') ? 'Your asset is not ready yet' : 'Your asset is ready'}</div>
         <div className="finish-verdict" role="status">{verdictLine(attention)}</div>
+        {notMeasured.map((t) => <div key={t} className="muted small finish-note">{t}</div>)}
         <div className="guide-now muted">
           Your {asset.name} went through all {STAGES.length} steps. Download the files or hand them to your game engine. Everything is kept, so you can still change any step below.
         </div>
