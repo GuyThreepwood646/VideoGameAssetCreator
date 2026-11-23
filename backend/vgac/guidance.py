@@ -367,6 +367,8 @@ FACING_OK = {
                          "because {toes_reason}, but the colours of the front and back pictures show the 3D step built it facing "
                          "backwards, so it was turned round: {value} degrees."),
     "chosen": "It was turned {value} degrees, as you chose.",
+    "picture": ("Its outline looks the same from the front and from behind, so the step 1 picture placed it: the model "
+                "matches that picture from one side much better than from the others. It was turned {value} degrees."),
 }
 
 

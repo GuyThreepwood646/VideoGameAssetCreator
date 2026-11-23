@@ -149,7 +149,7 @@ def _num(x: float) -> int | float:
 
 
 def resolve_facing(category: dict[str, Any], face_yaw: Any, mesh_metrics: dict[str, Any] | None,
-                   toes: dict[str, Any] | None = None, colour: Any = None) -> dict[str, Any]:
+                   toes: dict[str, Any] | None = None, colour: Any = None, picture: dict[str, Any] | None = None) -> dict[str, Any]:
     """{face_yaw_applied, face_best_turn, facing_source, face_remainder_deg, and the two tests' numbers (facing.metrics_of)}.
     face_best_turn is None when the mesh audit has no fit or its silhouette match is below the category floor (then
     nothing is checked). The outline test (the mesh audit) decides, with the toes test (`toes`, facing.toes_of_file on
@@ -158,14 +158,16 @@ def resolve_facing(category: dict[str, Any], face_yaw: Any, mesh_metrics: dict[s
     whether it is sure (facing.decide).
     face_remainder_deg is how far the model still faces from straight ahead after the applied turn (the quarter-turn
     snap leaves up to 45 degrees), for the face pass. colour: facing.colour_of_files over the drawn front and back views
-    and the mesh audit's renders, for a near-tie the toes cannot settle."""
+    and the mesh audit's renders, for a near-tie the toes cannot settle. picture: facing.picture_of_files for the step 1
+    picture (categories with facing_by_picture only); when decisive it sets the turn."""
     m = mesh_metrics or {}
     outline = None
     offset, iou = m.get("silhouette_offset"), m.get("silhouette_iou")
     floor = float(category.get("silhouette_min") or DEFAULT_SILHOUETTE_MIN)
     if offset is not None and iou is not None and float(iou) >= floor:
         outline = quality.best_turn(offset, int(m.get("silhouette_sign") or 1))
-    d = facing.decide(outline, m.get("silhouette_turn_scores"), toes, colour)
+    d = facing.decide(outline, m.get("silhouette_turn_scores"), toes, colour,
+                      picture if category.get("facing_by_picture") else None)
     best = d["turn"]
     # The feet give a finer reading than the outline's 15 degree steps, so the quarter turn is taken from them when they
     # were found and agree with the decision (a knight planted at 60: outline 45, which rounds to 0; toes 60, to 90).
@@ -194,6 +196,20 @@ def facing_colour(sc: StageContext) -> Any:
             pics["back"] = None  # no bald back is drawn, and the drawn back's hair is not on the model
         return facing.colour_of_files(pics, Path(info).parent if info is not None else None)
     except Exception:  # noqa: BLE001  (no colour evidence: the facing stands on the outline and the toes)
+        return None
+
+
+def facing_picture(sc: StageContext, dims: Any = None) -> dict[str, Any] | None:
+    """facing.picture_of_files for this asset: the step 1 cut-out against the mesh audit's renders (dims: the mesh audit's
+    model size, for the square-footprint branch), for categories with facing_by_picture. None otherwise or when either
+    is missing."""
+    if not sc.category.get("facing_by_picture"):
+        return None
+    try:
+        info = sc.lineage_file("views_dir", ("mesh",))
+        pic = sc.lineage_file("cutout", ("concept",))
+        return facing.picture_of_files(pic, Path(info).parent if info is not None else None, dims)
+    except Exception:  # noqa: BLE001  (no picture evidence: the outline decision stands)
         return None
 
 
@@ -296,7 +312,7 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     size = resolve_size(sc.asset.category, params, sc.asset.prompt)
     toes = await asyncio.to_thread(facing.toes_of_file, src, sc.asset.category)
     facing_ = await asyncio.to_thread(resolve_facing, sc.category, params.get("face_yaw", "auto"), mesh_v.metrics if mesh_v else None,
-                                      toes, facing_colour(sc))
+                                      toes, facing_colour(sc), await asyncio.to_thread(facing_picture, sc, (mesh_v.metrics or {}).get("dims") if mesh_v else None))
     # G05 (b): mirroring halves the texture space the model uses and changes the surface the maps were painted for,
     # so it runs only when the version asks (the Fine-tune switch, or a Fix).
     symmetric = bool(params.get("symmetric") or False)
@@ -1214,6 +1230,8 @@ def facing_check(metrics: dict[str, Any], category_id: str | None = None) -> dic
             and quality.angle_diff(best, applied_) > quality.FACING_TOLERANCE_DEG):
         # any kind of model left further from its decided front than the tolerance
         return quality.facing_off_check(best, applied_)
+    if m.get("face_decided_by") == "picture" and m.get("facing_source") != "chosen":
+        return quality.facing_settled_check("picture", applied_)
     if category_id not in facing.TOES_CATEGORIES:
         return None  # no second test exists for this kind of model, and the outline test alone is not a check
     if m.get("face_outline_turn") is None and not m.get("face_toes_found"):

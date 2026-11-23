@@ -24,6 +24,9 @@ picture_view: front
 # the end (vgac/stages/concept.py).
 view_lead: "Straight-on front view, flat front elevation at eye level, camera directly in front, symmetrical, only the front wall visible:"
 input_view_default: quarter
+# The square-on step 1 picture against the 3D step's renders places a building's front by quarter turns
+# (facing.by_picture): a box's outline cannot tell front from back, so the outline test never settles one.
+facing_by_picture: true
 motion: none
 clips: []
 lod_ratios: [0.5, 0.25]
