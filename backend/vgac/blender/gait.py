@@ -891,6 +891,8 @@ WALK_LIFT_LEG = 0.11  # walk swing lift: this share of the leg length ...
 WALK_LIFT_MIN_SHARE = 0.075  # ... and for a biped at least this share of the height, so short legs still lift clear
 PLATEAU_RISE = 0.35  # plateau swing height: rises over this first share of the swing ...
 PLATEAU_FALL = 0.6  # ... holds, and comes down from this share on, steeper at the end than at the start
+PLATEAU_DROP_EXP = 1.15  # drop shape 1 - x^PLATEAU_DROP_EXP: near 1 the foot comes down at a nearly even speed and
+# meets the floor at about 1 m/s (2 gave about 1.5 m/s); higher keeps it up longer but lands harder
 
 
 def walk_lift(leg_len: float, height: float | None = None) -> float:
@@ -900,12 +902,15 @@ def walk_lift(leg_len: float, height: float | None = None) -> float:
 
 
 def plateau_up(s: float) -> float:
-    """Swing height share at swing fraction s: a quarter sine up to 1 by PLATEAU_RISE, flat, then 1 - x^2 down to 0 over
-    the rest (x from 0 at PLATEAU_FALL to 1 at landing). The foot stays clear through the middle of the swing and drops
-    in the last frames instead of coming down as slowly as it rose; 0 and 1 at the ends, continuous slope at the joins."""
+    """Swing height share at swing fraction s: a quarter sine up to 1 by PLATEAU_RISE, flat, then 1 - x^PLATEAU_DROP_EXP
+    down to 0 over the rest (x from 0 at PLATEAU_FALL to 1 at landing). The foot stays clear through the middle of the
+    swing and comes down over its last 40 percent at a nearly even speed, instead of coming down as slowly as it rose;
+    0 and 1 at the ends. With the walk lift at 7.5 percent of the height, the foot is about 4 cm up one frame before
+    contact in a 24-frame walk: under 3 percent of the height, so a long-legged walker still travels 1.7 to 1.9 percent
+    of its height in that last low frame."""
     rise = math.sin(0.5 * math.pi * min(1.0, s / PLATEAU_RISE))
     x = max(0.0, (s - PLATEAU_FALL) / (1.0 - PLATEAU_FALL))
-    return min(rise, 1.0 - x * x)
+    return min(rise, 1.0 - x ** PLATEAU_DROP_EXP)
 
 
 def foot_path(u: float, duty: float, stride: float, lift: float, run: bool = False, quick_strike: bool = False,

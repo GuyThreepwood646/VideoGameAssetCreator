@@ -179,8 +179,12 @@ def test_plateau_swing_stays_up_and_drops_late():
     up = lambda s: gait.foot_path(duty + s * (1 - duty), duty, stride, lift, quick_strike=True, plateau=True)[1]
     assert up(0.0) == pytest.approx(0.0, abs=1e-9)
     assert up(1.0 - 1e-9) == pytest.approx(0.0, abs=1e-6)
-    assert min(up(0.2 + 0.6 * k / 20) for k in range(21)) >= 0.74 * lift  # the middle 60 % of the swing is clear (0.75 at its ends)
-    assert up(0.85) >= 0.5 * lift  # still half up at 85 % of the swing (sin(pi s)^1.2: 0.39)
+    assert min(up(0.2 + 0.6 * k / 20) for k in range(21)) >= 0.54 * lift  # the middle 60 % of the swing is clear (0.55 at 80 %)
+    assert up(0.85) >= 0.41 * lift  # higher late than sin(pi s)^1.2 (0.39 at 85 %)
+    # gentle landing: one frame of a 24-frame walk (duty 0.6, 9.6 swing frames) before contact the foot is under 0.31 of
+    # the lift (0.29; the 1 - x^2 drop gave 0.45). At a 7.5 % lift that is under 3 % of the height, so the last frame is
+    # low: long-legged walkers travel 1.7 to 1.9 % of their height in it, over the 1.5 % aimed for.
+    assert up(1.0 - 1.0 / 9.6) <= 0.31 * lift
     # forward path unchanged: lands at the stance speed
     h = 1e-5
     f = lambda u: gait.foot_path(u, duty, stride, lift, quick_strike=True, plateau=True)[0]
