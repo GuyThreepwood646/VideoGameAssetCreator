@@ -1897,7 +1897,8 @@ def _hand_chains(segments: list[dict[str, Any]] | None, side: str) -> int | None
     return len(kids)
 
 
-FINGER_OFF_SKIN_CM = 3.0  # a finger chain with a joint farther than this from the hand's skin is not on the hand (real thumb tips reach 2.8)
+FINGER_OFF_SKIN_CM = 1.5  # a finger chain with a joint outside the hand's skin by more than this is not on the hand (blender/finger_skin.py:
+#                            inside a closed skin counts as on it; rig_info stores the worst distance outside)
 
 
 def finger_order_found(segments: list[dict[str, Any]] | None, side: str) -> list[str] | None:
@@ -1925,7 +1926,7 @@ def fingers_check(bone_names: list[str] | None, segments: list[dict[str, Any]] |
     """The rig check `fingers` (warn): every hand has all five fingers of three bones. None when the skeleton is not a
     mapped humanoid. `build` is metrics.finger_build (what the finger build did per hand). A hand that has all five fingers must
     also have them named in lane order from the thumb (re-derived from the segments) and every chain on the hand's skin (`chains`
-    is rig_info's finger_chains: the worst joint's distance from skin in cm per finger). The check carries its own help text (it
+    is rig_info's finger_chains: the worst joint's distance outside the skin in cm per finger, 0 when inside). The check carries its own help text (it
     is not in guidance.CHECK_GUIDE)."""
     counts = finger_counts(bone_names)
     if counts is None:

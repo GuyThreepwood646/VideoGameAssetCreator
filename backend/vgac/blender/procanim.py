@@ -258,6 +258,42 @@ leg_len = (sum((head[li["bones"][0]] - low[li["leaf"]]).length for li in leg_inf
 # A wing leaves the torso sideways above the legs, reaches far out to the side, does not hang down, and is longer
 # than the legs (plan 3.7 item 7). Per side the longest such chain wins.
 wing_info = []
+# On a two-legged body a T-posed arm passes every bone test above, so the skin decides (rig-hands-wings, 2026-11-22): a
+# wing is a flat sheet, an arm a round tube. Of the vertices weighted to the chain (summed weight 0.5 or more), the
+# cross-section square to root-to-tip: thickness over chord (2nd to 98th percentile extents). Measured: arms 0.59 to
+# 0.83 (four hand-made humans), wings 0.21 to 0.32 (songbird, two dragons). Fewer than 20 weighted vertices: no reading.
+WING_FLAT_MAX = 0.45
+
+
+def _skin_flatness(chain, root_p, tip_p):
+    import numpy as np
+    names = set(chain)
+    d = tip_p - root_p
+    if d.length < 1e-6:
+        return None
+    dh = np.array(d.normalized())
+    pts = []
+    for o in meshes:
+        gi = {g.index for g in o.vertex_groups if g.name in names}
+        if not gi:
+            continue
+        Wm = o.matrix_world
+        for v in o.data.vertices:
+            if sum(g.weight for g in v.groups if g.group in gi) >= 0.5:
+                pts.append(tuple(Wm @ v.co))
+    if len(pts) < 20:
+        return None
+    q = np.array(pts) - np.array(root_p)
+    perp = q - np.outer(q @ dh, dh)
+    _, vec = np.linalg.eigh(np.cov(perp.T))
+
+    def ext(x):
+        return float(np.quantile(x, 0.98) - np.quantile(x, 0.02))
+
+    chord = ext(perp @ vec[:, 2])
+    return ext(perp @ vec[:, 1]) / chord if chord > 1e-9 else None
+
+
 if not serpent_req:
     cands = {True: [], False: []}
     for b in leaves:
@@ -280,11 +316,16 @@ if not serpent_req:
             continue
         if p.z < root_p.z - 0.35 * reach:  # hangs down: an arm, not a wing
             continue
-        cands[lat_of(p) > 0].append((reach, chain, b.name))
+        flat = _skin_flatness(chain, root_p, p) if gait.kind_for_legs(len(leg_info)) == "biped" else None
+        if flat is not None and flat > WING_FLAT_MAX:  # a round tube of skin: a T-posed arm, not a wing
+            continue
+        cands[lat_of(p) > 0].append((reach, chain, b.name, flat))
     for side in (True, False):
         if cands[side]:
-            reach, chain, leaf = max(cands[side])
+            reach, chain, leaf, flat = max(cands[side], key=lambda c: c[:3])
             wing_info.append({"side": "left" if side else "right", "left": side, "leaf": leaf, "bones": chain, "reach": reach})
+            if flat is not None:
+                wing_info[-1]["flat"] = round(flat, 3)
 # Wings come in pairs. On a two-legged body a lone candidate is an arm that reaches out sideways (WP-17 follow-up: the
 # boy's right arm, rest 102 degrees, was taken as a wing, so the wing moves folded that arm alone and it crossed the
 # body). Dropped here, before the wing bones are used to find the spine and arms.
