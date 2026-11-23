@@ -506,15 +506,52 @@ def test_choose_try_with_no_try_kept_keeps_nothing_and_retries_only_if_it_can():
     assert buildpose.choose_try([], 2)["keep"] is None
 
 
+def test_choose_try_arms_raised_near_a_t_pose_ask_for_another():
+    # the golden Knight's redraw: asked for about 45 degrees, drawn at 73 (a near T-pose); master kept it without a retry
+    r = buildpose.choose_try([{"guard_ok": True, "gap": 0.268, "arm": 73.0}], 1)
+    assert r["keep"] == 0 and r["another"] is True and "73" in r["why"]
+    # no retries left: the try is still kept, with the reason
+    assert buildpose.choose_try([{"guard_ok": True, "gap": 0.268, "arm": 73.0}], 0)["another"] is False
+    # at 45 or at the limit, and unread, nothing more is asked
+    for arm in (45.0, buildpose.ARM_REDRAW_MAX, None):
+        assert buildpose.choose_try([{"guard_ok": True, "gap": 0.3, "arm": arm}], 1)["another"] is False
+
+
+def test_choose_try_prefers_arms_under_the_limit_over_a_wider_gap():
+    tries = [{"guard_ok": True, "gap": 0.34, "arm": 72.0}, {"guard_ok": True, "gap": 0.26, "arm": 48.0}]
+    assert buildpose.choose_try(tries, 0)["keep"] == 1
+    # the guard still comes first
+    tries = [{"guard_ok": True, "gap": 0.26, "arm": 72.0}, {"guard_ok": False, "gap": 0.3, "arm": 45.0}]
+    assert buildpose.choose_try(tries, 0)["keep"] == 0
+
+
+def test_redraw_arm_angle_is_the_higher_arm():
+    assert buildpose.redraw_arm_angle({"arms": {"left": {"angle": 70.0}, "right": {"angle": 72.9}}}) == 72.9
+    assert buildpose.redraw_arm_angle({"arms": {"left": {"angle": None}, "right": {"angle": 30.0}}}) == 30.0
+    assert buildpose.redraw_arm_angle({"arms": {}}) is None
+    assert buildpose.redraw_arm_angle({"error": "x"}) is None
+
+
+def test_redraw_with_arms_near_a_t_pose_draws_again_and_keeps_the_lower(step, monkeypatch):
+    _gaps(monkeypatch, 0.30, 0.30, arms=[73.0, 50.0])
+    sc = _SC(step.dir, step.person)
+    out = asyncio.run(turnaround._pose_ready_picture(sc, {"pose_ready": True}, step.src))
+    assert len(sc.graphs) == 2 and out == step.dir / "pose_ready_picture_2.png"
+    m = sc.version.metrics["pose_guard"]
+    assert m["arms"] == [73.0, 50.0] and m["kept_try"] == 2
+
+
 def test_choose_try_an_unread_gap_counts_least_and_asks_for_nothing_more():
     assert buildpose.choose_try([_t(True, None), _t(True, 0.1)], 0)["keep"] == 1
     r = buildpose.choose_try([_t(True, None)], 1)
     assert r["keep"] == 0 and r["another"] is False
 
 
-def _gaps(monkeypatch, *values):
+def _gaps(monkeypatch, *values, arms=None):
     it = iter(values)
     monkeypatch.setattr(turnaround, "_feet_gap", lambda _p: next(it))
+    arm_it = iter(arms or [45.0] * len(values))
+    monkeypatch.setattr(turnaround, "_arm_angle", lambda _p: next(arm_it))
 
 
 def test_feet_too_close_on_the_first_try_asks_for_another_and_keeps_the_wider(step, monkeypatch):
