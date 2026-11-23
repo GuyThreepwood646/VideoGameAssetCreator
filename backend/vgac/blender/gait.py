@@ -941,16 +941,21 @@ def ik_pair_start(seg_lengths: list[float], foot_index: int | None = None) -> in
     return best_i
 
 
-def rolled_ankle(ankle, ball, floor_z, forward, lateral, toe_len, pitch_deg):
-    """Where the ankle goes when a planted foot pitches by pitch_deg (toes up positive) about a point that stays put: the
-    ball joint for toes down (push off), the heel on the floor (HEEL_BACK_SHARE of toe_len behind the ankle) for toes up
-    (heel strike). The foot turns by the same rotation procanim gives it: pitch_deg about -lateral. Positions are the
-    rest ones (world); the caller adds the foot path's forward and up offsets."""
+def rolled_ankle(ankle, ball, floor_z, forward, lateral, toe_len, pitch_deg, heel_pts=None):
+    """Where the ankle goes when a planted foot pitches by pitch_deg (toes up positive) without sliding: about the ball
+    joint for toes down (push off); for toes up (heel strike) it rolls on the heel. With heel_pts (rest points of the
+    foot's skin), the point lowest once the foot is turned is set on the floor where it stands at rest, so a rounded heel
+    touches the floor at every pitch; without them the heel is taken HEEL_BACK_SHARE of toe_len behind the ankle on the
+    floor. The foot turns by the same rotation procanim gives it: pitch_deg about -lateral. Positions are the rest ones
+    (world); the caller adds the foot path's forward and up offsets."""
+    q = q_axis_angle(lateral, math.radians(-pitch_deg))
     if pitch_deg < 0 and ball is not None:
         piv = tuple(ball)
-    else:
-        piv = (ankle[0] - forward[0] * HEEL_BACK_SHARE * toe_len, ankle[1] - forward[1] * HEEL_BACK_SHARE * toe_len, floor_z)
-    q = q_axis_angle(lateral, math.radians(-pitch_deg))
+        return v_add(piv, q_rotate(q, v_sub(ankle, piv)))
+    if heel_pts:
+        c = min(heel_pts, key=lambda p: q_rotate(q, v_sub(p, ankle))[2])
+        return v_sub((c[0], c[1], floor_z), q_rotate(q, v_sub(c, ankle)))
+    piv = (ankle[0] - forward[0] * HEEL_BACK_SHARE * toe_len, ankle[1] - forward[1] * HEEL_BACK_SHARE * toe_len, floor_z)
     return v_add(piv, q_rotate(q, v_sub(ankle, piv)))
 
 

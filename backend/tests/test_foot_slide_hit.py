@@ -119,3 +119,19 @@ def test_hit_frame_ignores_a_wind_up_that_reaches_as_far():
 
 def test_hit_frame_needs_three_frames():
     assert gait.hit_frame({"hand_r": [(0.0, 0.0, 0.0), (0.1, 0.0, 0.0)]}, FPS, (1.0, 0.0, 0.0), 1.0)["frame"] == -1
+
+
+def test_rounded_heel_touches_the_floor_at_every_pitch():
+    # a heel shaped as an arc (radius 4 cm, centre 4 cm above the floor, 3 cm behind the ankle): rolled on its skin,
+    # the lowest heel point is on the floor whatever the pitch; the fixed estimate leaves it in the air or under the floor
+    r, cy, cz = 0.04, ANKLE[1] + 0.03, FLOOR + 0.04  # behind the ankle is +y here (forward is -y)
+    heel = [(ANKLE[0], cy + r * math.sin(a), cz - r * math.cos(a)) for a in [math.radians(d) for d in range(-60, 61, 2)]]
+    for pitch in (12.0, 8.0, 4.0, 0.0):
+        q = gait.q_axis_angle(LAT, math.radians(-pitch))
+        a = gait.rolled_ankle(ANKLE, BALL, FLOOR, FWD, LAT, 0.25, pitch, heel_pts=heel)
+        low = min(gait.v_add(a, gait.q_rotate(q, gait.v_sub(p, ANKLE)))[2] for p in heel)
+        assert low == pytest.approx(FLOOR, abs=1e-9)
+    q = gait.q_axis_angle(LAT, math.radians(-12.0))
+    a_est = gait.rolled_ankle(ANKLE, BALL, FLOOR, FWD, LAT, 0.25, 12.0)
+    low_est = min(gait.v_add(a_est, gait.q_rotate(q, gait.v_sub(p, ANKLE)))[2] for p in heel)
+    assert abs(low_est - FLOOR) > 0.01

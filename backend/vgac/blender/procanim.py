@@ -1077,6 +1077,28 @@ def heel_raise(toe_len, pitch):
     return 0.35 * toe_len * math.sin(math.radians(pitch))
 
 
+def foot_heel(ch):
+    """(rest points of the foot's lower skin, the sole's height) for rolling on the heel: the vertices mostly weighted to
+    the leg's end bone (the foot, not the toes, which stay flat) within 3 percent of the height of its lowest point, at
+    most 400 of them. (None, lo.z) when the foot has no skin of its own; rolled_ankle then estimates the heel."""
+    if "heel" not in ch:
+        e = ch["end_bone"]
+        pts = []
+        for o in meshes if e else []:
+            gname = {g.index: g.name for g in o.vertex_groups}
+            for v in o.data.vertices:
+                if v.groups and gname.get(max(v.groups, key=lambda g: g.weight).group) == e:
+                    pts.append(o.matrix_world @ v.co)
+        if pts:
+            z0 = min(p.z for p in pts)
+            low = [p for p in pts if p.z <= z0 + 0.03 * height]
+            step = max(1, len(low) // 400)
+            ch["heel"] = ([tuple(p) for p in low[::step]], z0)
+        else:
+            ch["heel"] = (None, lo.z)
+    return ch["heel"]
+
+
 def ankle_target(li, fwd_, up_, pitch):
     """Where a leg's IK end goes for a foot path point. A biped foot rolls about a point that stays put (the ball for toes
     down, the heel on the floor for toes up, gait.rolled_ankle), so push-off and heel strike do not slide; other feet keep
@@ -1085,8 +1107,9 @@ def ankle_target(li, fwd_, up_, pitch):
     toe, toe_len = foot_geometry(ch)
     if not biped:
         return ch["end_rest"] + forward * fwd_ + up * (up_ + heel_raise(toe_len, pitch))
-    A = gait.rolled_ankle(tuple(ch["end_rest"]), tuple(head[toe]) if toe else None, lo.z, tuple(forward), tuple(lateral),
-                          toe_len, pitch)
+    pts, sole_z = foot_heel(ch)
+    A = gait.rolled_ankle(tuple(ch["end_rest"]), tuple(head[toe]) if toe else None, sole_z, tuple(forward), tuple(lateral),
+                          toe_len, pitch, heel_pts=pts)
     return Vector(A) + forward * fwd_ + up * up_
 
 
