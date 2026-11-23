@@ -60,8 +60,10 @@ def test_one_hand_out_of_order_names_that_hand_only():
 
 def test_a_chain_off_the_skin_is_a_fault_and_a_near_one_is_not():
     segs = _segments(_renamed(LEFT, "Left"), _renamed(RIGHT, "Right"))
-    ok = rig.fingers_check(_names(segs), segs, None, {"Left": {"Thumb": 2.8, "Index": 1.0}, "Right": {"Pinky": 2.0}})
-    assert ok["passed"]  # thumb tips reach 2.8 cm in the stored hands
+    # the values are how far a chain's worst joint lies outside the skin (0 inside it); up to 1.5 cm is on the hand
+    ok = rig.fingers_check(_names(segs), segs, None, {"Left": {"Thumb": 0.0, "Index": 1.0}, "Right": {"Pinky": 1.5}})
+    assert ok["passed"]
+    assert not rig.fingers_check(_names(segs), segs, None, {"Right": {"Pinky": 2.0}})["passed"]
     bad = rig.fingers_check(_names(segs), segs, None, {"Left": {"Thumb": 6.5}})
     assert not bad["passed"] and "outside the hand's skin (up to 6 cm away)" in bad["help"] and "left hand lies" in bad["help"]
     assert rig.fingers_check(_names(segs), segs, None, None)["passed"]  # an older rig without the measurement is not failed for it

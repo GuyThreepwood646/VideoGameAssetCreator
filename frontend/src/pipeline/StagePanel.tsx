@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
-import {
+import { builtFromNumber,
   api,
   ApiError,
   libraryUrl,
@@ -105,6 +105,9 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
   )
   const prev = previousStage(stage, asset.category)
   const prevSelected = prev ? selectedVersion(asset, prev) : undefined
+  // The earlier version this step's shown version was really built from (its parent), not the one kept now (F23).
+  const builtVersion = selected ?? active
+  const builtFrom = builtFromNumber(asset, prev ?? null, builtVersion)
   const canRun = !prev || !!prevSelected
   const [count, setCount] = useState(conceptCountDefault)
   // The Try again label names what it will make; none for a picture the person brought and no description (UX-11).
@@ -151,6 +154,12 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
     return Object.keys(out).length ? out : undefined
   }
 
+  // The version whose keep is being saved (F23): the header says "Saving" until the save returns, not the old kept one.
+  const [keepingId, setKeepingId] = useState<string | null>(null)
+  const keepVersion = (id: string) => {
+    setKeepingId(id)
+    void act(() => api.select(id)).finally(() => setKeepingId(null))
+  }
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true)
     try {
@@ -423,6 +432,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         estimates={suggestion?.estimates ?? null}
         active={active}
         selected={selected}
+        keepingId={keepingId}
         busy={busy}
         baseName={baseName}
         autopilot={autopilot}
@@ -468,7 +478,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
           </h2>
           <span className="muted small">
             {versions.length ? `${versions.length} version${versions.length > 1 ? 's' : ''}` : 'no versions yet'}
-            {canRun && prevSelected ? ` / built from "${stagePlain(prev!, ref?.stages.find((s) => s.id === prev) ?? null)}" version ${versionsOf(asset, prev!).findIndex((v) => v.id === prevSelected.id) + 1}` : ''}
+            {canRun && builtFrom ? ` / built from "${stagePlain(prev!, ref?.stages.find((s) => s.id === prev) ?? null)}" version ${builtFrom}` : ''}
             {stageInfo?.estimate_note ? ` / ${stageInfo.estimate_note}` : ''}
           </span>
           {startOverControl}
@@ -666,7 +676,8 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                 setCount={setCount}
                 changeOpen={changeOpen}
                 setChangeOpen={setChangeOpen}
-                onKeep={() => act(() => api.select(active.id))}
+                onKeep={() => keepVersion(active.id)}
+                saving={keepingId === active.id}
                 tryLabel={tryLabel}
                 onTryAgain={() => tryAgain(active)}
                 onReject={() => act(() => api.reject(active.id))}
@@ -827,7 +838,7 @@ function StageViewer({ stage, version, asset, viewTool, onFix, category, assetNa
     case 'rig':
       return (
         <>
-          <RigView version={version} />
+          <RigView version={version} category={category} />
           {/* The arm tool cuts a limb off a character: an object with no skeleton has no arm to separate (F16). */}
           {hasSkeleton && <ShapeTab version={version} onChanged={onChanged} />}
         </>
@@ -883,6 +894,7 @@ function HappyBlock({
   changeOpen,
   setChangeOpen,
   onKeep,
+  saving,
   tryLabel,
   onTryAgain,
   onReject,
@@ -899,6 +911,7 @@ function HappyBlock({
   changeOpen: boolean
   setChangeOpen: (b: boolean) => void
   onKeep: () => void
+  saving: boolean
   tryLabel: string | null
   onTryAgain: () => void
   onReject: () => void
@@ -911,7 +924,7 @@ function HappyBlock({
       <div className="happy-q">Happy with this?</div>
       <div className="happy-answers">
         <button type="button" className={isPrimary && !isSelected ? 'primary' : ''} disabled={busy || isSelected} onClick={onKeep} title={isSelected ? 'This version is kept; later steps build on it' : 'Keep this version; later steps build on it'}>
-          {isSelected ? 'Kept' : 'Yes, keep it'}
+          {isSelected ? 'Kept' : saving ? 'Saving...' : 'Yes, keep it'}
         </button>
         <span className="answer-group">
           {tryLabel && (

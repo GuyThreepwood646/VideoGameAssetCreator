@@ -20,7 +20,7 @@ test('the version card dot: red only for a likely check, amber for the rest (UX-
   assert.equal(failingTier(c('likely')), 'likely')
   assert.equal(failingTier(c('look')), 'look')
   assert.equal(failingTier(c('advice')), 'advice')
-  assert.equal(failingTier(c(undefined)), null)
+  assert.equal(failingTier(c(undefined)), 'look') // no tier of its own: the default tier is "Worth a look", amber (F6)
   assert.equal(failingTier({ checks: [{ name: 'x', passed: true }] }), null)
   assert.equal(failingTier({ checks: [{ name: 'a', passed: false, tier: 'advice' }, { name: 'b', passed: false, tier: 'look' }] }), 'look')
 })

@@ -3,6 +3,7 @@ import { api, libraryUrl, type ItemSuggestionState, type SuggestionAnswer, type 
 import { Info } from '../../components/Info'
 import { Disclosure } from '../../components/ui'
 import { CellSheet } from '../../components/CellSheet'
+import { useRefData } from '../../refdata'
 import { clipLabel, joinAnd, libraryMissingLine, movesLine, movesPlain, movesSourceLine } from '../../help'
 import { MovesPanel } from '../MovesPanel'
 import Viewer, { hitShapesOf, type BoneSegment, type BonesSpace, type ClipInfo, type HitboxDoc } from '../../Viewer'
@@ -52,7 +53,10 @@ function hitboxLine(summary: HitboxSummary | null, doc: HitboxDoc | null): { tex
   return { text: `Hit boxes: ${count} invisible shapes that show where a hit lands, fitted to the body. They move with the skeleton so hits land where they look.`, warn: false }
 }
 
-export function RigView({ version }: { version: Version }) {
+export function RigView({ version, category }: { version: Version; category?: string }) {
+  // A category with no skeleton (a building, a prop) does not animate, so the movement question is not asked (F7).
+  const { ref } = useRefData()
+  const hasSkeleton = !category || !ref || ref.categories.find((c) => c.id === category)?.rig_engine !== 'none'
   const animGlb = libraryUrl(version.files.anim_glb)
   const glb = animGlb ?? libraryUrl(version.files.glb)
   const rigInfoUrl = libraryUrl(version.files.rig_info)
@@ -198,7 +202,9 @@ export function RigView({ version }: { version: Version }) {
   return (
     <div className="rig-view" onPointerDownCapture={dp.activate} onFocusCapture={dp.activate}>
       <div className="view-intro muted small">
-        Does the movement look natural? Press play in the viewer, or look at the bent poses below. {animGlb ? 'The viewer shows the animated model.' : ''}
+        {hasSkeleton
+          ? <>Does the movement look natural? Press play in the viewer, or look at the bent poses below. {animGlb ? 'The viewer shows the animated model.' : ''}</>
+          : <>This object has no skeleton, so it does not animate. Its moving parts, if it has any, are the pieces listed below.</>}
         <Info term="term.skeleton" />
       </div>
       {(hbLine || moves || missing.length > 0 || namesFixed || libMissing || carried || carryWhy || sepLine) && (

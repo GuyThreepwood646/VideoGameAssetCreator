@@ -49,29 +49,73 @@ for m in [m for m in meshes if m.vertex_groups] or meshes:
         if ws and abs(total_w - 1.0) > 0.02:
             info["unnormalised_verts"] += 1
 info["weight_coverage"] = (info["weighted_verts"] / info["verts"]) if info["verts"] else 0.0
-# How far each finger chain lies from the hand's skin: for every joint of a finger's three bones (and the last bone's end), the distance to the
-# nearest skin vertex within 28 cm of the wrist; the worst joint, in cm. A chain that lies in the hand has joints within 3 cm of skin (thumb tips
-# reach 2.8 cm); one outside it is not on the hand. {side: {finger: cm}}; the rig check `fingers` reads it.
+# How far each finger chain lies outside the hand's skin (blender/finger_skin.py): a joint (knuckle, the two inner joints,
+# the last bone's end) is on the hand when it is inside the closed skin, or within 1.5 cm of the skin surface; where the skin
+# near the wrist (28 cm) is open or non-manifold, the surface test alone. The worst joint's distance outside, in cm (0 when
+# every joint is on the hand). {side: {finger: cm}}; the rig check `fingers` reads it. finger_skin_closed: {side: bool}.
 info["finger_chains"] = {}
+info["finger_skin_closed"] = {}
 if arms and any(m.vertex_groups for m in meshes):
     import numpy as _np
+    from mathutils.bvhtree import BVHTree as _BVH
+    import finger_skin as _fs  # noqa: E402
 
-    _pts = _np.array([list(m.matrix_world @ v.co) for m in meshes if m.vertex_groups for v in m.data.vertices])
+    _skins = []
+    for _m in [m for m in meshes if m.vertex_groups]:
+        _vw = [_m.matrix_world @ v.co for v in _m.data.vertices]
+        # glTF splits vertices at UV and normal seams: weld by position (0.01 mm) so a seam is not a border
+        _pid, _of = {}, []
+        for v in _vw:
+            _of.append(_pid.setdefault((round(v.x, 5), round(v.y, 5), round(v.z, 5)), len(_pid)))
+        _pk = [[tuple(sorted((_of[i], _of[j]))) for i, j in p.edge_keys] for p in _m.data.polygons]
+        _pk = [[k for k in keys if k[0] != k[1]] for keys in _pk]
+        _first = {}
+        for i, q in enumerate(_of):
+            _first.setdefault(q, i)
+        if _pk:
+            _skins.append({"v": _np.array([list(v) for v in _vw]), "keys": _pk, "first": [_first[q] for q in range(len(_pid))],
+                           "bvh": _BVH.FromPolygons(_vw, [list(p.vertices) for p in _m.data.polygons])})
+    _rays = [Vector((0.0123, 0.0071, 1.0)).normalized(), Vector((0.0093, 1.0, 0.0111)).normalized(),
+             Vector((1.0, 0.0087, 0.0131)).normalized()]
+
+    def _parity(bvh, p, d):
+        n, o = 0, p.copy()
+        while n < 64:
+            hit = bvh.ray_cast(o, d)
+            if hit[0] is None:
+                break
+            n, o = n + 1, hit[0] + d * 1e-5
+        return n % 2
+
     for _side in ("Left", "Right"):
         _hand = arm.data.bones.get("mixamorig:" + _side + "Hand")
         if _hand is None:
             continue
         _w = _np.array(list(arm.matrix_world @ _hand.head_local))
-        _near = _pts[_np.linalg.norm(_pts - _w, axis=1) < 0.28]
-        if not len(_near):
+        _local = []
+        for _s in _skins:
+            _nearm = _np.linalg.norm(_s["v"] - _w, axis=1) < 0.28
+            if _nearm.any():
+                _local.append((_s, _fs.edges_closed(_s["keys"], lambda q, _nm=_nearm, _fi=_s["first"]: bool(_nm[_fi[q]]))))
+        if not _local:
             continue
+        _closed = [s for s, c in _local if c]
+        _all_closed = len(_closed) == len(_local)
+        info["finger_skin_closed"][_side] = _all_closed
+
+        def _inside(p, _cl=_closed):
+            return any(sum(_parity(s["bvh"], Vector(p), d) for d in _rays) >= 2 for s in _cl)
+
+        def _surface(p, _lo=_local):
+            return min(s["bvh"].find_nearest(Vector(p))[3] for s, _c in _lo)
+
         for _f in ("Thumb", "Index", "Middle", "Ring", "Pinky"):
             _ch = [arm.data.bones.get("mixamorig:" + _side + "Hand" + _f + str(_i)) for _i in (1, 2, 3)]
             if not all(_ch):
                 continue
-            _joints = [_np.array(list(arm.matrix_world @ b.head_local)) for b in _ch] + [_np.array(list(arm.matrix_world @ _ch[2].tail_local))]
-            _d = max(float(_np.min(_np.linalg.norm(_near - j, axis=1))) for j in _joints)
-            info["finger_chains"].setdefault(_side, {})[_f] = round(_d * 100, 1)
+            _joints = [tuple(arm.matrix_world @ b.head_local) for b in _ch] + [tuple(arm.matrix_world @ _ch[2].tail_local)]
+            # a joint inside any closed skin near the wrist counts; the open skins only give the surface distance
+            info["finger_chains"].setdefault(_side, {})[_f] = _fs.chain_outside_cm(_joints, _inside, _surface, bool(_closed))
 # Same segments in glTF space (Y up, -Z forward) for the web viewer: Blender (x, y, z) -> (x, z, -y).
 info["bone_segments_gltf"] = [{"name": b["name"], "parent": b["parent"],
                                "head": [b["head"][0], b["head"][2], -b["head"][1]],

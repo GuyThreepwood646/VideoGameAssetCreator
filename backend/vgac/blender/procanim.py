@@ -258,6 +258,42 @@ leg_len = (sum((head[li["bones"][0]] - low[li["leaf"]]).length for li in leg_inf
 # A wing leaves the torso sideways above the legs, reaches far out to the side, does not hang down, and is longer
 # than the legs (plan 3.7 item 7). Per side the longest such chain wins.
 wing_info = []
+# On a two-legged body a T-posed arm passes every bone test above, so the skin decides (rig-hands-wings, 2026-11-22): a
+# wing is a flat sheet, an arm a round tube. Of the vertices weighted to the chain (summed weight 0.5 or more), the
+# cross-section square to root-to-tip: thickness over chord (2nd to 98th percentile extents). Measured: arms 0.59 to
+# 0.83 (four hand-made humans), wings 0.21 to 0.32 (songbird, two dragons). Fewer than 20 weighted vertices: no reading.
+WING_FLAT_MAX = 0.45
+
+
+def _skin_flatness(chain, root_p, tip_p):
+    import numpy as np
+    names = set(chain)
+    d = tip_p - root_p
+    if d.length < 1e-6:
+        return None
+    dh = np.array(d.normalized())
+    pts = []
+    for o in meshes:
+        gi = {g.index for g in o.vertex_groups if g.name in names}
+        if not gi:
+            continue
+        Wm = o.matrix_world
+        for v in o.data.vertices:
+            if sum(g.weight for g in v.groups if g.group in gi) >= 0.5:
+                pts.append(tuple(Wm @ v.co))
+    if len(pts) < 20:
+        return None
+    q = np.array(pts) - np.array(root_p)
+    perp = q - np.outer(q @ dh, dh)
+    _, vec = np.linalg.eigh(np.cov(perp.T))
+
+    def ext(x):
+        return float(np.quantile(x, 0.98) - np.quantile(x, 0.02))
+
+    chord = ext(perp @ vec[:, 2])
+    return ext(perp @ vec[:, 1]) / chord if chord > 1e-9 else None
+
+
 if not serpent_req:
     cands = {True: [], False: []}
     for b in leaves:
@@ -280,11 +316,16 @@ if not serpent_req:
             continue
         if p.z < root_p.z - 0.35 * reach:  # hangs down: an arm, not a wing
             continue
-        cands[lat_of(p) > 0].append((reach, chain, b.name))
+        flat = _skin_flatness(chain, root_p, p) if gait.kind_for_legs(len(leg_info)) == "biped" else None
+        if flat is not None and flat > WING_FLAT_MAX:  # a round tube of skin: a T-posed arm, not a wing
+            continue
+        cands[lat_of(p) > 0].append((reach, chain, b.name, flat))
     for side in (True, False):
         if cands[side]:
-            reach, chain, leaf = max(cands[side])
+            reach, chain, leaf, flat = max(cands[side], key=lambda c: c[:3])
             wing_info.append({"side": "left" if side else "right", "left": side, "leaf": leaf, "bones": chain, "reach": reach})
+            if flat is not None:
+                wing_info[-1]["flat"] = round(flat, 3)
 # Wings come in pairs. On a two-legged body a lone candidate is an arm that reaches out sideways (WP-17 follow-up: the
 # boy's right arm, rest 102 degrees, was taken as a wing, so the wing moves folded that arm alone and it crossed the
 # body). Dropped here, before the wing bones are used to find the spine and arms.
@@ -374,6 +415,9 @@ def unit(v, fallback):
 for li in leg_info:
     b0 = li["bones"][0]
     d = low[li["leaf"]] - head[b0]
+    li["foot_index"] = gait.foot_bone_index(li["bones"])
+    if li["foot_index"] is not None and li["foot_index"] >= 2:
+        d = head[li["bones"][li["foot_index"]]] - head[b0]  # to the ankle: a big cartoon foot is not a splayed leg
     horiz = Vector((d.x, d.y, 0))
     li["splay"] = horiz.length / max(1e-6, d.length)
     li["swing_axis"] = unit(d.cross(forward), -lateral)        # positive rotates the foot forward
@@ -979,20 +1023,16 @@ def hind_pivot():
 # ---- limb IK: planted feet, settled limbs --------------------------------------------------------------------
 
 
-def limb_chain(bone_list, leaf_end):
+def limb_chain(bone_list, leaf_end, foot_index=None):
     """The two-bone part of a limb for the IK: the longest pair of consecutive bones whose end is a real joint
-    (the head of the next bone), so a dog's leg uses upper arm and forearm, a person's thigh and shin. Bones below
-    the end keep their world orientation while the IK moves the pair."""
+    (the head of the next bone), so a dog's leg uses upper arm and forearm, a person's thigh and shin; a leg with a
+    named foot bone always ends the pair at the ankle (gait.ik_pair_start). Bones below the end keep their world
+    orientation while the IK moves the pair."""
     if len(bone_list) < 2:
         return None
     joints = [head[n] for n in bone_list] + [leaf_end]
-    last = len(bone_list) - 3 if len(bone_list) >= 3 else 0
-    best = None
-    for i in range(0, last + 1):
-        l1, l2 = (joints[i + 1] - joints[i]).length, (joints[i + 2] - joints[i + 1]).length
-        if best is None or l1 + l2 > best[0] + 1e-9:
-            best = (l1 + l2, i, l1, l2)
-    _, i, l1, l2 = best
+    i = gait.ik_pair_start([(joints[k + 1] - joints[k]).length for k in range(len(joints) - 1)], foot_index)
+    l1, l2 = (joints[i + 1] - joints[i]).length, (joints[i + 2] - joints[i + 1]).length
     end_bone = bone_list[i + 2] if i + 2 < len(bone_list) else None
     d0 = (joints[i + 2] - joints[i]).length
     mid_off = joints[i + 1] - (joints[i] + joints[i + 2]) / 2
@@ -1002,7 +1042,7 @@ def limb_chain(bone_list, leaf_end):
 
 
 for li in leg_info:
-    li["ik"] = None if li["splayed"] else limb_chain(li["bones"], low[li["leaf"]])
+    li["ik"] = None if li["splayed"] else limb_chain(li["bones"], low[li["leaf"]], li.get("foot_index"))
 for a_ in arm_info:
     # The palm-down pass puts Extra_ForeArmTwist bones between ForeArm and Hand, all starting at the elbow. They are
     # left out of the IK chain so its end is the Hand (the wrist), and the forearm length is elbow to wrist.
@@ -1078,6 +1118,42 @@ def heel_raise(toe_len, pitch):
     return 0.35 * toe_len * math.sin(math.radians(pitch))
 
 
+def foot_heel(ch):
+    """(rest points of the foot's lower skin, the sole's height) for rolling on the heel: the vertices mostly weighted to
+    the leg's end bone (the foot, not the toes, which stay flat) within 3 percent of the height of its lowest point, at
+    most 400 of them. (None, lo.z) when the foot has no skin of its own; rolled_ankle then estimates the heel."""
+    if "heel" not in ch:
+        e = ch["end_bone"]
+        pts = []
+        for o in meshes if e else []:
+            gname = {g.index: g.name for g in o.vertex_groups}
+            for v in o.data.vertices:
+                if v.groups and gname.get(max(v.groups, key=lambda g: g.weight).group) == e:
+                    pts.append(o.matrix_world @ v.co)
+        if pts:
+            z0 = min(p.z for p in pts)
+            low = [p for p in pts if p.z <= z0 + 0.03 * height]
+            step = max(1, len(low) // 400)
+            ch["heel"] = ([tuple(p) for p in low[::step]], z0)
+        else:
+            ch["heel"] = (None, lo.z)
+    return ch["heel"]
+
+
+def ankle_target(li, fwd_, up_, pitch):
+    """Where a leg's IK end goes for a foot path point. A biped foot rolls about a point that stays put (the ball for toes
+    down, the heel on the floor for toes up, gait.rolled_ankle), so push-off and heel strike do not slide; other feet keep
+    the plain heel raise."""
+    ch = li["ik"]
+    toe, toe_len = foot_geometry(ch)
+    if not biped:
+        return ch["end_rest"] + forward * fwd_ + up * (up_ + heel_raise(toe_len, pitch))
+    pts, sole_z = foot_heel(ch)
+    A = gait.rolled_ankle(tuple(ch["end_rest"]), tuple(head[toe]) if toe else None, sole_z, tuple(forward), tuple(lateral),
+                          toe_len, pitch, heel_pts=pts)
+    return Vector(A) + forward * fwd_ + up * up_
+
+
 def plant_feet(P, feet, biped_feet):
     """feet: [(leg, fwd, up, pitch, toe_flat)] -> IK every leg so its end joint follows its foot path (world,
     relative to the rest place), the foot keeps its rest orientation turned by the path's pitch, and a planted
@@ -1085,8 +1161,7 @@ def plant_feet(P, feet, biped_feet):
     for li, fwd_, up_, pitch, toe_flat in feet:
         ch = li["ik"]
         toe, toe_len = foot_geometry(ch)
-        raise_ = heel_raise(toe_len, pitch)
-        target = ch["end_rest"] + forward * fwd_ + up * (up_ + raise_)
+        target = ankle_target(li, fwd_, up_, pitch)
         Mw = fk(P)
         pole = chain_pole(P, Mw, ch, forward if biped_feet else -forward)
         want = None
@@ -1106,9 +1181,7 @@ def planted_drop(feet, lmax_frac):
         ch = li["ik"]
         if up_ > 1e-6 or ch is None:
             continue
-        toe, toe_len = foot_geometry(ch)
-        raise_ = heel_raise(toe_len, pitch)
-        E = ch["end_rest"] + forward * fwd_ + up * raise_
+        E = ankle_target(li, fwd_, 0.0, pitch)
         H = head[ch["a"]]
         hor = E - H
         hor.z = 0
@@ -1123,7 +1196,7 @@ def leg_chain(li):
     if li.get("ik"):
         return li["ik"]
     if "stance_chain" not in li:
-        li["stance_chain"] = limb_chain(li["bones"], low[li["leaf"]])
+        li["stance_chain"] = limb_chain(li["bones"], low[li["leaf"]], li.get("foot_index"))
     return li["stance_chain"]
 
 
@@ -1829,14 +1902,14 @@ def leg_parts():
 
 
 def _splay_clearance(P):
-    """Torso-first death: a splayed leg (no IK chain) whose foot or shin goes under the ground in the fall is taken
+    """Torso-first death: a leg (splayed or not) whose foot or shin goes under the ground in the fall is taken
     clear by turning its ankle (within 25 degrees) and then its hip (within 40), about the leg's own swing axis, by
     the smallest turn that clears it. No knee bend, so the leg skin is not stretched."""
     g = _rest_low[0]
     parts = leg_parts()
     for li in leg_info:
         ch = leg_chain(li)
-        if li.get("ik") or not ch:
+        if not ch:  # torso-first only, every leg: the goblin's legs have IK since splay is read to the ankle
             continue
         key = ch["end_bone"] or ch["m"]
         if key not in parts:
@@ -1869,13 +1942,13 @@ def _splay_clearance(P):
 
 
 def _splay_lay(P, g):
-    """Torso-first death, final pose: a splayed leg that hangs above the ground is swung down at the hip (within 25
+    """Torso-first death, final pose: a leg that hangs above the ground is swung down at the hip (within 25
     degrees) until its lowest point is 1 cm over it, so the leg lies along the ground. -> {bone: local correction}."""
     parts = leg_parts()
     out = {}
     for li in leg_info:
         ch = leg_chain(li)
-        if li.get("ik") or not ch:
+        if not ch:  # torso-first only, every leg: the goblin's legs have IK since splay is read to the ankle
             continue
         key = ch["end_bone"] or ch["m"]
         name = li["bones"][0]
@@ -1902,13 +1975,13 @@ def _splay_lay(P, g):
 
 
 def _splay_relax(P, g):
-    """Torso-first death, final pose: each splayed leg's ankle is relaxed from the standing right angle toward a foot in
+    """Torso-first death, final pose: each leg's ankle is relaxed from the standing right angle toward a foot in
     line with the shin (up to 14 degrees, the most that keeps the leg skin within 0.1 points of Today), as far as the foot stays off the ground. -> {bone: local correction}."""
     parts = leg_parts()
     out = {}
     for li in leg_info:
         ch = leg_chain(li)
-        if li.get("ik") or not ch:
+        if not ch:  # torso-first only, every leg: the goblin's legs have IK since splay is read to the ankle
             continue
         key = ch["end_bone"] or ch["m"]
         base = P.rot.get(key, Quaternion()).copy()
@@ -2296,9 +2369,9 @@ def _death_build():
 def clip_death(P, t):
     if not _death:
         _death_build()
-        # WP-78 goblin: a rig whose legs are splayed (no leg chain) that fails the rule gets one more try, the torso-first
-        # death: the torso and head are tilted down first and the limbs settle against that pose.
-        if _death.get("old") and biped and motion != "serpent" and any(not li.get("ik") for li in leg_info):
+        # WP-78 goblin: a biped that fails the rule gets one more try, the torso-first death: the torso and head are
+        # tilted down first and the limbs settle against that pose (a splayed leg, with no IK chain, is cleared as well).
+        if _death.get("old") and biped and motion != "serpent":
             first = dict(report["death_fallback"], rung="standard_failed")
             _TF[0] = True
             _death.clear()
@@ -2533,7 +2606,16 @@ def _character_height():
     return max(zs) - min(zs)
 
 
-_foot_bones = [(leg_chain(li)["end_bone"] or leg_chain(li)["m"]) for li in leg_info if leg_chain(li)]
+def _speed_bone(li):
+    """The bone whose head the walk speed is read at: the toe joint (the push-off pivot, still through the whole stance)
+    on a leg with a named foot and a toe, else the IK end (ankle)."""
+    ch = leg_chain(li)
+    if li.get("foot_index") is not None and ch.get("below"):
+        return ch["below"][0]
+    return ch["end_bone"] or ch["m"]
+
+
+_foot_bones = [_speed_bone(li) for li in leg_info if leg_chain(li)]
 _hand_bones = []
 for _a in arm_info:
     if _a.get("ik") and _a["ik"]["end_bone"]:  # the arm chain's end is the Hand (the wrist), past any twist bones
@@ -2549,10 +2631,11 @@ for row in table:
         row.update(gait.speed_row_fields({"speed": None, "method": "fallback", "planted_share": 0.0, "reason": "no legs"}))
     if row["name"] == "attack" and (_hand_bones or _foot_bones):
         ends = _ends_positions(poses[row["name"]], _hand_bones + _foot_bones)
-        hit = gait.peak_speed_frame(ends, fps)
+        hit = gait.hit_frame(ends, fps, tuple(forward), _character_height())
         report.setdefault("hit_probe", {})[row["name"]] = {b: [round(math.dist(ends[b][i - 1], ends[b][i + 1]) * fps / 2.0, 3) for i in range(1, len(ends[b]) - 1)] for b in ends}
         if hit["frame"] >= 0:
             row["hit_frame"], row["hit_time"], row["hit_speed_mps"], row["hit_end"] = hit["frame"], hit["time"], hit["speed"], hit["end"]
+            row["hit_method"], row["hit_peak_frame"] = hit["method"], hit["peak_frame"]
 keyed = set()
 for frames in poses.values():
     for P in frames:
