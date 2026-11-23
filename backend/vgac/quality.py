@@ -21,10 +21,11 @@ TRIANGLE_BUDGET_TOLERANCE = 0.05
 DEFAULT_MAX_INFLUENCES = 4
 # The size check measures the category's axis with this tolerance (docs/GREAT-ASSETS-PLAN.md 3.2 A3).
 SIZE_TOLERANCE = 0.03
-# Facing (G14): prep turns automatically only when the audit's best turn is this close to a quarter turn; the facing
-# check fails only when a different quarter turn is closer to the best turn than the one applied (more than 45
-# degrees off). The plan's first draft failed at 20 degrees, but the wolf, which faces forward as built, has a best
-# audit offset 30 degrees off, so 20 would warn on a correct model.
+# Facing (G14): a sure facing decision (facing.decide) turns the model to the nearest quarter turn, however far its
+# best turn is from it; an unsure one only when the best turn is within AUTO_TURN_WINDOW_DEG of a quarter turn. The
+# window alone left the golden-set wheelbarrow side-on (best turn 60, a sure decision, applied 0; bakeoff/facing).
+# facing_off_check fails when the decided turn is more than FACING_TOLERANCE_DEG from the turn applied. Not 20: the
+# wolf, which faces forward as built, has a best audit offset 30 degrees off, so 20 would warn on a correct model.
 AUTO_TURN_WINDOW_DEG = 20
 FACING_TOLERANCE_DEG = 45
 
@@ -77,12 +78,22 @@ def best_turn(offset: float, sign: int = 1) -> int:
     return int(round(-off)) % 360
 
 
-def auto_turn(best: float | None) -> int:
-    """The turn prep applies on Automatic: the nearest quarter turn when the best turn is within the window, else none."""
+def auto_turn(best: float | None, sure: bool = False) -> int:
+    """The turn prep applies on Automatic: the nearest quarter turn when the decision is sure (facing.decide), or when
+    the best turn is within AUTO_TURN_WINDOW_DEG of it; else none."""
     if best is None:
         return 0
     q = nearest_quarter(best)
-    return q if angle_diff(best, q) <= AUTO_TURN_WINDOW_DEG else 0
+    return q if sure or angle_diff(best, q) <= AUTO_TURN_WINDOW_DEG else 0
+
+
+def facing_off_check(decided: float, applied: float) -> Check:
+    """facing_tests when the model was left more than FACING_TOLERANCE_DEG from the turn the facing decision found (an
+    unsure decision outside the window): fails, value the angle between them, fix the decided quarter turn."""
+    a = int(round(float(applied))) % 360
+    d = int(round(float(decided))) % 360
+    return check("facing_tests", False, round(angle_diff(d, a), 1), FACING_TOLERANCE_DEG,
+                 vars={"state": "off", "off": True, "decided": d, "applied": a, "fix_yaw": nearest_quarter(d)})
 
 
 def plain_reason(reason: str | None) -> str:

@@ -381,6 +381,10 @@ def _facing_ok(c: dict[str, Any]) -> str:
 
 
 def _facing_fail(c: dict[str, Any]) -> str:
+    if _var(c, "off"):
+        return ("The model may face the wrong way: its outline against the side pictures says its front is {value} degrees "
+                "from where it was left (turn it {decided} degrees; it was turned {applied}). Look at the model from the front "
+                "and turn it if it is side-on or backwards.")
     if _var(c, "unsure"):
         return FACING_UNSURE_FLAT if _var(c, "flat") else FACING_UNSURE
     text = ("The model may face the wrong way: its outline against the side pictures says turn it {outline_turn} degrees, but "
