@@ -1006,15 +1006,13 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
 
 def _log_error(log: Path) -> str:
     """The end of the last Python traceback in a Blender log (its last 3 lines), or a note that there is none."""
+    from ..tools import traceback_tail
+
     try:
-        lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+        text = log.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return "no log"
-    starts = [i for i, ln in enumerate(lines) if ln.startswith("Traceback")]
-    if not starts:
-        return "no error in the log"
-    tb = [ln.rstrip() for ln in lines[starts[-1]:] if ln.strip() and not ln.startswith(("Blender ", "Blender quit"))]
-    return " | ".join(tb[-3:])
+    return traceback_tail(text) or "no error in the log"
 
 
 async def _after_moves(sc: StageContext, anim_glb: Path, params: dict[str, Any]) -> None:

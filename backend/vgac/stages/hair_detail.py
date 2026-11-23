@@ -33,6 +33,7 @@ import numpy as np
 from PIL import Image
 
 from .. import face, hair, hairmat, imaging, quality
+from ..tools import ToolError
 from .base import StageContext
 
 CATEGORIES = ("humanoid",)  # creatures: see docs/HAIR-RESEARCH.md; off until fur is judged better than the plain coat
@@ -287,10 +288,13 @@ async def relayout(sc: StageContext, glb: Path, maps: dict[str, Path], plan: dic
     (out_dir / "no_face_points.json").write_text("[]", encoding="utf-8")
     (out_dir / "hair_maps.json").write_text(json.dumps({k: str(p) for k, p in maps.items()}), encoding="utf-8")
     new_glb = out_dir / "hair.glb"
-    await sc.blender("faceuv.py", [glb, new_glb, "--points", out_dir / "no_face_points.json", "--maps", out_dir / "hair_maps.json",
-                                   "--gain", 1.0, "--tex", tex, "--padding", imaging.unwrap_padding(tex),
-                                   "--margin", imaging.dilation_px(tex), "--max-loss", MAX_LOSS,
-                                   "--hair-points", plan["points"], "--hair-gain", plan["gain"]], log_name="hairuv.log")
+    try:
+        await sc.blender("faceuv.py", [glb, new_glb, "--points", out_dir / "no_face_points.json", "--maps", out_dir / "hair_maps.json",
+                                       "--gain", 1.0, "--tex", tex, "--padding", imaging.unwrap_padding(tex),
+                                       "--margin", imaging.dilation_px(tex), "--max-loss", MAX_LOSS,
+                                       "--hair-points", plan["points"], "--hair-gain", plan["gain"]], log_name="hairuv.log")
+    except ToolError as e:  # a script error leaves the hair layout as it is, as a missing report did; recorded
+        return {"applied": False, "error": str(e)[-500:]}
     rep_path = out_dir / "hair_report.json"
     rep = json.loads(rep_path.read_text()) if rep_path.is_file() else None
     if not rep or rep.get("hair_mode") != "repack" or not new_glb.is_file():
@@ -431,7 +435,7 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
             tex = int(record.get("texture_size") or imaging.image_size(maps["base_color"])[0])
             rep = await relayout(sc, Path(glb), {k: v for k, v in maps.items() if k in ("base_color", "normal", "metallic", "roughness", "ao")}, plan, tex)
             layout = {k: (rep or {}).get(k) for k in ("hair_mode", "hair_gain", "hair_island_scale", "rest_scale",
-                                                       "hair_atlas_share_before", "hair_atlas_share_after", "hair_tries", "rebake_seconds")}
+                                                       "hair_atlas_share_before", "hair_atlas_share_after", "hair_tries", "rebake_seconds", "error")}
             layout["shared_with_face"] = False
             if rep and rep.get("applied"):
                 work_glb = Path(rep["glb_path"])

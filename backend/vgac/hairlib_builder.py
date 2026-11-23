@@ -280,7 +280,7 @@ def build(packs: Path | str, out: Path | str, *, blender: str | None = None, scr
     total = len(job_styles)
     with open(log, "w", encoding="utf-8") as lf:
         try:
-            proc = subprocess.Popen([blender, "-b", "--python", str(BLENDER_SCRIPT), "--", str(jp)], stdout=lf, stderr=subprocess.STDOUT)
+            proc = subprocess.Popen([blender, "-b", "--python-exit-code", "1", "--python", str(BLENDER_SCRIPT), "--", str(jp)], stdout=lf, stderr=subprocess.STDOUT)
         except OSError as e:
             raise BuildError(f"Blender could not be started ({e.strerror or e}).", "blender_missing")
         while True:
