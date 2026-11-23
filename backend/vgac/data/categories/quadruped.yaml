@@ -12,11 +12,6 @@ size_label: "How long is it?"
 size_hint: "In metres, from the nose to the tip of the tail. A wolf is about 1.8 m; a horse about 3 m."
 parts_default: []
 topology: quad
-# The step 1 wording below asks for a level, square-on front (vgac/picture_view.py).
-picture_view: front
-# Z-Image Turbo ignores view words at the end of the prompt (step1-view trial 2026-11-22: 0 of 8 square-on); put
-# first, before the description, 7 of 8 (blind reviewer; vgac/stages/concept.py, view_lead).
-view_lead: "Straight-on front view at eye level, camera directly in front of the animal, the animal facing the camera head-on, symmetrical:"
 input_view_default: quarter
 # Hair-friendly pictures (vgac/hairpic.py): fur means the concept prompt gets the look's fur sentence, unless the
 # description names scales, a robot or another animal without fur.
@@ -27,10 +22,10 @@ lod_ratios: [0.5, 0.25, 0.1]
 views: [front, left, back, right, quarter]
 pose_block: >-
   The animal stands in a neutral four-legged standing pose, all four feet on the ground, head level
-  and facing the camera, seen straight from the front at eye level, square-on, so the face and chest
-  are visible, whole body visible with margin around it, centred in frame. Plain flat light grey
-  background. Soft even studio lighting from the front with no hard shadows. No text, no logos, no
-  background scenery, no motion blur, no cropping.
+  and facing forward, seen from a three-quarter front angle so the face, chest and one flank are
+  visible, whole body visible with margin around it, centred in frame. Plain flat light grey
+  background. Soft even studio lighting from the front with no hard shadows. No text, no logos,
+  no background scenery, no motion blur, no cropping.
 budgets:
   mobile_low: {triangles: 5000, texture: 1024}
   pc_mid: {triangles: 20000, texture: 2048}

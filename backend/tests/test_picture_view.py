@@ -51,16 +51,15 @@ def test_the_persons_own_pictures_are_never_assumed():
         assert picture_view.assumed({"source": source, "picture_view": "front"}) is None, source
 
 
-# Categories whose square-on wording was tested (step1-view trial, 2026-11-22: crate, cottage, dog, wheelbarrow) or already
-# came out square-on (humanoid, foliage on the golden set). Untested categories keep today's wording until a trial passes
-# (per-category routes): they record no picture_view and get no view words first.
-TESTED_FRONT = ("prop_rigid", "environment", "quadruped", "vehicle")
+# Categories whose step 1 wording asks for a level, square-on front. The others keep their three-quarter wording,
+# record no picture_view and get no view words first.
+SQUARE_ON = ("prop_rigid", "environment")
 LEVEL_ALREADY = ("humanoid", "foliage")
 
 
-def test_tested_categories_ask_for_a_level_square_on_front():
-    # Step 2 turns its views from the step 1 picture as if it were the front (golden set 2026-11-22).
-    for cid in TESTED_FRONT + LEVEL_ALREADY:
+def test_square_on_categories_ask_for_a_level_front():
+    # Step 2 turns its views from the step 1 picture as if it were the front.
+    for cid in SQUARE_ON + LEVEL_ALREADY:
         c = reference.category(cid)
         block = c["pose_block"].lower()
         assert c.get("picture_view") == "front", cid
@@ -68,18 +67,17 @@ def test_tested_categories_ask_for_a_level_square_on_front():
         assert "front" in block and ("eye level" in block or "facing the camera directly" in block), cid
 
 
-def test_untested_categories_keep_todays_wording_and_record_no_view():
+def test_other_categories_keep_their_wording_and_record_no_view():
     for c in reference.categories():
-        if c["id"] in TESTED_FRONT + LEVEL_ALREADY + ("material",):
+        if c["id"] in SQUARE_ON + LEVEL_ALREADY + ("material",):
             continue
         assert not c.get("view_lead") and c.get("picture_view") is None, c["id"]
         assert concept.prompt_and_view(_sc(c["id"]), {})[1] is None, c["id"]
 
 
 def test_the_view_words_come_first_in_the_step_1_prompt():
-    # Z-Image Turbo ignored square-on wording at the end of the prompt (step1-view trial 2026-11-22: 0 of 8 square-on) and
-    # followed it at the start (7 of 8 by a blind reviewer), so the tested categories lead with their view words.
-    for cid in TESTED_FRONT:
+    # Z-Image Turbo follows view words at the start of the prompt and ignores them at the end.
+    for cid in SQUARE_ON:
         lead = reference.category(cid).get("view_lead") or ""
         assert lead.startswith("Straight-on front view") and "eye level" in lead, cid
         prompt, view = concept.prompt_and_view(_sc(cid), {})

@@ -1,7 +1,8 @@
 """Stage 1, concept: prompt -> image (+ BiRefNet cutout) on instance B.
 
 run: Z-Image Turbo by default; the model comes from params.model, else the project style lock, else the style preset
-(zturbo | zbase | klein | anima | pixel | chroma). The prompt is the asset prompt (ending in a full stop) plus the
+(zturbo | zbase | klein | anima | pixel | chroma). The prompt is the category's view words when it has them, the asset
+prompt (ending in a full stop) plus the
 style block, the look's hair sentence (vgac/hairpic.py), a palette sentence when the project style lock names colours,
 the category readiness block, and last the look's face sentence (vgac/hairpic.face_sentence). refine: Qwen-Image-Edit-2511
 instruction edit of the parent image, optionally limited to a mask. adjust: re-run with the parent's params updated.
@@ -112,8 +113,8 @@ def prompt_and_view(sc: StageContext, params: dict[str, Any]) -> tuple[str, str 
 
     held = items.concept_prompt_parts(sc.asset)
     base = (params.get("prompt_override") or "").strip() or ((held or {}).get("prompt") or sc.asset.prompt).strip()
-    # The category's view words go first: Z-Image Turbo ignores view words at the end of the prompt (step1-view trial,
-    # 2026-11-22: 0 of 8 pictures square-on with them last, 7 of 8 with them first, by a blind reviewer). Only with the category's own wording.
+    # The category's view words (view_lead) go first: Z-Image Turbo follows view words at the start of the prompt and
+    # ignores them at the end. Only with the category's own wording.
     lead = (sc.category.get("view_lead") or "").strip()
     uses_category = params.get("readiness_block", True) and not (held or {}).get("pose_block") and sc.category.get("pose_block")
     if lead and uses_category and not base.startswith(lead):
