@@ -123,6 +123,50 @@ def test_a_character_picture_keeps_its_expected_turn(scene, monkeypatch: pytest.
     assert seen[("prop_rigid", "picture")][4] == q and seen[("prop_rigid", "source")][4] == 0.0  # the half-turn guard's facing
 
 
+def wall_texels(k: int) -> tuple[slice, slice]:
+    """The texture rows and columns inside wall k's island (box(): wall k's square, without its border)."""
+    u0, v0 = 0.04 + 0.32 * (k % 3), 0.04 + 0.48 * (k // 3)
+    return slice(int((1 - v0 - 0.28) * T) + 3, int((1 - v0) * T) - 3), slice(int(u0 * T) + 3, int((u0 + 0.28) * T) - 3)
+
+
+def test_a_prop_paints_no_drawn_side_view_and_a_character_still_does(scene) -> None:  # noqa: ANN001
+    """A drawn "left" view (turn 90) in a colour the box does not have, beside a front picture. A prop (OBJECT_CATEGORIES)
+    paints from the pictures only: the drawn view paints nothing, and the turn 90 wall keeps the model's own colour (before:
+    it painted that wall magenta, as the shop's drawn right view put a second vending machine on the wrong wall). A
+    character still paints from it."""
+    mesh, tex, soft = scene
+    magenta = np.zeros_like(tex) + np.array([0.9, 0.1, 0.9])
+    pic, left = drawn(mesh, tex, 0.0, 20.0), drawn(mesh, magenta, 90.0, 20.0)
+    rows, cols = wall_texels(1)   # the turn 90 wall
+    for cat, paints in (("prop_rigid", False), ("environment", False), ("humanoid", True)):
+        r = paint_as(cat, mesh, soft, pic, {"left": left}, mode="full", size=SIZE, built_from="front")
+        assert r["applied"], (cat, r["reason"])
+        share = r["metrics"]["srcproject_share_by_view"]
+        wall = r["base_color"][rows, cols]
+        took = float((np.abs(wall - magenta[rows, cols]).max(-1) < 0.15).mean())
+        if paints:
+            assert share.get("left", 0.0) > 0.0 and took > 0.3, (cat, share, took)
+        else:
+            assert "left" not in share and took == 0.0, (cat, share, took)
+
+
+def test_a_prop_keeps_its_own_colour_on_a_wall_seen_at_a_steep_angle(scene) -> None:  # noqa: ANN001
+    """A prop's picture taken at turn 55 sees the turn 90 wall 35 degrees off square and the turn 0 wall 55 degrees off.
+    The near wall is painted; the far one keeps the model's own colour (OBJECT_COS_CUT: before, a view painted in full to
+    about 60 degrees, and the shop's original painting smeared its vending machine across a wall it saw at 50)."""
+    mesh, tex, soft = scene
+    r = paint_as("prop_rigid", mesh, soft, drawn(mesh, tex, 55.0, 0.0), mode="off", size=SIZE, built_from="front")
+    assert r["applied"], r["reason"]
+    new = r["base_color"]
+
+    def moved(k: int) -> float:  # the share of the wall's texels the paint changed from the model's own colour
+        rows, cols = wall_texels(k)
+        return float((np.abs(new[rows, cols] - soft[rows, cols]).max(-1) > 0.02).mean())
+
+    assert moved(1) > 0.5, moved(1)    # the turn 90 wall, 35 degrees off
+    assert moved(0) < 0.05, moved(0)   # the turn 0 wall, 55 degrees off
+
+
 @pytest.mark.parametrize("head_yaw, want", [(0.0, 30.0), (180.0, 210.0)])
 def test_a_box_alike_after_a_half_turn_paints_on_the_half_nearer_the_facing(head_yaw: float, want: float) -> None:
     """A crate-like box (the back looks like the front) drawn at turn 30: the outline and the colour fit turn 210 as well,

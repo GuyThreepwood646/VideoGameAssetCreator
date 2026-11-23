@@ -60,6 +60,11 @@ FIT_N = 256              # size the camera and silhouette search runs at
 FLOW_N = 512             # size the optical flow runs at
 MIN_IOU = 0.85           # silhouette match below this refuses a view
 COS_CUT = math.cos(math.radians(75.0))
+# Props and buildings (OBJECT_CATEGORIES): a view paints only up to about 53 degrees off square, in full by about 43. The
+# original painting of a building or a crate is fitted at 45 to 60 degrees to every wall it sees, and there it smeared
+# (bakeoff/paint-default: the shop's vending machine stretched across the front wall, the crate's dark slat gaps across
+# its side, render brightness -0.062 against the bake); past this the model's own colour stays.
+OBJECT_COS_CUT = 0.6
 MAX_FLOW = 0.02          # of the frame
 FLOW_ALPHA = 2.0         # Horn-Schunck smoothness (higher: a stiffer field)
 FLOW_SMOOTH = 8.0        # Gaussian sigma of the field in flow pixels
@@ -577,6 +582,7 @@ def hs_flow(ref: np.ndarray, mov: np.ndarray, region: np.ndarray, max_px: float,
 class View:
     def __init__(self, name: str, weight: float):
         self.name, self.weight = name, weight
+        self.cos_cut = COS_CUT  # the steepest angle it paints at (cos_weight); OBJECT_COS_CUT for props and buildings
         self.ok = False
         self.info: dict[str, Any] = {"name": name}
 
@@ -898,9 +904,9 @@ class Atlas:
             self.cover_ext = ext.reshape(T, T)
 
 
-def cos_weight(cosv: np.ndarray) -> np.ndarray:
-    """cos^4 of the angle between surface and view, zero past 75 degrees (feathered over the next 0.12 of cosine)."""
-    return np.clip(cosv, 0.0, 1.0) ** 4 * face.smoothstep(COS_CUT, COS_CUT + 0.12, cosv)
+def cos_weight(cosv: np.ndarray, cut: float = COS_CUT) -> np.ndarray:
+    """cos^4 of the angle between surface and view, zero past `cut` (75 degrees; feathered over the next 0.12 of cosine)."""
+    return np.clip(cosv, 0.0, 1.0) ** 4 * face.smoothstep(cut, cut + 0.12, cosv)
 
 
 def project_view(atlas: Atlas, v: View, size: int | None = None, pitch_m: float | None = None) -> dict[str, np.ndarray]:
@@ -923,7 +929,7 @@ def project_view(atlas: Atlas, v: View, size: int | None = None, pitch_m: float 
     foot = v.pic_px_m / np.maximum(cosv, 0.05) / pitch_m
     st = 1.0 - face.smoothstep(STRETCH[0], STRETCH[1], foot) if GATES.get("stretch") else np.ones_like(foot)
     fd = np.clip(f1 / np.maximum(f0, 1e-6), 0.0, 1.0)
-    base = v.weight * cos_weight(cosv) * f0 * visible
+    base = v.weight * cos_weight(cosv, getattr(v, "cos_cut", COS_CUT)) * f0 * visible
     if v.name.startswith(HEAD_VIEW):
         base = base * face.smoothstep(HEAD_FACING[0], HEAD_FACING[1], cosv)
     zi = getattr(v, "zone_img", None)  # the head view: the head above the neck only
@@ -2500,6 +2506,13 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     from . import facemarks
 
     t0 = time.time()
+    if category in OBJECT_CATEGORIES:
+        # Props and buildings paint from the step 1 picture and the original painting only, never from the drawn side and
+        # back views: on a box-like model a drawn view fits by its outline at any turn, and the turnaround draws objects
+        # as three-quarter pictures with content of their own (bakeoff/paint-default: the shop's "right" view put a second
+        # vending machine and a mint wash on the wrong wall; the crate's "left" view painted its side at brightness 0.30
+        # against the bake's 0.46)
+        turnaround = None
     res: dict[str, Any] = {"applied": False, "base_color": tex, "reason": None, "metrics": {}}
     # which finder reads the eyes and mouth for the head views: without one the front head view can only be fitted by
     # the darkest spots and the three-quarter head views are refused, which the record has to say
@@ -2717,6 +2730,9 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
                               "srcproject_seconds": round(time.time() - t0, 1)}
             return res
         pitch_px = atlas.pitch_m * size / scale
+        if objects:  # no steep angles on props and buildings (OBJECT_COS_CUT)
+            for v in views:
+                v.cos_cut = OBJECT_COS_CUT
 
         def ready(i: int) -> np.ndarray:
             v = views[i]
