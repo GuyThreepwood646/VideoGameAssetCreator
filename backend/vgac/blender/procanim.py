@@ -2124,10 +2124,16 @@ def _pose_at(render, t):
 _TF = [False]  # True while the torso-first death is being built or drawn
 
 
+def _hips_name():
+    """The hips bone the death measures: the Mixamo Hips when there is one, else the root end of the spine (F14: a
+    creature rigged with its model's own bone names has no Hips, and the bare lookup stopped the whole script)."""
+    return next((n for n in byname if n.split(":")[-1] == "Hips"), spine[0] if spine else roots[0].name)
+
+
 def _torso_first_search(final):
     """Torso-first death: the spine tilt (within 30 degrees) and head bend (within 35) that bring the hips lowest while
     the head rests on the ground, judged on the torso and head alone; the limbs then settle against that pose."""
-    hips_name = next(n for n in byname if n.split(":")[-1] == "Hips")
+    hips_name = _hips_name()
     hset = set()
     for hb in head_bones:
         hset |= _below(hb)
@@ -2182,6 +2188,7 @@ def _death_build():
     drop = ground_fix(final)
     fix = {}
     head_deg = 0.0
+    tilt_deg = 0.0  # F14: a serpent or a six-legged body skips the branch below, and the death still reads it
     if motion != "serpent" and n_legs < 6 and (arm_info or any(li.get("ik") for li in leg_info)):
         # WP-78: the torso comes down onto the ground first (head, neck, spine, hips), so the arms are aimed from
         # shoulders that are near the ground rather than from a body held up by its straight arms. The limbs then
@@ -2247,8 +2254,7 @@ def _death_build():
         # WP-78: one bounded torso-tilt try, only where the head-only pose still leaves the hips above 0.25 m. The
         # spine tilts within 30 degrees and the head bends, the whole body stays on the ground (3 mm tolerance) and
         # the hips go as low as they can.
-        tilt_deg = 0.0
-        hips_name = next(n for n in byname if n.split(":")[-1] == "Hips")
+        hips_name = _hips_name()
 
         def tilt_eval(tl, hd_):
             Q = Pose()
