@@ -1,24 +1,20 @@
-"""Colour match of a built model's base colour to its picture (docs/TEXTURE-FIDELITY-PLAN.md, 24-step texture sampler).
+"""Lightness match of a built model's base colour to its picture (bakeoff/render-tone/PLAN.md).
 
-TRELLIS's texture sampler at 24 steps gives a much richer texture than 12, but its overall tone can drift (the bake-off
-knight came out about 7 percent brighter). After the build, a flat render of the model from the picture's side
-(texfidelity) is compared with the picture, and ONE global correction is applied to the base colour atlas: a shift of
-the mean in Lab (never a gain, which flattens contrast). It is capped so
-no colour moves by more than MAX_MOVE_DE (about 8 dE), and only made when the silhouette fit is good (so the render and
-the picture really show the same figure).
-
-Lightness comes first and on its own (bakeoff/render-tone/PLAN.md): the builder's tone was found 10 to 17 L off the
-picture on some builds while the shared 8 dE cap and the 0.80 fit gate left them alone. lightness_plan() compares the
-whole-silhouette mean L* of a flat render at the build view's own turn (the turn nearest it whose outline fits best,
-searched only around that view and its mirror) with the mean L* over the picture's cut-out, borders left out on both
-sides. No pixel fit is needed, so it runs down to an outline IoU of L_IOU_MIN, and it has its own cap, L_CAP. Then
-plan() corrects the remaining colour only (lightness term off), as before.
+TRELLIS.2's base colour comes out up to about 17 L* lighter or darker than the picture it was built from (the tone is
+set by the builder; the clean-up and the export keep it). After the build, lightness_plan() compares the whole-silhouette
+mean L* of a flat render at the build view's own turn (the turn nearest it whose outline fits best, searched only around
+that view and its mirror) with the mean L* over the picture's cut-out, borders left out on both sides. No pixel fit is
+needed, so it runs down to an outline IoU of L_IOU_MIN; the move is capped at L_CAP and is a shift of L* only (hue and
+chroma kept, so a neutral grey stays neutral), tapered near black and white so detail is not flattened.
 
 When the build-view picture's own lightness differs from the step-1 picture's by more than DRIFT_MAX (the step-2 redraw
-changed the tone), the lightness stage is skipped ("step2_tone_drift"): matching the build view would carry the redraw's
-drift into the texture and move the model away from step 1.
+changed the tone), nothing is moved ("step2_tone_drift"): matching the build view would carry the redraw's drift into
+the texture and move the model away from step 1.
 
-lightness_plan(), plan() and apply() are pure; match_base_colour() does the file work.
+The corrected base colour is written to base_color.png AND into the GLB's own base colour image, because the clean-up
+re-bakes from the GLB (a correction in the PNG alone never reached a shipped model).
+
+lightness_plan() and apply() are pure; match_base_colour() does the file work.
 """
 from __future__ import annotations
 
@@ -28,12 +24,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from . import face, texfidelity
-
-MAX_MOVE_DE = 8.0     # the most any colour may be moved, in dE (Lab distance)
-MIN_GAIN_DE = 1.0     # a correction that closes less than this is not worth making
-STRENGTHS = (1.0, 0.75, 0.5, 0.25)  # tried in turn until the move fits under the cap
-OVERLAP_MIN_PX = 2000
+from . import face, imaging, texfidelity
 
 L_CAP = 15.0          # the most the lightness stage moves the mean, in L* units
 L_MIN_GAIN = 1.0      # a lightness gap smaller than this is left alone
@@ -88,56 +79,22 @@ def from_lab(lab: np.ndarray) -> np.ndarray:
 TAPER = 10.0  # a lightness shift fades out over this many L units towards the end it moves towards
 
 
-def shifted_lab(lab: np.ndarray, shift: np.ndarray, strength: float = 1.0) -> np.ndarray:
-    """lab plus strength * shift. The lightness part is tapered near the end of the range it moves towards (a brightening
-    fades out over the last TAPER units below 100, a darkening over the first TAPER above 0), so highlights and shadows
-    are compressed smoothly instead of piling up at 0 or 100."""
-    out = lab + strength * np.asarray(shift, dtype=np.float64) * np.array([0.0, 1.0, 1.0])
-    dl = strength * float(shift[0])
-    room = (100.0 - lab[..., 0]) if dl > 0 else lab[..., 0]
-    out[..., 0] = lab[..., 0] + dl * np.clip(room / TAPER, 0.0, 1.0)
+def shifted_lab(lab: np.ndarray, dl: float) -> np.ndarray:
+    """lab with dl added to L* only (a* and b* kept). The shift is tapered near the end of the range it moves towards
+    (a brightening fades out over the last TAPER units below 100, a darkening over the first TAPER above 0), so
+    highlights and shadows are compressed smoothly instead of piling up at 0 or 100."""
+    out = np.array(lab, dtype=np.float64)
+    room = (100.0 - out[..., 0]) if dl > 0 else out[..., 0]
+    out[..., 0] = out[..., 0] + dl * np.clip(room / TAPER, 0.0, 1.0)
     return out
 
 
 def apply(rgb: np.ndarray, corr: dict[str, Any] | None) -> np.ndarray:
-    """The correction (from plan()) on an sRGB 0..1 image of any shape (..., 3). None or mode "none": unchanged."""
+    """The lightness move (from lightness_plan(), its shift[0] in L*) on an sRGB 0..1 image of any shape (..., 3).
+    None or mode "none": unchanged."""
     if not corr or corr.get("mode") in (None, "none"):
         return rgb
-    return from_lab(shifted_lab(face.to_lab(rgb), corr["shift"], float(corr.get("strength", 1.0))))
-
-
-def _moved(render: np.ndarray, overlap: np.ndarray, corr: dict[str, Any]) -> float:
-    """The mean dE the correction moves the render's colours by, over the overlap."""
-    a = face.to_lab(render)[overlap]
-    b = face.to_lab(apply(render, corr))[overlap]
-    return float(np.sqrt(((a - b) ** 2).sum(axis=1)).mean())
-
-
-def plan(render: np.ndarray, render_mask: np.ndarray, pic: np.ndarray, pic_mask: np.ndarray, cap: float = MAX_MOVE_DE,
-         lightness: bool = True) -> dict[str, Any]:
-    """The Lab mean shift that brings the render's colour closest to the picture's, from images in one frame (S,S,3
-    floats 0..1 and their masks). Only a shift (a constant added to every colour, which cannot blur or flatten detail);
-    the strongest strength that moves colours by no more than `cap` dE is used. With lightness False the shift leaves
-    L* alone (the lightness stage, lightness_plan(), has already set it).
-    -> {mode: none|lab_shift, strength, shift, de_before, de_after, moved_de, reason}."""
-    overlap = face.erode(render_mask & pic_mask, texfidelity.BORDER_PX)
-    if overlap.sum() < OVERLAP_MIN_PX:
-        return {"mode": "none", "reason": "overlap_too_small"}
-    before = texfidelity.compare(render, render_mask, pic, pic_mask)["delta_e"]
-    shift = (face.to_lab(pic)[overlap] - face.to_lab(render)[overlap]).mean(axis=0)
-    if not lightness:
-        shift[0] = 0.0
-    best: dict[str, Any] = {"mode": "none", "de_before": before, "de_after": before, "reason": "no_gain"}
-    for s in STRENGTHS:
-        corr = {"mode": "lab_shift", "strength": s, "shift": [round(float(x), 3) for x in shift]}
-        moved = _moved(render, overlap, corr)
-        if moved > cap:
-            continue
-        after = texfidelity.compare(apply(render, corr), render_mask, pic, pic_mask)["delta_e"]
-        if after is not None and before is not None and before - after >= MIN_GAIN_DE:
-            best = {**corr, "de_before": before, "de_after": after, "moved_de": round(moved, 2), "reason": "applied"}
-        break  # the strongest strength under the cap is the one used
-    return best
+    return from_lab(shifted_lab(face.to_lab(rgb), float(corr["shift"][0])))
 
 
 def _turn_gap(a: float, b: float) -> float:
@@ -171,7 +128,7 @@ def lightness_plan(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray
     the mean over the picture's cut-out. Means are over each side's own mask (the picture's background and the render's
     empty pixels never count), with texfidelity.BORDER_PX left out at each edge. The turn is the best outline fit among
     L_SEARCH around the view's turn and around its mirror (ties to the view's own turn), so it is never far from the
-    side the picture shows. -> {mode: none|l_shift, shift, strength, gap, capped, iou, yaw, render_px, picture_px,
+    side the picture shows. -> {mode: none|l_shift, shift, gap, capped, iou, yaw, render_px, picture_px,
     render_L, picture_L, reason}."""
     base = VIEW_TURN.get(view or "front", 0.0)
     ys, xs = np.nonzero(pic_mask)
@@ -207,44 +164,34 @@ def lightness_plan(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray
     if abs(gap) < L_MIN_GAIN:
         return {**out, "mode": "none", "reason": "no_gain"}
     shift = float(np.clip(gap, -cap, cap))
-    return {**out, "mode": "l_shift", "strength": 1.0, "shift": [round(shift, 3), 0.0, 0.0],
+    return {**out, "mode": "l_shift", "shift": [round(shift, 3), 0.0, 0.0],
             "capped": abs(gap) > cap, "reason": "applied"}
 
 
-def match_base_colour(glb: Path | str, picture: Path | str, base_png: Path | str, cap: float = MAX_MOVE_DE,
-                      view: str | None = None, step1: Path | str | None = None) -> dict[str, Any]:
-    """Measure the model against its picture and correct base_png: first its lightness (lightness_plan(), at the build
-    view `view`'s turn; skipped when the build view's tone drifted from the step-1 picture `step1` by more than
-    DRIFT_MAX), then, when the outline fit is good and a correction closes the gap, its colour without lightness
-    (plan()). -> metrics {applied, lightness: {...}, mode, de_before, de_after, moved_de, iou, reason, ...}."""
+def match_base_colour(glb: Path | str, picture: Path | str, base_png: Path | str, view: str | None = None,
+                      step1: Path | str | None = None) -> dict[str, Any]:
+    """Measure the model's lightness against its picture at the build view `view`'s turn and, when it is off, shift
+    base_png and the GLB's own base colour image by the same move. Nothing is moved when the build view's tone drifted
+    from the step-1 picture `step1` by more than DRIFT_MAX. -> metrics {applied, lightness: {...}, reason}."""
     rec: dict[str, Any] = {"applied": False}
-    mesh = face.load_mesh(glb)
     drift = step2_drift(picture, step1)
     if drift is not None and abs(drift) > DRIFT_MAX:
         rec["lightness"] = {"mode": "none", "reason": "step2_tone_drift", "drift": drift}
-    elif mesh is not None:
-        tex = face.read_rgb(base_png)
-        pic, pic_mask = texfidelity.load_picture(picture)
-        lp = lightness_plan(mesh, tex, pic, pic_mask, view)
-        if drift is not None:
-            lp["drift"] = drift
-        rec["lightness"] = lp
-        if lp.get("mode") == "l_shift":
-            Image.fromarray(face.to_uint8(apply(tex, lp))).save(base_png)
-            rec["applied"] = True
-    res = texfidelity.score(glb, picture, base_color=base_png, views=False, keep_images=True)
-    if "error" in res:
-        return {**rec, "reason": res["error"]}
-    rec.update({"iou": res.get("silhouette_iou"), "yaw": res.get("yaw")})
-    if not res.get("fit_ok"):
-        return {**rec, "reason": "fit_too_loose"}
-    im = res["_images"]
-    corr = plan(im["render"], im["render_mask"], im["picture"], im["picture_mask"], cap, lightness=False)
-    rec.update({k: corr.get(k) for k in ("mode", "strength", "shift", "de_before", "de_after", "moved_de")})
-    rec["reason"] = corr.get("reason")
-    if corr.get("mode") == "none":
+        rec["reason"] = "step2_tone_drift"
         return rec
+    mesh = face.load_mesh(glb)
+    if mesh is None:
+        return {**rec, "reason": "no_texture_layout"}
     tex = face.read_rgb(base_png)
-    Image.fromarray(face.to_uint8(apply(tex, corr))).save(base_png)
+    pic, pic_mask = texfidelity.load_picture(picture)
+    lp = lightness_plan(mesh, tex, pic, pic_mask, view)
+    if drift is not None:
+        lp["drift"] = drift
+    rec["lightness"] = lp
+    rec["reason"] = lp.get("reason")
+    if lp.get("mode") != "l_shift":
+        return rec
+    Image.fromarray(face.to_uint8(apply(tex, lp))).save(base_png)
+    imaging.glb_replace_images(glb, base_color=base_png)
     rec["applied"] = True
     return rec

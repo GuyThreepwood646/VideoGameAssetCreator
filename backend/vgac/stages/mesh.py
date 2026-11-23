@@ -608,8 +608,8 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
                          fov: float | None = None) -> dict[str, Any]:
     """One TRELLIS.2 build into the version folder (or `dest`): model.glb and the maps, normal map flipped, maps grown
     into the seams, and the base colour measured against the picture. `tag` names a second build of the same version
-    (the head built on its own). `match_to` is the picture the base colour is shifted towards afterwards
-    (colourmatch.py; None for the head build and anything without a picture). `views`: the uploaded front, left, back
+    (the head built on its own). `match_to` is the picture the base colour's lightness is moved towards afterwards, in
+    base_color.png and in the GLB (colourmatch.py; None for the head build and anything without a picture). `views`: the uploaded front, left, back
     and right names for the Pixal3D four-view build (graphs/pixal3d.py) in place of the one picture `name`; `fov` its
     camera angle (None: the front picture's own estimate).
     Returns {seed, elapsed, maps, other, metrics, match}."""
@@ -663,20 +663,20 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
         metrics["dilate_error"] = str(e)[:300]
     if match_to is not None and maps.get("base_color") is not None:
         try:
-            sc.progress(0.77, "Matching the colours to the picture")
+            sc.progress(0.77, "Matching the lightness to the picture")
             view = "front" if views else (sc.version.params or {}).get("input_view")
             step1 = sc.lineage_file("cutout", ("concept",))  # the step-1 picture: no lightness move when step 2 drifted from it
-            metrics["colour_match"] = await asyncio.to_thread(colourmatch.match_base_colour, Path(glb), Path(match_to),
+            metrics["lightness_match"] = await asyncio.to_thread(colourmatch.match_base_colour, Path(glb), Path(match_to),
                                                               Path(maps["base_color"]), view=view, step1=step1)
         except Exception as e:  # noqa: BLE001  (not matched: the base colour stays as built)
-            metrics["colour_match"] = {"applied": False, "reason": "error", "error": str(e)[:300]}
+            metrics["lightness_match"] = {"applied": False, "reason": "error", "error": str(e)[:300]}
     match = None
     if picture is not None:
         try:
             match = texcolour.compare(picture, await asyncio.to_thread(texcolour.texture_stats, maps.get("base_color"), Path(glb)))
         except Exception as e:  # noqa: BLE001  (not measured: kept as it is, like a build that passes)
             metrics["texture_match_error"] = str(e)[:300]
-    steptime.add(sc, "head_after_graph" if tag else "after_graph", time.monotonic() - t_after)   # download, normal fix, seams, colour match
+    steptime.add(sc, "head_after_graph" if tag else "after_graph", time.monotonic() - t_after)   # download, normal fix, seams, lightness match
     return {"seed": seed, "elapsed": entry.get("elapsed_seconds"), "maps": maps, "other": other, "metrics": metrics, "match": match}
 
 

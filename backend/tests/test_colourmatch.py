@@ -1,17 +1,7 @@
-"""vgac/colourmatch.py: one global, capped colour correction of the base colour towards the picture."""
+"""vgac/colourmatch.py: the base colour's lightness moved towards the picture, in the PNG and in the GLB."""
 import numpy as np
 
 from vgac import colourmatch, face
-
-
-def _scene(brighten=1.0, shift_rgb=(0, 0, 0), n=160):
-    rng = np.random.default_rng(1)
-    base = np.clip(0.45 + 0.15 * np.sin(np.linspace(0, 6, n))[None, :, None] + rng.normal(0, 0.02, (n, n, 3)), 0, 1)
-    mask = np.zeros((n, n), bool)
-    mask[20:140, 30:130] = True
-    pic = np.where(mask[..., None], base, 0.0)
-    render = np.where(mask[..., None], np.clip(base * brighten + np.array(shift_rgb), 0, 1), 0.0)
-    return render, mask, pic, mask
 
 
 def test_lab_round_trip():
@@ -19,44 +9,13 @@ def test_lab_round_trip():
     assert np.abs(colourmatch.from_lab(face.to_lab(rgb)) - rgb).max() < 0.01
 
 
-def test_a_brighter_render_is_pulled_back_to_the_picture():
-    render, rm, pic, pm = _scene(brighten=1.12)
-    p = colourmatch.plan(render, rm, pic, pm)
-    assert p["mode"] == "lab_shift" and p["reason"] == "applied"
-    assert p["de_after"] < p["de_before"] * 0.6 and p["moved_de"] <= colourmatch.MAX_MOVE_DE
-    out = colourmatch.apply(render, p)
-    assert abs(out[rm].mean() - pic[pm].mean()) < abs(render[rm].mean() - pic[pm].mean()) * 0.4
-
-
-def test_a_matching_render_is_left_alone():
-    render, rm, pic, pm = _scene()
-    p = colourmatch.plan(render, rm, pic, pm)
-    assert p["mode"] == "none"
-    assert np.array_equal(colourmatch.apply(render, p), render)
-
-
-def test_the_move_is_capped():
-    render, rm, pic, pm = _scene(shift_rgb=(0.35, -0.2, 0.0))  # far off: a full correction would move colours a lot
-    p = colourmatch.plan(render, rm, pic, pm, cap=8.0)
-    if p["mode"] != "none":
-        assert p["moved_de"] <= 8.0 + 1e-6
-    assert colourmatch.plan(render, rm, pic, pm, cap=0.5)["mode"] == "none"
-
-
-def test_too_small_an_overlap_gives_no_correction():
-    render, rm, pic, pm = _scene(brighten=1.2)
-    pm2 = np.zeros_like(pm)
-    pm2[0:5, 0:5] = True
-    assert colourmatch.plan(render, rm, pic, pm2)["reason"] == "overlap_too_small"
-
-
 def test_a_shift_does_not_flatten_detail_at_the_ends_of_the_range():
     rng = np.random.default_rng(5)
     tex = np.clip(0.9 + rng.normal(0, 0.04, (64, 64, 3)), 0, 1)  # bright and detailed: a plain clip would flatten it
-    out = colourmatch.apply(tex, {"mode": "lab_shift", "strength": 1.0, "shift": [6.0, 0.0, 0.0]})
+    out = colourmatch.apply(tex, {"mode": "l_shift", "shift": [6.0, 0.0, 0.0]})
     assert out.std() > 0.6 * tex.std()
     dark = np.clip(0.06 + rng.normal(0, 0.03, (64, 64, 3)), 0, 1)
-    out = colourmatch.apply(dark, {"mode": "lab_shift", "strength": 1.0, "shift": [-6.0, 0.0, 0.0]})
+    out = colourmatch.apply(dark, {"mode": "l_shift", "shift": [-6.0, 0.0, 0.0]})
     assert out.std() > 0.6 * dark.std() and out.min() >= 0.0 and out.max() <= 1.0
 
 
@@ -159,12 +118,6 @@ def test_a_matching_build_is_left_alone_by_the_lightness_stage(tmp_path):
     assert colourmatch.lightness_plan(mesh, tex, pic, pm, "front")["mode"] == "none"
 
 
-def test_the_colour_stage_leaves_lightness_alone_when_asked():
-    render, rm, pic, pm = _scene(brighten=1.12)
-    p = colourmatch.plan(render, rm, pic, pm, lightness=False)
-    assert p.get("shift") is None or p["shift"][0] == 0.0
-
-
 def test_a_step2_picture_whose_tone_drifted_from_step1_leaves_the_texture_alone(tmp_path):
     # The build view came out 10 L brighter than the step-1 picture, which the texture already matches: matching the
     # build view would carry the redraw's drift into the model, so the lightness stage is skipped.
@@ -183,3 +136,23 @@ def test_a_step2_picture_that_kept_the_tone_is_still_matched(tmp_path):
     build = _picture_of(glb, tex, tmp_path, l_shift=12.0, extra_share=0.7, name="build.png")
     rec = colourmatch.match_base_colour(glb, build, png, view="front", step1=step1)
     assert rec["lightness"]["mode"] == "l_shift" and abs(rec["lightness"]["drift"]) <= colourmatch.DRIFT_MAX
+
+
+def test_a_neutral_grey_stays_neutral_under_the_lightness_move():
+    grey = np.array([[g, g, g] for g in (0.08, 0.3, 0.48, 0.7, 0.92)])
+    for dl in (-15.0, -6.0, 6.0, 15.0):
+        lab = face.to_lab(colourmatch.apply(grey, {"mode": "l_shift", "shift": [dl, 0.0, 0.0]}))
+        assert np.abs(lab[:, 1:]).max() < 1.0
+
+
+def test_the_corrected_base_colour_is_written_into_the_glb(tmp_path):
+    # Fails on master: the correction went to base_color.png only, and the clean-up re-bakes from the GLB's own image.
+    from vgac import texfidelity
+
+    glb, png, tex = _box_glb(tmp_path)
+    picture = _picture_of(glb, tex, tmp_path, l_shift=12.0, extra_share=0.7)
+    rec = colourmatch.match_base_colour(glb, picture, png)
+    assert rec["applied"]
+    embedded = texfidelity.load_texture(glb, None)
+    assert embedded.shape == face.read_rgb(png).shape
+    assert np.abs(embedded - face.read_rgb(png)).max() < 1.5 / 255
