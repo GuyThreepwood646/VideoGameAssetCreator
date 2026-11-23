@@ -43,7 +43,7 @@ triangle_budget manifold watertight silhouette_iou seam_error openings_clear gri
 textures_full_size metal_mixed albedo_range texture_padding atlas_used texture_sharp texture_matches_picture
 texture_colour_matches_picture bake_matches picture_projection neck_join look_applied face_matches_picture face_finder
 hair_matches_picture hair_fit hair_skin_through hair_bound hair_off_eyes max_influences weights_normalised fingers
-clips_loop library_clips rig_restore unity_humanoid_avatar collider_vertices lod_count
+clips_loop library_clips rig_restore moving_cut unity_humanoid_avatar collider_vertices lod_count
 hitbox_fit grip_found item_clear_of_body item_above_ground one_subject in_frame big_enough
 same_side facing joins height_m tiles_cleanly
 """

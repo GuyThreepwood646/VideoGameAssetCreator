@@ -671,6 +671,12 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "ok": _moving_ok,
         "fail": _moving_fail,
     },
+    "moving_cut": {
+        "severity": "warn",
+        "ok": "The moving parts are cut free.",
+        "fail": lambda c: "The moving-part cut did not finish ({reason}), so the parts stay fixed for now. Press Make it move again to retry.".format(
+            reason=str(_var(c, "reason") or "no reason was given").replace("{", "{{").replace("}", "}}")),
+    },
     "single_root": {
         "severity": "warn",
         "ok": "The skeleton starts from one root bone.",

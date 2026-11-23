@@ -162,7 +162,7 @@ async def _skip(sc: StageContext, reason: str, src: Path | None) -> None:
     checks = quality.rig_checks({"bones": 0}, rig_expected=False, moving_parts=moving)
     cut = await _cut_moving_parts(sc, src)
     if cut is not None:
-        checks.append(cut)
+        checks.extend(cut)
     sc.set_metrics(**quality.summarise(checks))
 
 
@@ -183,7 +183,7 @@ def moving_points_for(sc: StageContext) -> list[dict[str, Any]]:
     return [{**r, "locations": [[round(float(v), 4) for v in loc] for loc in r["locations"]]} for r in rows]
 
 
-async def _cut_moving_parts(sc: StageContext, src: Path | None) -> dict[str, Any] | None:
+async def _cut_moving_parts(sc: StageContext, src: Path | None) -> list[dict[str, Any]] | None:
     """Hinged lids and doors, spinning wheels and sliding drawers on an object with no skeleton (blender/moving_parts.py,
     WP-29). Each placed part is cut from the model, capped, and put under a still pivot node and a moving node with its
     clips; rig.glb becomes that model at rest and anim.glb the same with the clips (anim_clips.json beside it, as the
@@ -195,8 +195,8 @@ async def _cut_moving_parts(sc: StageContext, src: Path | None) -> dict[str, Any
         return None
     sc.set_params(**{MOVING_PARAM: points or None})
     unplaced = declared_parts.unplaced_moving(sc.asset.parts or [], points)
-    missing: list[str] = []
     done: list[str] = []
+    pass_failed: str | None = None  # why the Blender pass could not run (moving_cut), when it could not
     if points and src is not None:
         sc.progress(0.3, "cutting the moving parts free")
         rig_glb, anim_glb = sc.dir / "rig.glb", sc.dir / "anim.glb"
@@ -226,12 +226,22 @@ async def _cut_moving_parts(sc: StageContext, src: Path | None) -> dict[str, Any
         cut["parts"] = [{k: r.get(k) for k in ("name", "kind", "piece", "node", "how", "amount", "unit", "clips")} for r in rep.get("parts", [])]
         cut["clips"] = [c.get("name") for c in rep.get("clips", [])]
         sc.set_metrics(moving_cut=cut)
-        done = sorted({r["name"] for r in rep.get("parts", [])}) if rep.get("ok") else []
-        missing = [p["name"] for p in points if p["name"] not in done]
+        if rep.get("ok"):
+            done = sorted({r["name"] for r in rep.get("parts", [])})
+        else:
+            pass_failed = str(rep.get("reason") or "the Blender pass did not finish")
     elif points:
-        missing = [p["name"] for p in points]
-    return quality.check("moving_parts", not unplaced and not missing, len(done), len(declared) or len(points),
-                         vars={"moved": done, "unplaced": unplaced, "not_found": missing})
+        pass_failed = "there is no model to cut the parts from"
+    # moving_parts (likely to show): a declared part with no points, or a point that found no piece when the pass ran.
+    # moving_cut (worth a look): the Blender pass itself failed, so the points could not be tried; a retry may fix it.
+    missing = [] if pass_failed else [p["name"] for p in points if p["name"] not in done]
+    checks: list[dict[str, Any]] = []
+    if unplaced or not pass_failed:
+        checks.append(quality.check("moving_parts", not unplaced and not missing, len(done), len(declared) or len(points),
+                                    vars={"moved": done, "unplaced": unplaced, "not_found": missing}))
+    if pass_failed:
+        checks.append(quality.check("moving_cut", False, 0, len(points), vars={"reason": pass_failed}))
+    return checks
 
 
 def guard_budget(sc: StageContext, src: Path) -> None:
