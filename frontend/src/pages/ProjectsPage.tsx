@@ -2,6 +2,7 @@
 // at the top (a dialog), a welcome panel on the first visit, and the look and settings in a side drawer.
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
+import { assetAttention } from '../pipeline/finish'
 import { api, libraryUrl, PLATFORMS, selectedVersion, STAGES, stageState, STYLE_MODELS, versionsOf, type AssetSummary, type LookPreset, type PlatformId, type Project, type StyleLock, type StyleModel } from '../api'
 import { useConfirm } from '../components/Confirm'
 import { Info } from '../components/Info'
@@ -24,6 +25,14 @@ const SEARCH_FROM = 6
 function readSort(): SortKey {
   const s = localStorage.getItem(SORT_KEY)
   return s === 'name' || s === 'newest' ? s : 'recent'
+}
+
+// A finished asset: ready, or a check the app counts against it (likely to show, or worth a look) means it needs a look.
+function doneStatus(a: AssetSummary): { cls: string; text: string } {
+  const att = assetAttention(a)
+  if (att.likely) return { cls: 'jump-error', text: `Not ready to use yet: ${att.likely} likely to show in the game` }
+  if (att.look) return { cls: 'jump-error', text: `Needs a look: ${att.look} worth a look` }
+  return { cls: 'jump-done', text: 'Ready for your game' }
 }
 
 export default function ProjectsPage() {
@@ -233,7 +242,7 @@ function JumpBackIn({ projects }: { projects: Project[] }) {
               : failed >= 0
                 ? { cls: 'jump-error', text: `Needs a look: ${stagePlain(STAGES[failed])}` }
                 : next < 0
-                  ? { cls: 'jump-done', text: 'Ready for your game' }
+                  ? doneStatus(a)
                   : { cls: '', text: `Next: ${stagePlain(STAGES[next])}` }
           const done = states.filter((s) => s === 'done').length
           return (
