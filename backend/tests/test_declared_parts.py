@@ -318,7 +318,8 @@ def test_item_default_for_a_wheelbarrow_is_a_wheel_not_doors():
 
 
 def test_item_default_falls_back_to_the_category_and_is_empty_for_an_unnamed_object():
-    assert dp.item_defaults("vehicle", "Old van", "A van", ["wheels"]) == [{"name": "wheels", "kind": "spin"}]
+    assert dp.item_defaults("vehicle", "Old van", "A van", ["wheels"]) == [
+        {"name": "wheels", "kind": "spin", "from": "category"}]
     assert dp.item_defaults("prop_articulated", "Mystery box", "A plain box", []) == []
 
 

@@ -103,7 +103,8 @@ def item_defaults(category: str | None, name: Any, prompt: Any, fallback: list[s
         for names, label, kind in ITEM_PARTS:
             if kind in allowed and words.intersection(names):
                 return [{"name": label, "kind": kind}]
-    return [{"name": n, "kind": kind_from_name(n, category)} for n in fallback]
+    # Rows from the category's fallback carry "from": "category": the picture is not asked to draw them (concept.py).
+    return [{"name": n, "kind": kind_from_name(n, category), "from": "category"} for n in fallback]
 
 
 def default_angle(name: str) -> float:
@@ -193,7 +194,8 @@ def read_stored(raw: Any) -> list[dict[str, str]]:
     """The declared parts as stored (db.Asset.parts). Rows in the old label form are not read: they show as no parts."""
     if not isinstance(raw, list):
         return []
-    return [{"name": str(r["name"]), "kind": str(r.get("kind") or DEFAULT_KIND)}
+    return [dict({"name": str(r["name"]), "kind": str(r.get("kind") or DEFAULT_KIND)},
+                 **({"from": "category"} if r.get("from") == "category" else {}))
             for r in raw if isinstance(r, dict) and r.get("name")]
 
 
