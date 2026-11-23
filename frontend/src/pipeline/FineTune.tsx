@@ -578,7 +578,7 @@ const DEPENDS_ON: Record<string, { param: string; isOn: (v: unknown) => boolean;
 // Automatic / On / Off so an empty value never looks like Off. `now` says what the version shown actually did.
 const AUTO_BOOLEANS: Record<string, { label: string; now?: (v: Version) => string | null }> = {
   source_project: {
-    label: 'Automatic (on for characters and buildings on smooth looks)',
+    label: 'Automatic (on for characters, buildings and rigid props on smooth looks)',
     now: (v) => (v.stage !== 'prep' || typeof v.metrics?.srcproject_applied !== 'boolean' ? null : v.metrics.srcproject_applied ? 'This version: painted from your pictures.' : 'This version: not painted from your pictures.'),
   },
   head_build: { label: 'Automatic (on with hair from the library)' },

@@ -68,6 +68,28 @@ COLOUR_HEAD_MIN = 4.0
 COLOUR_ALL_MIN = 1.5
 HEAD_ROWS = 0.2           # the head band: the top share of the figure's height
 COLOUR_N = 128            # rows the figures are compared at
+# by_picture (categories with facing_by_picture): the square-on step 1 picture against the audit renders at the four
+# quarter yaws. A box's outline is the same from front and back, so the outline margin above never settles a building;
+# the picture settles which pair of opposite sides is the front and, by colour, which of the two. Decisive only when
+# all hold: the best quarter's outline overlap >= PICTURE_IOU_MIN; the winning pair beats the other pair by
+# PICTURE_PAIR_IOU in outline and PICTURE_PAIR_DE (Lab) in colour, both the same way; and the lowest colour
+# difference over every 15-degree yaw lies on the winning pair within PICTURE_MIN_SLACK (a model left at an odd angle
+# is refused). Set from bakeoff/building-facing PLAN.md before the gate: the side-on building cleared them at 0.96,
+# 0.28 and 15.5; corner-view pictures, odd-angle plants and wrong pictures each failed at least one.
+PICTURE_IOU_MIN = 0.90
+PICTURE_PAIR_IOU = 0.10
+PICTURE_PAIR_DE = 3.0
+PICTURE_MIN_SLACK = 2.0
+PICTURE_SIDES_ALIKE = 3.0  # the two sides of the winning pair within this (Lab): both look like the picture
+QUARTER_PAIRS = ((0, 180), (90, 270))
+# The square branch of by_picture, tried only when the pair branch is not decisive. A square footprint (ground sides
+# within SQUARE_SIDES of each other, from the mesh audit's dims, Z up) gives the same outline from all four quarters, so the
+# pair outline margin is ~0 there and colour alone has to place the front: the lowest-colour quarter must beat both
+# perpendicular quarters by SQUARE_DE. Set before the gate (bakeoff/building-facing PLAN-SQUARE.md): the largest
+# same-way colour margin among the refusal cases measured was 3.5, the fresh square tower's 10.4.
+SQUARE_SIDES = 0.15
+SQUARE_PAIR_IOU_MAX = 0.03
+SQUARE_DE = 6.0
 
 
 def angle_diff(a: float, b: float) -> float:
@@ -294,6 +316,93 @@ def colour_says(ev: dict[str, Any] | None) -> int:
     return 0
 
 
+def picture_table(picture: Path | str, renders: dict[int, Path | str]) -> dict[int, dict[str, float]]:
+    """{camera yaw: {iou, de}}: the picture's outline overlap (imaging.silhouette, aspect kept) and whole-figure Lab
+    difference against each render. Yaws whose render cannot be read are left out."""
+    from .imaging import iou, silhouette
+
+    ps, pf = silhouette(picture), _figure(picture)
+    if pf is None:
+        return {}
+    out: dict[int, dict[str, float]] = {}
+    for y, r in renders.items():
+        try:
+            rf = _figure(r)
+            de = None if rf is None else _colour_diff(pf, rf, COLOUR_N)
+            if de is None:
+                continue
+            out[int(y) % 360] = {"iou": round(iou(ps, silhouette(r)), 4), "de": round(de, 2)}
+        except Exception:  # noqa: BLE001  (an unreadable render is skipped)
+            continue
+    return out
+
+
+def square_footprint(dims: Any) -> bool:
+    """The model's two ground sides are within SQUARE_SIDES of each other. dims is the mesh audit's (render_views.py:
+    Blender's X, Y, Z after import, Z up), so the ground sides are the first two."""
+    try:
+        x, z = float(dims[0]), float(dims[1])
+    except (TypeError, ValueError, IndexError):
+        return False
+    return max(x, z) > 0 and min(x, z) / max(x, z) >= 1.0 - SQUARE_SIDES
+
+
+def by_picture(table: dict[Any, dict[str, float]] | None, dims: Any = None) -> dict[str, Any] | None:
+    """The turn the step 1 picture places at the front, from picture_table. {decisive, rule ("pair", or "square" when
+    the square branch placed it), turn (-yaw of the front quarter), yaw, iou, de, pair_iou, pair_de, both_sides_match,
+    failed (the pair branch's unmet conditions), square_failed (the square branch's, when it was tried)}; None without
+    all four quarters. dims: the mesh audit's dims, for the square branch; None never tries it."""
+    t = {int(k) % 360: v for k, v in (table or {}).items()}
+    if any(q not in t for q in (0, 90, 180, 270)):
+        return None
+    p_iou = {p: max(t[y]["iou"] for y in p) for p in QUARTER_PAIRS}
+    p_de = {p: min(t[y]["de"] for y in p) for p in QUARTER_PAIRS}
+    win = max(QUARTER_PAIRS, key=lambda p: p_iou[p])
+    lose = QUARTER_PAIRS[1] if win == QUARTER_PAIRS[0] else QUARTER_PAIRS[0]
+    front = min(win, key=lambda y: t[y]["de"])
+    other = win[1] if front == win[0] else win[0]
+    low = min(t, key=lambda y: t[y]["de"])
+    failed = []
+    if max(t[y]["iou"] for y in (0, 90, 180, 270)) < PICTURE_IOU_MIN:
+        failed.append("outline")
+    if p_iou[win] - p_iou[lose] < PICTURE_PAIR_IOU or p_de[lose] - p_de[win] < PICTURE_PAIR_DE:
+        failed.append("pair")
+    if t[front]["de"] > t[low]["de"] + PICTURE_MIN_SLACK:
+        failed.append("lowest")
+    out = {"decisive": not failed, "rule": "pair", "turn": (-front) % 360, "yaw": front, "iou": t[front]["iou"],
+           "de": t[front]["de"], "pair_iou": round(p_iou[win] - p_iou[lose], 4), "pair_de": round(p_de[lose] - p_de[win], 2),
+           "both_sides_match": t[other]["de"] - t[front]["de"] < PICTURE_SIDES_ALIKE, "failed": failed}
+    if failed and square_footprint(dims) and out["pair_iou"] < SQUARE_PAIR_IOU_MAX:
+        q = min((0, 90, 180, 270), key=lambda y: t[y]["de"])
+        perp = min(t[(q + 90) % 360]["de"], t[(q + 270) % 360]["de"])
+        sq_failed = []
+        if max(t[y]["iou"] for y in (0, 90, 180, 270)) < PICTURE_IOU_MIN:
+            sq_failed.append("outline")
+        if perp - t[q]["de"] < SQUARE_DE:
+            sq_failed.append("colour")
+        if t[q]["de"] > t[low]["de"] + PICTURE_MIN_SLACK:
+            sq_failed.append("lowest")
+        out["square_failed"] = sq_failed
+        out["square_de"] = round(perp - t[q]["de"], 2)
+        if not sq_failed:
+            out.update(decisive=True, rule="square", turn=(-q) % 360, yaw=q, iou=t[q]["iou"], de=t[q]["de"],
+                       both_sides_match=t[(q + 180) % 360]["de"] - t[q]["de"] < PICTURE_SIDES_ALIKE)
+    return out
+
+
+def picture_of_files(picture: Path | str | None, renders_dir: Path | str | None, dims: Any = None) -> dict[str, Any] | None:
+    """by_picture over the mesh audit's renders on disk (shade_<yaw>.png); dims as by_picture's. None when either file
+    is missing. Never raises."""
+    if picture is None or renders_dir is None or not Path(picture).is_file():
+        return None
+    d = Path(renders_dir)
+    renders = {y: d / f"shade_{y}.png" for y in range(0, 360, 15) if (d / f"shade_{y}.png").is_file()}
+    try:
+        return by_picture(picture_table(picture, renders), dims)
+    except Exception:  # noqa: BLE001  (no picture evidence: the outline decision stands)
+        return None
+
+
 def toes_of_file(glb: Path | str, category: str | None = None) -> dict[str, Any]:
     """toes() on a model file. Only for the categories with two feet; never raises."""
     if category is not None and category not in TOES_CATEGORIES:
@@ -317,7 +426,8 @@ def _best_in(scores: dict[Any, float] | None, centre: float, half: float) -> int
 
 
 def decide(outline_turn: float | None, scores: dict[Any, float] | None, toes_result: dict[str, Any] | None,
-           colour: Callable[[float], dict[str, Any] | None] | None = None) -> dict[str, Any]:
+           colour: Callable[[float], dict[str, Any] | None] | None = None,
+           picture: dict[str, Any] | None = None) -> dict[str, Any]:
     """The turn that brings the model's front forward, from both tests.
 
     Returns {turn (None when neither test has one), source ("outline", "toes", "as built", "colour" or None),
@@ -331,14 +441,23 @@ def decide(outline_turn: float | None, scores: dict[Any, float] | None, toes_res
     the toes (the feet say which half, the outline says where in it), or the toes' own direction to the nearest 15
     degrees when the outline has no table. A near-tie with no toes keeps the half the 3D step built as the front (the
     outline's best within AS_BUILT_HALF of 0) unless `colour` (turn -> colour_evidence) clearly says the other half; it
-    is sure only when the colour clearly confirms the half it took."""
+    is sure only when the colour clearly confirms the half it took.
+
+    picture: by_picture's result, given only for categories with facing_by_picture. When decisive it sets the turn
+    (a quarter), sure, before either test (source "picture")."""
     t = toes_result or {}
     found = bool(t.get("found")) and t.get("turn") is not None
     out: dict[str, Any] = {"turn": None if outline_turn is None else int(round(outline_turn)) % 360, "source": None if outline_turn is None else "outline",
                            "outline_turn": None if outline_turn is None else int(round(outline_turn)) % 360,
                            "outline_margin": margin(scores, outline_turn), "toes_turn": float(t["turn"]) if found else None,
                            "toes_found": found, "toes_reason": None if found else (t.get("reason") or "not measured"),
-                           "flat": bool(t.get("flat")), "differ_deg": None, "agree": True, "colour": None, "sure": True, "why": None}
+                           "flat": bool(t.get("flat")), "differ_deg": None, "agree": True, "colour": None, "sure": True, "why": None,
+                           "picture": picture}
+    if picture and picture.get("decisive"):
+        out.update(turn=int(picture["turn"]) % 360, source="picture", sure=True,
+                   why=("the step 1 picture matches the model from this side and its opposite side alike; it takes the closer match"
+                        if picture.get("both_sides_match") else "the step 1 picture matches the model from this side"))
+        return out
     if outline_turn is None:
         # With no trusted outline the model is left as built, as before: the toes alone do not turn it.
         return out
@@ -389,7 +508,7 @@ def metrics_of(d: dict[str, Any]) -> dict[str, Any]:
             "face_toes_turn": d["toes_turn"], "face_toes_found": d["toes_found"], "face_toes_reason": d["toes_reason"],
             "face_tests_differ_deg": d["differ_deg"], "face_tests_agree": d["agree"], "face_decided_by": d["source"],
             "face_decision_note": d["why"], "face_decision_sure": d.get("sure", True), "face_model_flat": d.get("flat", False),
-            "face_colour": d.get("colour")}
+            "face_colour": d.get("colour"), "face_picture": d.get("picture")}
 
 
 def colour_of_files(pictures: dict[str, Path | str | None], renders_dir: Path | str | None) -> Callable[[float], dict[str, Any] | None] | None:

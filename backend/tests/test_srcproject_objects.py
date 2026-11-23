@@ -131,8 +131,7 @@ def wall_texels(k: int) -> tuple[slice, slice]:
 
 def test_a_prop_paints_no_drawn_side_view_and_a_character_still_does(scene) -> None:  # noqa: ANN001
     """A drawn "left" view (turn 90) in a colour the box does not have, beside a front picture. A prop (OBJECT_CATEGORIES)
-    paints from the pictures only: the drawn view paints nothing, and the turn 90 wall keeps the model's own colour (before:
-    it painted that wall magenta, as the shop's drawn right view put a second vending machine on the wrong wall). A
+    paints from the pictures only: the drawn view paints nothing, and the turn 90 wall keeps the model's own colour. A
     character still paints from it."""
     mesh, tex, soft = scene
     magenta = np.zeros_like(tex) + np.array([0.9, 0.1, 0.9])
@@ -151,11 +150,10 @@ def test_a_prop_paints_no_drawn_side_view_and_a_character_still_does(scene) -> N
 
 
 def test_a_prop_keeps_its_own_colour_on_a_wall_seen_at_a_steep_angle(scene) -> None:  # noqa: ANN001
-    """A prop's picture taken at turn 55 sees the turn 90 wall 35 degrees off square and the turn 0 wall 55 degrees off.
-    The near wall is painted; the far one keeps the model's own colour (OBJECT_COS_CUT: before, a view painted in full to
-    about 60 degrees, and the shop's original painting smeared its vending machine across a wall it saw at 50)."""
+    """A building's picture taken at turn 55 sees the turn 90 wall 35 degrees off square and the turn 0 wall 55 degrees
+    off. The near wall is painted; the far one keeps the model's own colour (OBJECT_COS_CUT)."""
     mesh, tex, soft = scene
-    r = paint_as("prop_rigid", mesh, soft, drawn(mesh, tex, 55.0, 0.0), mode="off", size=SIZE, built_from="front")
+    r = paint_as("environment", mesh, soft, drawn(mesh, tex, 55.0, 0.0), mode="off", size=SIZE, built_from="front")
     assert r["applied"], r["reason"]
     new = r["base_color"]
 
@@ -182,11 +180,41 @@ def test_a_box_alike_after_a_half_turn_paints_on_the_half_nearer_the_facing(head
     assert srcproject._angdiff(v["yaw"], want) <= 10.0, (v["yaw"], v["pose_search"].get("half_turn"))
 
 
-def test_picture_paint_runs_by_itself_for_characters_and_buildings_only() -> None:
-    # Buildings passed the blind review (shop); rigid props did not (crate smears); articulated props wait for a card run.
-    assert srcproject.on({}, "humanoid") and srcproject.on({}, "environment")
-    for c in ("prop_rigid", "prop_articulated", "foliage", "vehicle", "quadruped", None):
+@pytest.mark.parametrize("cat, turn, paints", [("prop_rigid", 45.0, False), ("prop_rigid", 15.0, True),
+                                               ("environment", 45.0, True)])
+def test_a_rigid_props_picture_from_a_corner_does_not_paint(scene, cat: str, turn: float, paints: bool) -> None:  # noqa: ANN001
+    """A picture fitted more than CORNER_MAX_DEG from the nearest side sees every side at a slant: on a rigid prop it is
+    refused and the model keeps its own colour. Near a side it paints; a building's picture from a corner still paints."""
+    mesh, tex, soft = scene
+    r = paint_as(cat, mesh, soft, drawn(mesh, tex, turn, 15.0), mode="off", size=SIZE, built_from="front")
+    v = r["metrics"]["srcproject_views"]["picture"]
+    if paints:
+        assert r["applied"] and "refused" not in v, (cat, turn, r["reason"], v.get("refused"))
+    else:
+        assert not r["applied"], (cat, turn, r["metrics"].get("srcproject_share_by_view"))
+        assert str(v.get("refused", "")).startswith("seen from a corner"), v.get("refused")
+
+
+def test_a_rigid_props_loosely_fitted_picture_does_not_paint(scene, monkeypatch) -> None:  # noqa: ANN001
+    """A rigid prop's picture fitted with a silhouette match under RIGID_MIN_IOU is refused and the model keeps its own
+    colour; a building's picture at the same match still paints. (The box fits its own drawing almost exactly, so the
+    bar is raised above that match here.)"""
+    mesh, tex, soft = scene
+    pic = drawn(mesh, tex, 10.0, 15.0)
+    monkeypatch.setattr(srcproject, "RIGID_MIN_IOU", 1.01)
+    r = paint_as("prop_rigid", mesh, soft, pic, mode="off", size=SIZE, built_from="front")
+    v = r["metrics"]["srcproject_views"]["picture"]
+    assert not r["applied"] and str(v.get("refused", "")).startswith("silhouette match"), (r["reason"], v.get("refused"))
+    r = paint_as("environment", mesh, soft, pic, mode="off", size=SIZE, built_from="front")
+    assert r["applied"], r["reason"]
+
+
+def test_picture_paint_runs_by_itself_for_characters_buildings_and_rigid_props_only() -> None:
+    for c in ("humanoid", "environment", "prop_rigid"):
+        assert srcproject.on({}, c), c
+    for c in ("prop_articulated", "foliage", "vehicle", "quadruped", None):
         assert not srcproject.on({}, c), c
     # The version's own choice wins either way.
     assert not srcproject.on({srcproject.PARAM: False}, "environment")
-    assert srcproject.on({srcproject.PARAM: True}, "prop_rigid")
+    assert srcproject.on({srcproject.PARAM: True}, "prop_articulated")
+    assert not srcproject.on({srcproject.PARAM: False}, "prop_rigid")

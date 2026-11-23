@@ -21,7 +21,7 @@ def _emitted_ids() -> set[str]:
     for p in SRC.rglob("*.py"):
         ids.update(rx.findall(p.read_text(encoding="utf8", errors="ignore")))
     # words the pattern also catches that are not checks (calls such as check("blender") in setup code)
-    return ids - {"blender", "comfyui", "unity", "chosen", "colour_overruled", "data", "models", "tools", "libraries", "settings"}
+    return ids - {"blender", "comfyui", "unity", "chosen", "colour_overruled", "picture", "data", "models", "tools", "libraries", "settings"}
 
 
 def test_every_check_the_backend_can_emit_has_a_tier():

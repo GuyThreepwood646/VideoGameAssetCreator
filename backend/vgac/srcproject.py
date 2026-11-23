@@ -60,11 +60,18 @@ FIT_N = 256              # size the camera and silhouette search runs at
 FLOW_N = 512             # size the optical flow runs at
 MIN_IOU = 0.85           # silhouette match below this refuses a view
 COS_CUT = math.cos(math.radians(75.0))
-# Props and buildings (OBJECT_CATEGORIES): a view paints only up to about 53 degrees off square, in full by about 43. The
-# original painting of a building or a crate is fitted at 45 to 60 degrees to every wall it sees, and there it smeared
-# (bakeoff/paint-default: the shop's vending machine stretched across the front wall, the crate's dark slat gaps across
-# its side, render brightness -0.062 against the bake); past this the model's own colour stays.
+# Props and buildings (OBJECT_CATEGORIES): a view paints only up to about 53 degrees off square, in full by about 43. A
+# picture of a building or a prop is often fitted at 45 to 60 degrees to the walls it sees, and there its detail is
+# stretched across the wall; past this the model's own colour stays.
 OBJECT_COS_CUT = 0.6
+# Rigid props (CORNER_CATEGORIES): a picture fitted more than CORNER_MAX_DEG from the nearest side is seen from a corner.
+# Every side is then at a slant and only the corners' bevels face it, so it would paint the picture's lit and shaded
+# sides of each corner onto them as streaks; it does not paint.
+CORNER_MAX_DEG = 35.0
+CORNER_CATEGORIES = ("prop_rigid",)
+# Rigid props (CORNER_CATEGORIES): a picture whose silhouette match is under this does not paint. A prop's fine parts
+# (slats, gaps, panels) are narrower than the outline error such a fit allows, so its parts land beside the model's.
+RIGID_MIN_IOU = 0.90
 MAX_FLOW = 0.02          # of the frame
 FLOW_ALPHA = 2.0         # Horn-Schunck smoothness (higher: a stiffer field)
 FLOW_SMOOTH = 8.0        # Gaussian sigma of the field in flow pixels
@@ -2516,9 +2523,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     if category in OBJECT_CATEGORIES:
         # Props and buildings paint from the step 1 picture and the original painting only, never from the drawn side and
         # back views: on a box-like model a drawn view fits by its outline at any turn, and the turnaround draws objects
-        # as three-quarter pictures with content of their own (bakeoff/paint-default: the shop's "right" view put a second
-        # vending machine and a mint wash on the wrong wall; the crate's "left" view painted its side at brightness 0.30
-        # against the bake's 0.46)
+        # as three-quarter pictures with content of their own, so they put features and tone on the wrong side
         turnaround = None
     res: dict[str, Any] = {"applied": False, "base_color": tex, "reason": None, "metrics": {}}
     # which finder reads the eyes and mouth for the head views: without one the front head view can only be fitted by
@@ -2663,6 +2668,24 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
             front.info["turn_from_front_deg"] = round(_signed(front.info["yaw"] - front_yaw), 1)
             if log:
                 log(f"view picture: refused, {why}")
+        if objects and category in CORNER_CATEGORIES:
+            for n, v in (("picture", front), ("source", fitted.get("source")), ("front", fitted.get("front"))):
+                if v is None or not v.ok or v.info.get("yaw") is None:
+                    continue
+                off = abs(((float(v.info["yaw"]) + 45.0) % 90.0) - 45.0)   # from the nearest quarter turn
+                iou = v.info.get("iou")
+                if off > CORNER_MAX_DEG:
+                    why = (f"seen from a corner ({off:.1f} degrees from the nearest side): on a rigid prop it would paint "
+                           "only the corners, at a slant")
+                elif iou is not None and float(iou) < RIGID_MIN_IOU:
+                    why = (f"silhouette match {float(iou):.3f} is under {RIGID_MIN_IOU:.2f}: on a rigid prop its parts would "
+                           "land beside the model's")
+                else:
+                    continue
+                v.ok = False
+                v.info["refused"] = why
+                if log:
+                    log(f"view {n}: refused, {why}")
         infos = {"picture": front.info}
         views: list[View] = []
         for name in ("source", "front"):
@@ -2835,14 +2858,13 @@ MODES = ("detail", "full", "off")
 DEFAULT_MODE = "full"
 
 
-# Buildings joined after a blind review of the shop and cottage (bakeoff/paint-default, 2026-11-23): the shop judged better
-# than the bake (its sign comes back), the cottage held only for the mended-fill patch of a remesh-off build. Rigid props
-# stay off: the crate gains dark smears where the original painting's slats do not line up with the model's.
-AUTO_CATEGORIES = ("humanoid", "environment")
+# Categories that paint by themselves: characters, buildings and rigid props (whose pictures from a corner do not paint,
+# CORNER_MAX_DEG). Articulated props stay off: their paint is slow and changes little.
+AUTO_CATEGORIES = ("humanoid", "environment", "prop_rigid")
 
 
 def on(params: dict[str, Any], category: str | None = None, look: dict[str, Any] | None = None) -> bool:
-    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character or a building.
+    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character, a building or a rigid prop.
     `look` is no longer read; it stays so the callers need not change."""
     if params.get(PARAM) is not None:
         return bool(params.get(PARAM))

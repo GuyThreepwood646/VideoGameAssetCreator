@@ -243,12 +243,12 @@ def test_texture_that_merely_differs_is_not_gated() -> None:
     assert rng is not None
 
 
-def test_on_by_itself_only_for_characters():
+def test_on_by_itself_only_for_the_auto_categories():
     from vgac import srcproject as sp
 
     assert sp.on({}, "humanoid", {"normal_map": False}) is True
-    assert sp.on({}, "prop_rigid", {}) is False                      # other models only when asked
-    assert sp.on({"source_project": True}, "prop_rigid", {}) is True
+    assert sp.on({}, "prop_articulated", {}) is False                # other models only when asked
+    assert sp.on({"source_project": True}, "prop_articulated", {}) is True
     assert sp.on({"source_project": False}, "humanoid", {}) is False
 
 
