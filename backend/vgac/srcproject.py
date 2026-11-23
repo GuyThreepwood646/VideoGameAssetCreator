@@ -2065,6 +2065,15 @@ def front_half(yaws: list[float], front_yaw: float, half: float = FRONT_HALF) ->
     return [float(front_yaw + d) for d in sorted({_signed(float(y) - front_yaw) for y in yaws}) if abs(d) <= half]
 
 
+def front_view_yaws(head_yaw: float, front_known: bool) -> list[float]:
+    """The turns the drawn front view is fitted at. It is drawn from the front, so once the clean-up has decided which way
+    the model faces (front_known) it is fitted there only: over FRONT_YAWS its outline alone chose a turn well off the
+    decided front on a private test build, and a small feature it painted on the far side of the chest landed beside the
+    same feature from the three-quarter views (two copies). One turn, not a window round it: fit_view refines a search of
+    several turns by up to 5 degrees past the best of them."""
+    return [float(head_yaw)] if front_known else list(FRONT_YAWS)
+
+
 def front_turn(fitted: dict[str, View], head_yaw: float = 0.0) -> tuple[float, str]:
     """The camera yaw the model's front is seen from, and what says so: the first frontal picture that fitted (the
     original, the drawn front view, or the built-from picture when it is a front view), else the head's turn."""
@@ -2482,7 +2491,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     picture_prior = INTENDED_TURN[built_from] if built_from in QUARTERS else 0.0
     # the step 1 picture is fitted by its pose search; its turn-only fit is made only when that fails (below)
     wanted: list[tuple[str, Any, list[float]]] = []
-    wanted += [(n, s, y) for n, s, y in (("source", source, wide), ("front", front_view, FRONT_YAWS)) if s is not None]
+    wanted += [(n, s, y) for n, s, y in (("source", source, wide), ("front", front_view, front_view_yaws(head_yaw, front_known))) if s is not None]
     if mode != "off":
         wanted += [(n, (turnaround or {}).get(n), TURN_YAWS[n]) for n in TURN_VIEWS if (turnaround or {}).get(n) is not None]
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
