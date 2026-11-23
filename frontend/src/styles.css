@@ -275,6 +275,8 @@ input[type='checkbox'] {
 /* App shell */
 .app {
   display: grid;
+  /* One column no wider than the window, so no child can push the page past its edge. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto 1fr;
   height: 100%;
 }
@@ -286,10 +288,14 @@ input[type='checkbox'] {
   display: flex;
   align-items: center;
   gap: var(--s3);
-  padding: var(--s2) var(--s3);
+  /* 6px top and bottom keeps one line close to the old fixed 44px around the 32px round buttons. */
+  padding: 6px var(--s3);
   border-bottom: 1px solid var(--border);
   background: var(--panel);
-  height: 44px;
+  /* Wraps onto a second line whenever its links do not fit on one, at any window width. */
+  min-height: 44px;
+  flex-wrap: wrap;
+  row-gap: var(--s1);
 }
 .brand {
   font-weight: 700;
@@ -298,7 +304,8 @@ input[type='checkbox'] {
 }
 .topnav {
   display: flex;
-  gap: var(--s3);
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s3);
 }
 .topnav a {
   color: var(--muted);
@@ -4610,19 +4617,8 @@ button.preset-card:hover:not(:disabled) {
     padding: var(--s3);
   }
 }
-@media (max-width: 560px) {
-  /* The top bar wraps onto a second line instead of forcing the window wider. */
-  .topbar {
-    height: auto;
-    min-height: 44px;
-    flex-wrap: wrap;
-    row-gap: var(--s1);
-  }
-  .topnav {
-    flex-wrap: wrap;
-    gap: var(--s1) var(--s3);
-  }
-  /* The two top-bar pop-ups open across the bar's width, so neither runs off the left edge. */
+@media (max-width: 720px) {
+  /* The top-bar pop-ups open across the bar's width, so none runs off the left edge. */
   .topbar {
     position: relative;
   }
