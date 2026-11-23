@@ -664,7 +664,9 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
     if match_to is not None and maps.get("base_color") is not None:
         try:
             sc.progress(0.77, "Matching the colours to the picture")
-            metrics["colour_match"] = await asyncio.to_thread(colourmatch.match_base_colour, Path(glb), Path(match_to), Path(maps["base_color"]))
+            view = "front" if views else (sc.version.params or {}).get("input_view")
+            metrics["colour_match"] = await asyncio.to_thread(colourmatch.match_base_colour, Path(glb), Path(match_to),
+                                                              Path(maps["base_color"]), view=view)
         except Exception as e:  # noqa: BLE001  (not matched: the base colour stays as built)
             metrics["colour_match"] = {"applied": False, "reason": "error", "error": str(e)[:300]}
     match = None
