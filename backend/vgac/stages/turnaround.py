@@ -30,7 +30,7 @@ from .picture_loras import chosen_ids, edit_loras
 DEFAULT_VIEWS = ["front", "left", "back", "right", "quarter"]
 # The three-quarter view from the other side: drawn whenever the clean-up paints the texture from the views, because
 # one three-quarter view leaves the other cheek and flank to a full side view alone. Clean-up does that by itself for
-# these categories (srcproject.AUTO_CATEGORIES: humanoid, on a smooth look), and for any category on which the person
+# these categories (SECOND_QUARTER_CATEGORIES: humanoid; buildings paint by themselves too but never from drawn views), and for any category on which the person
 # turned it on (source_project, in this step's settings or copied from the clean-up's). `second_quarter: false` on the
 # version leaves it out; the step then warns (second_quarter_check) and offers to draw just that view (add_views).
 SECOND_QUARTER = "quarter2"
