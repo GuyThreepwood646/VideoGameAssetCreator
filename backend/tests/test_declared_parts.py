@@ -298,3 +298,32 @@ def test_unplaced_moving_parts_are_named_and_the_view_shows_settings():
     assert v[0]["angle"] == 100.0 and v[0]["side"] == "auto"
     assert v[1]["locations"] == [] and v[1]["side"] == "auto" and "angle" not in v[1]
     assert "side" not in v[2]
+
+
+# --- the item's own moving part (F15): a gate is not a chest's lid -------------------------------------------------------
+
+
+def test_item_default_names_the_moving_part_from_the_item():
+    assert dp.item_defaults("prop_articulated", "Garden gate", "A wooden garden gate", []) == [
+        {"name": "gate leaf", "kind": "hinge"}]
+    assert dp.item_defaults("prop_articulated", "Treasure chest", "A chest with iron bands", []) == [
+        {"name": "lid", "kind": "hinge"}]
+    assert dp.item_defaults("prop_articulated", "Old wardrobe", "A tall wardrobe with a door", []) == [
+        {"name": "door", "kind": "hinge"}]
+
+
+def test_item_default_for_a_wheelbarrow_is_a_wheel_not_doors():
+    assert dp.item_defaults("vehicle", "Wheelbarrow", "A garden wheelbarrow", ["wheels"]) == [
+        {"name": "wheel", "kind": "spin"}]
+
+
+def test_item_default_falls_back_to_the_category_and_is_empty_for_an_unnamed_object():
+    assert dp.item_defaults("vehicle", "Old van", "A van", ["wheels"]) == [{"name": "wheels", "kind": "spin"}]
+    assert dp.item_defaults("prop_articulated", "Mystery box", "A plain box", []) == []
+
+
+def test_category_defaults_no_longer_name_a_lid_or_doors():
+    from vgac import reference
+
+    assert reference.category("prop_articulated").get("parts_default") == []
+    assert reference.category("vehicle").get("parts_default") == ["wheels"]
