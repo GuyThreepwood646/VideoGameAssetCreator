@@ -130,8 +130,8 @@ def test_t_pose_passes_and_arms_down_warns_with_the_pose_redraw_fix():
     assert _checks(figure("t", legs="apart"))["pose_for_3d"]["passed"]
     arms = _checks(figure("down", legs="apart"))["pose_for_3d"]
     assert not arms["passed"] and arms["severity"] == "warn"
-    assert arms["fix_label"] == "Pose it for 3D, then draw the sides"
-    assert arms["fix"] == {"stage": "turnaround", "params": {"pose_ready": True}, "label": "Pose it for 3D, then draw the sides"}
+    assert arms["fix_label"] == "Open the pose, then redraw the side views (Pose for 3D first)"
+    assert arms["fix"] == {"stage": "turnaround", "params": {"pose_ready": True}, "label": "Open the pose, then redraw the side views (Pose for 3D first)"}
     assert "Both arms hang close to the body" in arms["help"]
     assert "Not measured: the arms were read from the outline" in arms["help"]
     # feet side by side: the thighs

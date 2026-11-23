@@ -183,6 +183,9 @@ export type CheckFix = { stage?: string; params?: Record<string, unknown>; label
 
 // A quality check. The backend sends {id, name, passed, ok, value, limit, message}
 // and may add help (plain sentence), fix (how the app can fix it) and severity.
+export type CheckTier = 'likely' | 'look' | 'advice'
+export type CheckTiers = { tiers: { id: CheckTier; label: string }[]; table: Record<string, CheckTier>; default: CheckTier; near_miss: number }
+
 export type Check = {
   name: string
   id?: string
@@ -203,6 +206,11 @@ export type Check = {
   // Set on the first picture's checks that one redraw can fix together with others (backend data/fixes.yaml).
   fix_snippet?: string
   severity?: 'block' | 'warn'
+  // How much a failed check matters (backend check_tiers.py, the one table); only on a failed check. near_miss: a measured value within 5 percent of its limit, always advice.
+  tier?: CheckTier
+  near_miss?: boolean
+  // The plain one-line headline of the check kind (backend check_headlines.py); the numbers are under Why.
+  headline?: string
   // Extra values the sentence was filled from (axis_word, missing, effect, ...).
   vars?: Record<string, unknown>
 }
@@ -326,6 +334,8 @@ export type Category = {
   label: string
   // The app's plain word for this kind of asset ("character", "prop"; backend reference.CATEGORY_NOUNS).
   noun?: string
+  // The heading it sits under in the picker (backend reference.CATEGORY_GROUPS).
+  group?: string
   rig_engine: string
   symmetric: boolean
   pose_block: string
@@ -397,6 +407,7 @@ export type StageInfo = {
   adjust_schema: AdjustParam[]
   plain_name?: string
   plain_verb?: string
+  technical_short?: string
   help?: HelpText
   estimate_seconds?: number
   // Set when the time with both cards and with one differ by 30 percent: "about 5 minutes with both cards, about 17 minutes with one".
@@ -596,6 +607,8 @@ export type Gpu = {
   memory?: HealthMemory
   current_job_id: string | null
   current_job?: GpuCurrentJob | null
+  // Something other than the app is using the card now (the driver's view of the whole card).
+  busy_outside?: boolean
   queued: number
   can_run: string[]
   note: string
@@ -976,6 +989,7 @@ export const api = {
   styles: () => get<StylePreset[]>('/api/styles'),
   platforms: () => get<Platform[]>('/api/platforms'),
   stages: () => get<StageInfo[]>('/api/stages'),
+  checkTiers: () => get<CheckTiers>('/api/check-tiers'),
   models: () => get<ModelInfo[]>('/api/models'),
   credits: () => get<CreditsAnswer>('/api/credits'),
   suggest: (params: { category?: string; style?: string; platform?: string }) => get<Suggestion>('/api/suggest' + q(params)),
@@ -1292,7 +1306,7 @@ export function isMock(): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Add a move (rig step): the hand-made move library, a character's moves, your own animation files
+// Add a move (rig step): the app's move library, a character's moves, your own animation files
 // ---------------------------------------------------------------------------
 
 export type MovePack = { id: string; label: string; licence: string; count: number }
@@ -1325,7 +1339,7 @@ export type CharacterMoves = {
   added: { clip: string; name: string; loop: boolean }[]
   removed: string[]
   others: { asset_id: string; name: string; added: number; removed: number }[]
-  // Where Stand still comes from: 'builtin' (the app's own), 'library' (the hand-made library's) or a library clip id.
+  // Where Stand still comes from: 'builtin' (the app's own), 'library' (the move library's) or a library clip id.
   idle_source: string
 }
 export type MyMoveClip = { id: string; action: string; label: string; loop: boolean; seconds: number; preview: string | null; frames: number; still: number }

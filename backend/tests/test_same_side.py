@@ -101,9 +101,10 @@ def test_a_wrong_side_view_is_drawn_again(tmp_path, monkeypatch):
     assert views["left"]["passed"]
 
 
-def test_a_view_still_on_the_wrong_side_after_two_redraws_stays_flagged(tmp_path, monkeypatch):
+def test_a_view_still_on_the_wrong_side_after_one_redraw_stays_flagged(tmp_path, monkeypatch):
+    assert turnaround.MAX_REROLLS == 1   # WP-79: one redraw, not two
     views, draws = _run(tmp_path, monkeypatch, right_faces=[False])
-    assert draws["right"] == 1 + turnaround.MAX_REROLLS
+    assert draws["right"] == 2   # drawn once, redrawn once, then kept flagged
     r = views["right"]
     assert r["flagged"] and not r["passed"] and r["rerolls"] == turnaround.MAX_REROLLS
     failed = {c["id"]: c for c in r["checks"] if not c["ok"]}

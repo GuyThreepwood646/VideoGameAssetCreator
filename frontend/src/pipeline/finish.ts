@@ -4,7 +4,7 @@
 // (three or more lines; a flying creature gets a fourth). Older exports have neither, so the same lines are built here from what the export, prep and rig
 // versions do report: the size check, the Unity report's assigned textures, clips and controller, the collider and
 // the files. A line whose facts are missing is left out rather than guessed.
-import { creditText, selectedVersion, STAGES, type Asset, type Check, type FinishLine, type LibraryHairMetrics, type StageId, type Version } from '../api'
+import { creditText, selectedVersion, STAGES, type Asset, type AssetSummary, type Check, type CheckTier, type FinishLine, type LibraryHairMetrics, type StageId, type Version } from '../api'
 import { checkFix, checkPassed, checkSentence, joinAnd, measuredSize, metres, movesPlain, sizeAxisOf, type FixAction } from '../help'
 
 export type UnityClip = { name: string; loop?: boolean }
@@ -65,7 +65,7 @@ export function failingCheckCount(asset: Asset): number {
   return attentionItems(asset).length
 }
 
-export type AttentionItem = { stage: StageId; check: Check; id: string; text: string; rank: number }
+export type AttentionItem = { stage: StageId; check: Check; id: string; text: string; rank: number; tier: CheckTier }
 
 // What changes the finished character comes first: which way it faces, the face, materials, paint, the rig; then the rest.
 const ATTENTION_ORDER: RegExp[] = [
@@ -82,17 +82,88 @@ export function attentionRank(id: string): number {
 }
 
 // Every failed check on the version kept for each step. A failure on a version that is not the kept one does not count.
+// A check that two steps both report (a clean-up check repeated by the hand-off, say) is one item, with the value from the
+// latest step that reports it: if that step passes it, the item is gone. The tier is the backend's (check_tiers.py); a
+// check from a payload that has none is worth a look, never decided here.
+// A check that could not be measured (backend quality.not_measured): a note with its reason, never a problem. It never
+// makes an asset not ready, never adds to the count and never stops autopilot.
+export function isUnmeasured(check: Check): boolean {
+  return check.vars?.measured === false
+}
+
+// The kept checks of every step, one per check id: the latest step that reports it wins.
+function latestChecks(asset: Asset): Map<string, { stage: StageId; check: Check }> {
+  const latest = new Map<string, { stage: StageId; check: Check }>()
+  for (const stage of STAGES) {
+    for (const c of checksOf(selectedVersion(asset, stage))) latest.set(c.id ?? c.name, { stage, check: c })
+  }
+  return latest
+}
+
 export function attentionItems(asset: Asset): AttentionItem[] {
   const ctx = { platform: asset.platform_target, category: asset.category }
   const out: AttentionItem[] = []
-  for (const stage of STAGES) {
-    for (const c of checksOf(selectedVersion(asset, stage))) {
-      if (checkPassed(c)) continue
-      const id = c.id ?? c.name
-      out.push({ stage, check: c, id, text: checkSentence(c, ctx), rank: attentionRank(id) })
-    }
+  for (const [id, { stage, check }] of latestChecks(asset)) {
+    if (checkPassed(check) || isUnmeasured(check)) continue
+    out.push({ stage, check, id, text: checkSentence(check, ctx), rank: attentionRank(id), tier: check.tier ?? 'look' })
   }
   return out.sort((a, b) => a.rank - b.rank || STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage))
+}
+
+// The checks that could not be measured, as plain notes ("Not measured: ... was not checked, because ...").
+export function notMeasuredNotes(asset: Asset): string[] {
+  const ctx = { platform: asset.platform_target, category: asset.category }
+  const out: string[] = []
+  for (const { check } of latestChecks(asset).values()) {
+    if (!checkPassed(check) && isUnmeasured(check)) out.push(checkSentence(check, ctx))
+  }
+  return out
+}
+
+// How many failed checks count against the asset, by tier. The project card and its filter read this: a "likely" or a
+// "look" item means the asset needs a look; advice never does.
+export function assetAttention(asset: AssetSummary | Asset): { likely: number; look: number } {
+  const items = attentionItems(asset as Asset)
+  return { likely: items.filter((i) => i.tier === 'likely').length, look: items.filter((i) => i.tier === 'look').length }
+}
+
+
+// The short line a person reads for a check: the first sentence without its brackets, cut at the first comma, semicolon
+// or colon when it is long, and at a word as a last resort. Never an ellipsis: the rest is the "Why".
+export function oneLine(text: string, max = 100): string {
+  const first = (text.replace(/\s*\([^)]*\)/g, '').split(/(?<=[.!?])\s+(?=[A-Z])/)[0] ?? text).trim().replace(/[.:;,]+$/, '')
+  if (first.length <= max) return first
+  const clause = first.slice(25).search(/[,;:]/)
+  if (clause >= 0 && clause + 25 <= max + 20) return first.slice(0, clause + 25)
+  const cut = first.slice(0, max)
+  return cut.slice(0, Math.max(cut.lastIndexOf(' '), 40)).replace(/\s+(and|or|of|the|a|to|so|that|in|on|with)$/i, '')
+}
+
+export const TIER_ORDER: CheckTier[] = ['likely', 'look', 'advice']
+
+// The items of each tier, in the order the finished page shows them.
+export function itemsByTier(items: AttentionItem[]): Record<CheckTier, AttentionItem[]> {
+  return { likely: items.filter((i) => i.tier === 'likely'), look: items.filter((i) => i.tier === 'look'), advice: items.filter((i) => i.tier === 'advice') }
+}
+
+const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten']
+const countWord = (n: number) => COUNT_WORDS[n] ?? String(n)
+
+// The one-line verdict. A "likely to show" item means not ready; "worth a look" items mean ready with things to check; advice
+// never changes the status. It never says the asset failed.
+export function verdictLine(items: AttentionItem[]): string {
+  if (items.length === 0) return 'Ready to use. Every check passed.'
+  const t = itemsByTier(items)
+  const n = t.likely.length
+  const m = t.look.length
+  const k = t.advice.length
+  const likely = n ? `${countWord(n)} ${n === 1 ? 'thing is' : 'things are'} likely to show in the game` : ''
+  const look = m ? `${countWord(m)} ${m === 1 ? 'thing' : 'things'} worth a look` : ''
+  const advice = k ? `${countWord(k)} ${k === 1 ? 'note is' : 'notes are'} advice only` : ''
+  const cap = (x: string) => x[0].toUpperCase() + x.slice(1)
+  if (n) return `Not ready to use yet. ${cap([likely, look, advice].filter(Boolean).join(', '))}.`
+  if (m) return `Ready to use, with ${[look, advice].filter(Boolean).join(', ')}.`
+  return `Ready to use. ${cap(advice)}.`
 }
 
 // (The clean-up's old `facing` check compared the turn with the test that chose it, so it is not read here any more.)
@@ -137,8 +208,9 @@ export function controllerParams(rep: UnityReport | null): string[] {
 }
 
 const TRIGGER_ORDER = ['Attack', 'Hit', 'Die', 'Jump']
+const TRIGGER_WORDS: Record<string, string> = { Attack: 'Attack', Hit: 'Get hit', Die: 'Die', Jump: 'Jump' }
 const LOCO_VERBS: [RegExp, string][] = [
-  [/idle/i, 'idles'],
+  [/idle/i, 'stands still'],
   [/walk/i, 'walks'],
   [/run|trot|jog|sprint/i, 'runs'],
 ]
@@ -150,7 +222,7 @@ export function controllerMoves(rep: UnityReport | null, clipNames: string[]): {
   const names = clipNames.length ? clipNames : unityClips(rep).map((c) => c.name)
   const loco = LOCO_VERBS.filter(([re]) => names.some((n) => re.test(n))).map(([, verb]) => verb)
   const triggers = TRIGGER_ORDER.filter((t) => params.includes(t))
-  return { loco: loco.length ? loco : ['idles', 'walks', 'runs'], triggers }
+  return { loco: loco.length ? loco : ['stands still', 'walks', 'runs'], triggers }
 }
 
 const num = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null)
@@ -227,8 +299,8 @@ function baseFinishLines(asset: Asset): FinishLine[] {
     else if (failed(ctrl)) lines.push(warnFrom('movement', ctrl!, 'animator_controller'))
     else if (moves) {
       const t = moves.triggers
-      const oneOff = t.length ? `; ${joinAnd(t)} ${t.length > 1 ? 'are one line each' : 'is one line'}` : ''
-      lines.push({ id: 'movement', text: `Ready to move: set Speed and it ${joinAnd(moves.loco)}${oneOff}.`, state: 'ok', term: 'animator_controller' })
+      const oneOff = t.length ? `; the ${joinAnd(t.map((x) => TRIGGER_WORDS[x] ?? x))} triggers each play that move once` : ''
+      lines.push({ id: 'movement', text: `Ready to move: in Unity's Animator, set the Speed value and the character ${joinAnd(moves.loco)}${oneOff}.`, state: 'ok', term: 'animator_controller' })
     }
   }
 
@@ -246,12 +318,12 @@ function baseFinishLines(asset: Asset): FinishLine[] {
   const hb = hitboxSummary(asset)
   if (hb) {
     const shape = movementShapeWord(exp.params.movement_shape, hb.movement_default)
-    const boxes = hb.mode === 'simple' ? 'hit boxes for the head and body' : `${hb.count} hit boxes that follow the animation`
+    const boxes = hb.mode === 'simple' ? 'hit boxes (invisible shapes that show where a hit lands) for the head and body' : `${hb.count} hit boxes (invisible shapes that show where a hit lands) that follow the animation`
     const cover = findCheck(asset, 'hitbox_cover')
     const over = findCheck(asset, 'hitbox_overreach')
     const bad = failed(cover) ? cover : failed(over) ? over : null
     if (bad) lines.push(warnFrom('collision', bad, 'hitboxes'))
-    else lines.push({ id: 'collision', text: shape ? `Bumps into things: a ${shape} for moving and ${boxes}.` : `Bumps into things: ${boxes}.`, state: 'ok', term: 'hitboxes' })
+    else lines.push({ id: 'collision', text: shape ? `Bumps into things (collision): a ${shape} for moving and ${boxes}.` : `Bumps into things (collision): ${boxes}.`, state: 'ok', term: 'hitboxes' })
   }
   // 4b. Props and scenery: the collision shapes the export chose (3.4), or the first failing collision check.
   const cp = findCheck(asset, 'collider_present')
@@ -359,7 +431,7 @@ export function hitboxSummary(asset: Asset): HitboxMetrics | null {
 // "standing capsule", "lying capsule" or "box"; null for none.
 function movementShapeWord(chosen: unknown, fallback: string | undefined): string | null {
   const k = typeof chosen === 'string' && chosen !== 'auto' ? chosen : (fallback ?? 'upright')
-  return k === 'none' ? null : k === 'along' ? 'lying capsule' : k === 'box' ? 'box' : 'standing capsule'
+  return k === 'none' ? null : k === 'along' ? 'lying capsule' : k === 'box' ? 'box' : 'standing capsule (capsule collider)'
 }
 
 // The Fix for a warn line: its named check, else the check with the line's id, when that check failed.

@@ -7,12 +7,13 @@ import { BeautyPicture } from '../components/BeautyPicture'
 import { Info } from '../components/Info'
 import { PictureViewer, Zoomable, type PictureItem } from '../components/PictureViewer'
 import { Disclosure, PlainChecks, ResumeButton, StopButton, TrafficDot, type FixRequest } from '../components/ui'
-import { autopilotLine, autopilotSecondsLeft, checkFix, checkFixNote, checkPassed, fixTooltip, fmtDuration, humanError, plainJargon, stagePlain, STOP_ON_OPTIONS } from '../help'
+import { autopilotLine, autopilotSecondsLeft, checkFix, checkPassed, fixTooltip, fmtDuration, humanError, plainJargon, stagePlain, STOP_ON_OPTIONS } from '../help'
 import Viewer from '../Viewer'
 import { ViewerPausedContext } from '../previewLight'
 import { versionLook } from '../recipe'
 import { useConfirm } from '../components/Confirm'
-import { attentionItems, finishLineFix, finishLines, unityHowto } from './finish'
+import { attentionItems, finishLineFix, finishLines, notMeasuredNotes, unityHowto, verdictLine } from './finish'
+import { TieredChecks } from './TieredChecks'
 import { StepSettingsChoice } from './StepSettingsChoice'
 import { type StepParams } from './stepSettings'
 import { UnityHandoff, unityImportOf } from './UnityHandoff'
@@ -172,7 +173,7 @@ function RedrawPair({ asset, version }: { asset: Asset; version: Version }) {
   const redraw = version.files.pose_ready_picture
   if (!redraw) return null
   const original = conceptOf(asset, version)?.files.image
-  const items: PictureItem[] = [...(original ? [{ src: libraryUrl(original)!, label: 'Your step 1 picture' }] : []), { src: libraryUrl(redraw)!, label: 'Redrawn for 3D' }]
+  const items: PictureItem[] = [...(original ? [{ src: libraryUrl(original)!, label: 'Your step 1 picture' }] : []), { src: libraryUrl(redraw)!, label: 'Drawn again for 3D' }]
   return (
     <div className="redraw-pair" aria-label="Your picture and its redraw side by side">
       {items.map((it, i) => (
@@ -357,7 +358,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
                 ? `"${firstFix.label} and continue" fixes ${firstFixCheck?.message ? `"${firstFixCheck.message}"` : 'the first problem listed'} and carries on. You can also keep this result as it is.`
                 : 'No automatic fix is known for this. Change something below, keep a result, then continue; or continue anyway.'
               : versionFailed
-                ? 'Try again runs this step once more and carries on.'
+                ? 'Run this step again makes it once more and carries on.'
                 : 'Continue when you are ready; everything made so far is kept.'
             : 'Start again to continue from where it stopped.'}{' '}
           {elsewhere}
@@ -376,7 +377,7 @@ export function AutopilotCard({ asset, stage, autopilot: ap, jobs, stages, estim
         )}
         {paused && (versionFailed || !version) && (
           <button type="button" className="primary" disabled={busy} onClick={() => actions.start()}>
-            Try again and continue
+            Run this step again and continue
           </button>
         )}
         {!paused && (
@@ -403,6 +404,7 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
   const exp = selectedVersion(asset, 'export')
   const lines = finishLines(asset)
   const attention = attentionItems(asset)
+  const notMeasured = notMeasuredNotes(asset)
   const howto = unityHowto(asset)
   const rig = selectedVersion(asset, 'rig')
   const mainFile = exp?.files.fbx ?? exp?.files.glb
@@ -433,11 +435,47 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
   return (
     <section className="guide guide-finished finish-card" aria-live="polite">
       <div className="guide-body">
-        <div className="guide-kicker">{byAutopilot ? 'Autopilot finished' : 'Finished'}</div>
-        <div className="guide-happened finish-title">Your asset is ready</div>
-        <div className="guide-now">
+        <div className="guide-kicker">{byAutopilot ? `Autopilot finished all ${STAGES.length} steps` : 'Finished'}</div>
+        <div className="guide-happened finish-title">{attention.some((i) => i.tier === 'likely') ? 'Your asset is not ready yet' : 'Your asset is ready'}</div>
+        <div className="finish-verdict" role="status">{verdictLine(attention)}</div>
+        {notMeasured.map((t) => <div key={t} className="muted small finish-note">{t}</div>)}
+        <div className="guide-now muted">
           Your {asset.name} went through all {STAGES.length} steps. Download the files or hand them to your game engine. Everything is kept, so you can still change any step below.
         </div>
+        {exp && (
+          <div className="row-gap finish-deliver">
+            <button type="button" className="primary" disabled={folderBusy} onClick={openFolder} title="Opens the folder in your file explorer">
+              {unity?.folder ? 'Open the Unity folder' : 'Open the asset folder'}
+            </button>
+            {mainFile && (
+              <a className="btn" href={libraryUrl(mainFile)} download={mainFile.split('/').pop()}>
+                Download {exp.files.fbx ? 'FBX' : 'GLB'}
+              </a>
+            )}
+            <a className="btn" href={api.versionZipUrl(exp.id)} download>
+              Download everything (.zip)
+            </a>
+            {folderMsg && <span className="muted small">{folderMsg}</span>}
+            {unity ? (
+              <span className="small">
+                Copied to your Unity project{unity.project ? <>: <span className="mono">{unity.project}</span></> : ''}.
+              </span>
+            ) : (
+              <Link className="small" to={`/?edit=${asset.project_id}`} title="Pick the Unity project in Look and settings; the next export copies into it">
+                Set a Unity project
+              </Link>
+            )}
+          </div>
+        )}
+        {exp && <UnityHandoff version={exp} assetName={asset.name} onChanged={onChanged} compact />}
+        {viewerPaused ? (
+          <div className="placeholder-box">The preview is paused while the Items panel is open, so only one 3D view runs at a time.</div>
+        ) : glb ? (
+          <Viewer url={glb} height={360} turntableDefault showBonesDefault={false} defaultClip={walk} className="finish-viewer" />
+        ) : (
+          <div className="placeholder-box">No 3D model to show.</div>
+        )}
+        {exp && <BeautyPicture version={exp} name={asset.name} />}
         {(lines.length > 0 || look) && (
           <div className="finish-lines">
             <div className="field-label">
@@ -475,7 +513,6 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
           </div>
         )}
         <div className="finish-lines finish-needs-look">
-          <div className="field-label">Needs a look</div>
           {attention.length === 0 ? (
             <div className="finish-line ok">
               <TrafficDot state="ok" title="checked" />
@@ -483,66 +520,11 @@ export function FinishCard({ asset, byAutopilot, onMakeVariant, onFix, busy = fa
             </div>
           ) : (
             <>
-              <div className="muted small">
-                {attention.length === 1 ? '1 check on the versions you kept did not pass:' : `${attention.length} checks on the versions you kept did not pass:`}
-              </div>
-              <ul>
-                {attention.map((a, i) => {
-                  const fix = onFix ? checkFix(a.check) : null
-                  return (
-                    <li key={a.stage + a.id + i} className="finish-line warn">
-                      <TrafficDot state="warn" title="needs a look" />
-                      <span className="finish-line-text">
-                        <span className="muted">Step {STAGES.indexOf(a.stage) + 1}, {stagePlain(a.stage, null)}: </span>
-                        {a.text} <Link to={`/assets/${asset.id}/${a.stage}`}>Go to this step</Link>
-                        {checkFixNote(a.check) && <span className="fix-note muted small">{checkFixNote(a.check)}</span>}
-                      </span>
-                      {fix && (
-                        <button type="button" className="small-btn" disabled={busy} onClick={() => onFix!(fix)} title={fixTooltip(fix)}>
-                          {fix.label}
-                        </button>
-                      )}
-                    </li>
-                  )
-                })}
-              </ul>
+              <div className="field-label">Checks on the versions you kept</div>
+              <TieredChecks asset={asset} items={attention} stage="export" onFix={onFix} busy={busy} />
             </>
           )}
         </div>
-        {exp && (
-          <div className="row-gap finish-deliver">
-            <button type="button" className="primary" disabled={folderBusy} onClick={openFolder} title="Opens the folder in your file explorer">
-              {unity?.folder ? 'Open the Unity folder' : 'Open the asset folder'}
-            </button>
-            {mainFile && (
-              <a className="btn" href={libraryUrl(mainFile)} download={mainFile.split('/').pop()}>
-                Download {exp.files.fbx ? 'FBX' : 'GLB'}
-              </a>
-            )}
-            <a className="btn" href={api.versionZipUrl(exp.id)} download>
-              Download everything (.zip)
-            </a>
-            {folderMsg && <span className="muted small">{folderMsg}</span>}
-            {unity ? (
-              <span className="small">
-                Copied to your Unity project{unity.project ? <>: <span className="mono">{unity.project}</span></> : ''}.
-              </span>
-            ) : (
-              <Link className="small" to={`/?edit=${asset.project_id}`} title="Pick the Unity project in Look and settings; the next export copies into it">
-                Set a Unity project
-              </Link>
-            )}
-          </div>
-        )}
-        {exp && <UnityHandoff version={exp} assetName={asset.name} onChanged={onChanged} compact />}
-        {viewerPaused ? (
-          <div className="placeholder-box">The preview is paused while the Items panel is open, so only one 3D view runs at a time.</div>
-        ) : glb ? (
-          <Viewer url={glb} height={360} turntableDefault showBonesDefault={false} defaultClip={walk} className="finish-viewer" />
-        ) : (
-          <div className="placeholder-box">No 3D model to show.</div>
-        )}
-        {exp && <BeautyPicture version={exp} name={asset.name} />}
         {exp && (
           <Disclosure label={`All files (${deliverableKeys(exp).length})`}>
             <Deliverables version={exp} />

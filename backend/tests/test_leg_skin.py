@@ -116,8 +116,11 @@ def test_stretch_skips_zero_length_edges_and_empty_input():
 
 @pytest.mark.parametrize("bone,region", [
     ("mixamorig:Hips", "hips"), ("mixamorig:LeftUpLeg", "legs"), ("mixamorig:RightFoot", "legs"),
-    ("mixamorig:LeftArm", "arms"), ("mixamorig:LeftHand", "arms"), ("mixamorig:Spine1", "torso"),
-    ("mixamorig:Head", "torso"), ("Cape_03", "other"),
+    ("mixamorig:LeftArm", "arms"), ("mixamorig:LeftForeArm", "arms"), ("mixamorig:LeftShoulder", "arms"),
+    ("mixamorig:LeftHand", "hands"), ("mixamorig:RightHand", "hands"),
+    ("mixamorig:LeftHandIndex1", "hands"), ("mixamorig:RightHandPinky3", "hands"),
+    ("mixamorig:LeftHandThumb2", "hands"), ("Finger_L1", "hands"), ("Thumb_R", "hands"), ("LeftHand", "hands"),
+    ("mixamorig:Spine1", "torso"), ("mixamorig:Head", "torso"), ("Cape_03", "other"),
 ])
 def test_region_of_bone(bone, region):
     assert ss.region_of_bone(bone) == region
@@ -127,6 +130,9 @@ def test_edge_region_priority():
     assert ss.edge_region("legs", "hips") == "hips"
     assert ss.edge_region("arms", "torso") == "arms"
     assert ss.edge_region("other", "legs") == "legs"
+    assert ss.edge_region("hands", "arms") == "hands"  # the wrist edge is a hands edge
+    assert ss.edge_region("arms", "hands") == "hands"
+    assert ss.edge_region("hands", "torso") == "hands"
 
 
 _BLENDER = os.environ.get("VGAC_TEST_BLENDER")

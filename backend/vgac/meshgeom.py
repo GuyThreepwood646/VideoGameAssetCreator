@@ -12,10 +12,11 @@ Calibration (docs are local; bakeoff/wp43): the limits below are the owner's Nut
 Buildings have bad examples to calibrate on; the other routes have good examples only, so their limits are provisional,
 set well above the good results and well below the damage seen on buildings.
 
-BLOCK_ROUTES is the switch that lets this check stop an automatic build (autopilot.STOP_AND_ASK). It is empty: warn only,
-until the limits are calibrated on bad examples from each route (decision D23). Buildings are the first candidate: on the
-WP-44 standard-detail pairs the five building pieces pass these limits with the rebuild on and fail them all with it off.
-Low-poly buildings are not measured yet, so the decision waits for the low-poly pairs.
+A failed check never stops an automatic build (decision D23). On a route in REBUILD_ROUTES the 3D step builds again with the
+next seeds (at most REBUILD_MAX more builds), keeps the best (pick_best: geometry-whole and colour-passing builds first, then geometry only, then colour only,
+then neither; lowest folded share, then lowest seed, within each) and, when the best still fails, goes on with it and shows the check as "likely to show in the game". Buildings are the first route:
+on the WP-44 rerun 2 the 6 percent folded limit had no false block and one miss on 37 blind or checked buildings
+(a local fold the whole-model share cannot see; a local measure was tried and could not be calibrated, so none ships). The other routes have good examples only, so they are not rebuilt yet.
 """
 from __future__ import annotations
 
@@ -41,12 +42,13 @@ LIMITS: dict[str, dict[str, float | None]] = {
     "characters":   {"folded": 0.03, "open": 0.05, "bad_joins": 0.02, "slivers": 0.05, "largest_piece": 0.5},
     "creatures":    {"folded": 0.05, "open": 0.05, "bad_joins": 0.02, "slivers": 0.05, "largest_piece": 0.5},
     "hard_objects": {"folded": 0.03, "open": 0.05, "bad_joins": 0.02, "slivers": 0.05, "largest_piece": 0.5},
-    "buildings":    {"folded": 0.03, "open": 0.05, "bad_joins": 0.02, "slivers": 0.05, "largest_piece": 0.5},
+    "buildings":    {"folded": 0.06, "open": 0.05, "bad_joins": 0.02, "slivers": 0.05, "largest_piece": 0.5},
     "plants":       {"folded": 0.20, "open": None, "bad_joins": None, "slivers": 0.05, "largest_piece": None},
 }
 
-# Routes where a failed check stops an automatic build (Stop for serious problems). Empty until calibrated (see above).
-BLOCK_ROUTES: frozenset[str] = frozenset()
+# Routes whose shape gate rebuilds the model on a fail (D23), and how many extra builds at most (builds take about 4 minutes).
+REBUILD_ROUTES: frozenset[str] = frozenset({"buildings"})
+REBUILD_MAX = 2
 
 PROBLEM_WORDS = {
     "folded": "surface folded back on itself along {share} of its edges (up to {limit} is normal)",
@@ -98,9 +100,10 @@ def summary(category: str | None, report: dict[str, Any] | None) -> dict[str, An
     return out
 
 
-def check(category: str | None, geometry: dict[str, Any] | None, rebuild: bool | None = None) -> dict[str, Any] | None:
+def check(category: str | None, geometry: dict[str, Any] | None, rebuild: bool | None = None, rebuilds: int = 0) -> dict[str, Any] | None:
     """The model_whole check (warn), or None when there is nothing to judge: no measure (Blender failed), or a category
-    with no 3D model (material). value is the folded-edge share; vars.problems has every measure over its limit."""
+    with no 3D model (material). value is the folded-edge share; vars.problems has every measure over its limit;
+    vars.rebuilds says how many extra builds were made (WP-83) so the sentence can say the best was kept."""
     if not geometry or not geometry.get("route"):
         return None
     route = geometry["route"]
@@ -108,4 +111,35 @@ def check(category: str | None, geometry: dict[str, Any] | None, rebuild: bool |
     folded = geometry.get("folded_edge_share") or 0.0
     return quality.check("model_whole", not probs, round(float(folded), 4), LIMITS[route]["folded"],
                          vars={"route": route, "route_words": ROUTE_WORDS[route], "problem_list": "; ".join(probs),
-                               "stop": route in BLOCK_ROUTES, "rebuild": rebuild})
+                               "rebuild": rebuild, "rebuilds": int(rebuilds or 0)})
+
+
+def passes(category: str | None, report: dict[str, Any] | None) -> bool | None:
+    """The shape gate on one build's mesh_health report: True when no measure is over its limit, None when there is nothing to
+    judge (no report, or a category with no limits)."""
+    route = route_of(category)
+    if not report or route is None:
+        return None
+    return not problems(route, report)
+
+
+def rebuilds_wanted(category: str | None) -> bool:
+    return route_of(category) in REBUILD_ROUTES
+
+
+def pick_best(builds: list[dict[str, Any]]) -> int:
+    """The build to keep out of the tries: each has "seed", "folded" (the folded-edge share; None when it could not be
+    measured, which counts as worst), "passed" (the geometry verdict; None or absent when not measured, which counts as
+    passing) and "colour" (texcolour's result, {"ok": ...}; None when not measured, which counts as passing). Groups, best
+    first: 1 passes both geometry and colour, 2 geometry only, 3 colour only, 4 neither. Within a group: lowest folded
+    share, then lowest seed, then the earlier build. A torn model is the worse fault, so geometry outranks colour (the
+    picture paint step repaints the colour later). Never random."""
+    def group(i: int) -> int:
+        geo = builds[i].get("passed") is not False
+        col = (builds[i].get("colour") or {}).get("ok") is not False
+        return {(True, True): 1, (True, False): 2, (False, True): 3}.get((geo, col), 4)
+
+    def key(i: int) -> tuple[int, float, int, int]:
+        f = builds[i].get("folded")
+        return (group(i), float("inf") if f is None else float(f), int(builds[i].get("seed") or 0), i)
+    return min(range(len(builds)), key=key)

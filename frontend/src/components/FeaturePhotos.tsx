@@ -95,7 +95,7 @@ export function FeaturePhotos({ slots, onChange, startFrom, category, disabled =
           ? 'A sharper photo of the face. Your model is not redrawn; the face pass in step 4 paints the face from this photo. Body, outfit and other photos are not offered here: they change the drawing in step 1, which a model you already have skips.'
           : startFrom === 'picture'
             ? 'Sharper photos of parts of the character: a face, a body, an outfit. Step 1 then draws one picture from your picture and these together. A face photo alone leaves your picture as it is and sharpens the face in step 4.'
-            : 'Your own photos of parts of the character: a face, a body, an outfit. Step 1 then draws one picture from all of them and your description, instead of painting from words alone.'}{' '}
+            : 'Your own photos of parts of the character: a face, a body, an outfit. Step 1 then draws one picture from all of them and your description, instead of drawing from words alone.'}{' '}
         Your pictures stay on this computer.
       </span>
       {cropFrom && (

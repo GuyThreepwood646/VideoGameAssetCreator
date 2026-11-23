@@ -48,7 +48,7 @@ def test_histograms_and_masks(tmp_path):
     o = Image.open(out)
     assert o.getpixel((20, 20))[:3] == (200, 50, 50) and o.getpixel((40, 20))[:3] == (50, 50, 200)
     sheet = imaging.contact_sheet([a, b], tmp_path / "sheet.png", cell=32, columns=2)
-    assert Image.open(sheet).size == (64, 48)
+    assert Image.open(sheet).size == (64, 56)  # a 24 px label bar under each cell
 
 
 def test_quality_checks_shape():
@@ -96,7 +96,7 @@ def test_lod_param_parsing():
     assert parse_lods("1.0, 0.5, 0.25, 0.1") == [0.5, 0.25, 0.1]
     assert parse_lods([0.5, 0.25]) == [0.5, 0.25]
     assert parse_lods("") is None and parse_lods(None) is None
-    lods = lod_list({"LOD0": 100, "LOD1": 50, "LOD2": 25})
+    lods = lod_list({"LOD0": 100, "LOD1": 50, "LOD2": 25}, "pc_mid")
     assert lods == [{"level": 0, "triangles": 100, "screen_height": 0.6}, {"level": 1, "triangles": 50, "screen_height": 0.3}, {"level": 2, "triangles": 25, "screen_height": 0.12}]
 
 

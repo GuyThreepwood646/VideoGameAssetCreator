@@ -280,6 +280,18 @@ def init_db() -> None:
     Base.metadata.create_all(engine)
     _ensure_columns(engine)
     migrate_looks(engine)
+    unkeep_stopped_and_failed(engine)
+
+
+def unkeep_stopped_and_failed(engine) -> int:
+    """A stopped or failed version is not kept (WP-02). Rows stopped before that change still say kept, which showed
+    "stopped" and "kept" on one version and made step 1 and step 2 disagree about what to do next (UX-06). Idempotent.
+    Returns how many rows changed."""
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        res = conn.execute(text("UPDATE version SET selected = 0 WHERE selected = 1 AND "
+                                "status IN ('rejected', 'error')"))
+        return int(res.rowcount or 0)
 
 
 _ADDED_COLUMNS = {"project": {"unity_project_path": "TEXT"}, "asset": {"base_asset_id": "VARCHAR(36)", "variant_change": "TEXT", "concept_model": "VARCHAR(50)", "autopilot_json": "TEXT",
@@ -391,6 +403,8 @@ def project_to_dict(p: Project) -> dict[str, Any]:
 # resumed: the same job goes back in the queue with the same settings. Setting it aside changes the error.
 STOPPED_ERROR = "cancelled"
 SET_ASIDE_ERROR = "stopped and set aside"
+# A rejected version (stopped, set aside, replaced or turned down) or a failed one is never the kept version (WP-02).
+UNKEPT_STATUSES = ("rejected", "error")
 
 
 def is_stopped(v: "Version") -> bool:
@@ -401,8 +415,8 @@ def _with_fix_notes(metrics: dict[str, Any], params: dict[str, Any] | None = Non
     """The version's metrics with each failed check saying what a person can do about it (fixnotes), also for versions
     stored before that existed. Never raises: a note is a courtesy."""
     try:
-        from . import fixnotes
-        return fixnotes.after_fix_notes(fixnotes.annotate_checks(metrics), params)
+        from . import check_tiers, fixnotes, guidance
+        return check_tiers.annotate_metrics(fixnotes.after_fix_notes(fixnotes.annotate_checks(guidance.refresh_check_wording(metrics)), params))
     except Exception:  # noqa: BLE001
         return metrics
 
@@ -421,7 +435,7 @@ def version_to_dict(v: Version) -> dict[str, Any]:
         "job_id": v.job_id,
         "error": v.error,
         "created_at": _iso(v.created_at),
-        "selected": bool(v.selected),
+        "selected": bool(v.selected) and v.status not in UNKEPT_STATUSES,
     }
 
 
@@ -457,7 +471,7 @@ def asset_to_dict(a: Asset, with_stages: bool = True) -> dict[str, Any]:
     if with_stages:
         for v in sorted(a.versions, key=lambda x: (x.created_at, x.id)):
             out["stages"].setdefault(v.stage, []).append(version_to_dict(v))
-            if v.selected:
+            if v.selected and v.status not in UNKEPT_STATUSES:
                 out["selected"][v.stage] = v.id
     return out
 

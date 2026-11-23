@@ -50,7 +50,7 @@ def test_off_rig_finds_no_library_hair_and_binds_nothing(tmp_path):
     async def blender(*a, **k):
         calls.append(a)
 
-    sc = SimpleNamespace(stage_version=lambda s: prep if s == "prep" else None, version=version, dir=tmp_path,
+    sc = SimpleNamespace(platform="pc_mid", stage_version=lambda s: prep if s == "prep" else None, version=version, dir=tmp_path,
                          settings=SimpleNamespace(blender_timeout_seconds=10), blender=blender)
     assert rig.library_hair(sc) is None
     anim = tmp_path / "anim.glb"
@@ -88,7 +88,7 @@ def test_off_pack_args_unchanged_and_layout_hair_unchanged():
 def test_off_export_hair_inputs_and_unity_args(tmp_path):
     prep = _ver("prep", {"hair_material": {"use": False}})
     rig_v = _ver("rig", {"bones": 30})
-    sc = SimpleNamespace(stage_version=lambda s: {"prep": prep, "rig": rig_v}.get(s), dir=tmp_path,
+    sc = SimpleNamespace(platform="pc_mid", stage_version=lambda s: {"prep": prep, "rig": rig_v}.get(s), dir=tmp_path,
                          category={"rig_engine": "skintoken_mixamo"}, version=SimpleNamespace(metrics={}, files={}),
                          settings=SimpleNamespace(clips_libraries={}), asset=SimpleNamespace(category="humanoid"))
     assert export.library_hair(sc) is None and export.hair_inputs(sc) == {}
@@ -309,7 +309,7 @@ def test_library_hair_found_on_the_clean_up_version(tmp_path, monkeypatch):
     prep = _ver("prep", {"hair_library": {"attached": True, "kind": "cards"}, "body_glb_hash": "abc"},
                 files={"hair_mesh": "hair_mesh.npz"})
     monkeypatch.setattr(rig.library, "version_file", lambda v, k, s=None: npz if k == "hair_mesh" else None)
-    sc = SimpleNamespace(stage_version=lambda s: prep, settings=None)
+    sc = SimpleNamespace(platform="pc_mid", stage_version=lambda s: prep, settings=None)
     lib = rig.library_hair(sc)
     assert lib["mesh"] == npz and lib["body_glb_hash"] == "abc" and lib["parts"] is None
     prep.metrics["hair_library"]["attached"] = False
@@ -373,7 +373,7 @@ def _lib_sc(tmp_path, bound=True):
         d.write_bytes(Path(src).read_bytes())
         return d
 
-    return SimpleNamespace(stage_version=lambda s: {"prep": prep, "rig": rig_v}.get(s),
+    return SimpleNamespace(platform="pc_mid", stage_version=lambda s: {"prep": prep, "rig": rig_v}.get(s),
                            lineage_file=lambda key, stages=None: files.get(key), copy_in=copy_in, dir=out,
                            version=SimpleNamespace(metrics={}, files={}), category={"rig_engine": "skintoken_mixamo"},
                            settings=SimpleNamespace(clips_libraries={}), asset=SimpleNamespace(category="humanoid"))

@@ -127,7 +127,7 @@ export default function YourLibrary() {
 
       <div className="your-library-group">
         <div className="row-between">
-          <div className="field-label">LoRAs for picture edits ({editAddons.length})</div>
+          <div className="field-label">Picture-edit add-ons (LoRAs) ({editAddons.length})</div>
         </div>
         {editAddons.length > 0 && (
           <ul className="small">

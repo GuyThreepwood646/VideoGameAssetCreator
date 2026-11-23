@@ -49,6 +49,7 @@ export function gpuStatusText(g: Gpu): string {
     return g.queued > 0 ? `Off, ${jobs(g.queued)}` : 'Off'
   }
   if (g.current_job) return doingText(g.current_job) + (g.queued > 0 ? `, ${jobs(g.queued)}` : '')
+  if (g.busy_outside) return 'In use by another program' + (g.queued > 0 ? `, ${jobs(g.queued)}` : '')
   return g.queued > 0 ? jobs(g.queued) : 'Idle'
 }
 

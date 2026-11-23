@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 VIEW_YAW = {"front": 0, "left": 90, "back": 180, "right": 270}
 
@@ -192,16 +192,22 @@ def contact_sheet(paths: Iterable[Path | str], dest: Path | str, cell: int = 256
         raise ValueError("no images for sheet")
     cols = columns or min(n, 8)
     rows = (n + cols - 1) // cols
-    sheet = Image.new("RGB", (cols * cell, rows * (cell + 16)), background)
+    bar = 24  # room for a label under each picture, at a size that can be read
+    sheet = Image.new("RGB", (cols * cell, rows * (cell + bar)), background)
     draw = ImageDraw.Draw(sheet)
+    try:
+        font = ImageFont.load_default(size=15)
+    except TypeError:  # Pillow older than 10.1 has one fixed size
+        font = ImageFont.load_default()
     for i, (p, label) in enumerate(zip(paths, labels)):
         im = Image.open(p).convert("RGBA")
         im.thumbnail((cell, cell))
-        x, y = (i % cols) * cell, (i // cols) * (cell + 16)
+        x, y = (i % cols) * cell, (i // cols) * (cell + bar)
         tile = Image.new("RGBA", (cell, cell), background + (255,))
         tile.alpha_composite(im, ((cell - im.width) // 2, (cell - im.height) // 2))
         sheet.paste(tile.convert("RGB"), (x, y))
-        draw.text((x + 4, y + cell + 2), str(label)[:40], fill=(230, 230, 230))
+        draw.rectangle((x, y + cell, x + cell - 1, y + cell + bar - 1), fill=(30, 30, 30))
+        draw.text((x + 4, y + cell + 3), str(label)[:40], fill=(245, 245, 245), font=font)
     sheet.save(dest)
     return Path(dest)
 
@@ -853,6 +859,23 @@ def shrink_normal_islands(path: Path | str, uvmesh: dict[str, np.ndarray], size:
     small = shrink_by_island(rgb, uvmesh, size)
     small_vec = small * 2.0 - 1.0  # the averaged encoded values are the averaged vectors (the encoding is affine)
     Image.fromarray(_encode_unit(small_vec), "RGB").save(dest)
+    dilate_png(dest, rasterise_uv(uvmesh, size)["labels"] > 0, dilation_px(size))
+    return Path(dest)
+
+
+def shrink_map_islands(path: Path | str, uvmesh: dict[str, np.ndarray], size: int, dest: Path | str) -> Path:
+    """A data map (metallic, roughness, ao) shrunk per UV island like the base colour (shrink_by_island), then the islands
+    grown into the empty space. Written in the file's own mode: greyscale stays greyscale, RGB and RGBA keep every channel
+    (a packed map is never reduced to one). Other modes are converted to RGB or RGBA first."""
+    with Image.open(path) as im:
+        mode = im.mode if im.mode in ("L", "RGB", "RGBA") else ("RGBA" if "A" in im.getbands() else "RGB")
+        arr = np.asarray(im.convert(mode), dtype=np.float32) / 255.0
+    if arr.ndim == 2:
+        arr = arr[..., None]
+    small = shrink_by_island(arr, uvmesh, size)
+    if mode == "L":
+        small = small[..., 0]
+    Image.fromarray(np.clip(np.round(small * 255.0), 0, 255).astype(np.uint8), mode).save(dest)
     dilate_png(dest, rasterise_uv(uvmesh, size)["labels"] > 0, dilation_px(size))
     return Path(dest)
 

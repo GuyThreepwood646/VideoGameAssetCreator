@@ -5,6 +5,7 @@ The seam is closed with a numpy offset blend, never with AI inpainting (which in
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,9 @@ def make_seamless(raw_path: Path | str, dest: Path | str, power: float = 1.6) ->
     wgt = np.outer(yy, xx)[..., None]
     wgt_s = np.roll(np.roll(wgt, h // 2, axis=0), w // 2, axis=1)
     out = (im * wgt + shifted * wgt_s) / np.maximum(wgt + wgt_s, 1e-6)
+    # Where a border meets a middle line both weights are 0 (8 texels, a 2 x 2 dot at the middle of each join in a
+    # repeat): take the plain average there instead of 0 / 1e-6, which was pure black.
+    out = np.where(wgt + wgt_s > 0, out, (im + shifted) / 2)
     Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).save(dest)
     return Path(dest)
 
@@ -81,3 +85,65 @@ def seam_error(base_path: Path | str) -> float:
     v = np.abs(im[0, :, :] - im[-1, :, :]).mean()
     h = np.abs(im[:, 0, :] - im[:, -1, :]).mean()
     return float((v + h) / 2)
+
+
+# WP-58: the AI upscaler (4x-PBRify UpscalerV4, CC0) runs for wood only, per bakeoff/wp58/trialC/VERDICT.md (2026-11-21).
+# Every other surface keeps today's path exactly. The trial's tested output was 2048 px (wrap pad, 4x, crop, Lanczos to 2048).
+WOOD_WORDS = frozenset({"wood", "wooden", "timber", "plank", "planks", "oak", "pine", "walnut", "bark", "log", "floorboard",
+                        "parquet", "plywood"})  # whole words only: "woodland" is not wood
+REALISTIC_PRESETS = frozenset({"realistic_pbr"})  # the stylised presets (painted, cel, retro64, lowpoly_flat, clay) never upscale
+UPSCALE_MODEL = "4x-PBRify_UpscalerV4.pth"
+UPSCALE_PAD = 32  # px of wrap-around padding on each side of the 1024 tile before the 4x upscale
+UPSCALE_SCALE = 4
+UPSCALE_OUT = 2048
+
+
+def is_wood(prompt: str | None, style_preset: str | None) -> bool:
+    """True when the material's description names wood (whole words in WOOD_WORDS) and the preset is realistic."""
+    if style_preset not in REALISTIC_PRESETS:
+        return False
+    words = set(re.findall(r"[a-z]+", (prompt or "").lower()))
+    return bool(words & WOOD_WORDS)
+
+
+def upscale_plan(prompt: str | None, style_preset: str | None, texture_budget: int = UPSCALE_OUT) -> dict[str, Any] | None:
+    """The upscaler plan for a material, or None (today's path). Used only for wood and only at the tested size: a
+    texture budget other than exactly UPSCALE_OUT (2048) keeps today's tile (the trial measured detail at 2048, seams at
+    1024; at 4096 the upscaler would ship 2048 where today's path may give 4096)."""
+    if not is_wood(prompt, style_preset) or int(texture_budget) != UPSCALE_OUT:
+        return None
+    return {"model": UPSCALE_MODEL, "pad": UPSCALE_PAD, "scale": UPSCALE_SCALE, "size": UPSCALE_OUT}
+
+
+# The size the trial drew the surface at before the 4x upscale (bakeoff/wp58/trialC: 1024 Z-Image, 4x, 2048). Drawing at
+# 2048 and upscaling would make an 8192 picture only to shrink it, which was never tested.
+TRIAL_DRAW = 1024
+
+
+def draw_size(prompt: str | None, style_preset: str | None, texture_budget: int) -> int:
+    """The size the concept stage draws at: the trial's 1024 for a wood material that the upscaler will take to 2048,
+    otherwise the texture budget (every other material unchanged)."""
+    if upscale_plan(prompt, style_preset, texture_budget) is not None:
+        return TRIAL_DRAW
+    return int(texture_budget)
+
+
+def wrap_pad(arr: np.ndarray, pad: int = UPSCALE_PAD) -> np.ndarray:
+    """Wrap-around pad, so the upscaler sees the tile's neighbours and the crop after it keeps the seam closed."""
+    return np.pad(arr, ((pad, pad), (pad, pad), (0, 0)), mode="wrap")
+
+
+def crop_margin(arr: np.ndarray, pad: int = UPSCALE_PAD, scale: int = UPSCALE_SCALE) -> np.ndarray:
+    """Remove the upscaled padding again (pad * scale on each side)."""
+    m = pad * scale
+    return arr[m:-m, m:-m]
+
+
+def upscale_graph(input_name: str, prefix: str, model: str = UPSCALE_MODEL) -> dict[str, Any]:
+    """Core nodes only: load the picture, load the upscale model, upscale, save (output node 8)."""
+    return {
+        "1": {"class_type": "LoadImage", "inputs": {"image": input_name}},
+        "2": {"class_type": "UpscaleModelLoader", "inputs": {"model_name": model}},
+        "3": {"class_type": "ImageUpscaleWithModel", "inputs": {"upscale_model": ["2", 0], "image": ["1", 0]}},
+        "8": {"class_type": "SaveImage", "inputs": {"images": ["3", 0], "filename_prefix": prefix}},
+    }

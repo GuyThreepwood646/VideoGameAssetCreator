@@ -249,6 +249,8 @@ def test_material_mesh_run_in_thread(tmp_path, monkeypatch):
     version = SimpleNamespace(id="m" * 32, parent_version_id=None, stage="mesh", params={}, metrics={})
     sc = FakeSC(tmp_path, version, FakeDB(version))
     sc.budget = {"texture": 64}
+    # WP-58: mesh_run asks the wood upscaler gate about the asset's prompt and preset; a stone material keeps today's tile.
+    sc.asset = SimpleNamespace(prompt="weathered stone", style_preset="realistic_pbr")
     sc.lineage_file = lambda key, stages=None: src if key == "image" else None
 
     async def no_judge(_sc):

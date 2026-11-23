@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api, libraryUrl, type ItemSuggestionState, type SuggestionAnswer, type Version } from '../../api'
 import { Info } from '../../components/Info'
 import { Disclosure } from '../../components/ui'
-import { joinAnd, libraryMissingLine, movesLine, movesPlain, movesSourceLine } from '../../help'
+import { CellSheet } from '../../components/CellSheet'
+import { clipLabel, joinAnd, libraryMissingLine, movesLine, movesPlain, movesSourceLine } from '../../help'
 import { MovesPanel } from '../MovesPanel'
 import Viewer, { hitShapesOf, type BoneSegment, type BonesSpace, type ClipInfo, type HitboxDoc } from '../../Viewer'
 import { isMultiPoint, pointTool } from '../../declaredPoints'
@@ -48,7 +49,7 @@ function hitboxLine(summary: HitboxSummary | null, doc: HitboxDoc | null): { tex
   if (mode === 'none') return { text: 'No hit boxes. The body shape still keeps it out of walls.', warn: false }
   if (count === undefined || count === 0) return null
   if (summary?.fallback ?? doc?.fallback) return { text: 'Hit boxes: one for the body and one for the head. We could not tell the limbs apart on this skeleton.', warn: false }
-  return { text: `Hit boxes: ${count}, fitted to the body. They move with the skeleton so hits land where they look.`, warn: false }
+  return { text: `Hit boxes: ${count} invisible shapes that show where a hit lands, fitted to the body. They move with the skeleton so hits land where they look.`, warn: false }
 }
 
 export function RigView({ version }: { version: Version }) {
@@ -204,8 +205,8 @@ export function RigView({ version }: { version: Version }) {
         <div className="rig-lines small">
           {carried && (
             <div>
-              Kept from the rig the arm was separated on: the same skeleton and weights, with the weights near the cut made again. Try
-              again makes the whole rig from scratch.
+              Kept from the skeleton the arm was separated on: the same bones, and only how the surface follows the bones (skin weights) near the cut was
+              redone. "Make it move again" makes the whole skeleton from scratch.
             </div>
           )}
           {!carried && carryWhy && <div>Made from scratch, not kept from the rig the arm was separated on: {carryWhy}.</div>}
@@ -287,8 +288,16 @@ export function RigView({ version }: { version: Version }) {
             Animation frames
             <Info term="term.clips" />
           </div>
-          <div className="strip-scroll">
-            <img src={animStrip} alt="animation strip" />
+          <div className="strip-scroll strip-scroll-sheet">
+            <CellSheet
+              src={animStrip}
+              cell={256}
+              alt="animation frames, one row per move"
+              label={(r, c) => {
+                const info = clipInfo?.[r]
+                return info ? `${info.label || clipLabel(info.name)}, frame ${c + 1}` : `Frame ${c + 1}`
+              }}
+            />
           </div>
         </div>
       )}
@@ -299,7 +308,7 @@ export function RigView({ version }: { version: Version }) {
             <Info term="term.bend_test" />
           </div>
           <div className="strip-scroll">
-            <img src={strip} alt="bend test strip" />
+            <CellSheet src={strip} cell={384} alt="the skeleton, then the model bent 35 and 90 degrees" label={(_r, c) => ['Skeleton', 'Bent 35 degrees', 'Bent 90 degrees'][c] ?? `Pose ${c + 1}`} />
           </div>
         </div>
       )}

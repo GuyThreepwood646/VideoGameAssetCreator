@@ -3,7 +3,7 @@
 // hover and on keyboard focus; Escape closes it. Renders nothing for unknown terms,
 // so it is safe to sprinkle next to every label.
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { helpFor, type HelpEntry } from '../help'
+import { helpFor, splitTechnical, type HelpEntry } from '../help'
 
 type Props = { term?: string; entry?: HelpEntry | null; label?: string }
 
@@ -27,6 +27,7 @@ export function Info({ term, entry, label }: Props) {
   }, [open])
 
   if (!e) return null
+  const tech = splitTechnical(e.technical)
 
   const show = () => {
     const r = btn.current?.getBoundingClientRect()
@@ -59,7 +60,8 @@ export function Info({ term, entry, label }: Props) {
           <span className="info-title">{e.plain}</span>
           <span className="info-meaning">{e.meaning}</span>
           <span className="info-why">Why it matters: {e.why}</span>
-          <span className="info-tech">Technical name: {e.technical}</span>
+          {tech.industry && <span className="info-tech">Industry term: {tech.industry}</span>}
+          {tech.file && <span className="info-tech">In the files: {tech.file}</span>}
         </span>
       )}
     </span>

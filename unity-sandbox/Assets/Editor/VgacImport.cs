@@ -9,7 +9,7 @@
 //      [-vgacCategory <category>] [-vgacColliders <colliders.json>]
 //      [-vgacNormalMap on|off]
 //      [-vgacSockets <sockets.json>] [-vgacAttachments <attachments.json>] [-vgacHair on] [-vgacHairShader vgac|lit]
-//      [-vgacSprings <springs.json>] [-vgacHairCutout on] [-vgacHairTwoSided on]
+//      [-vgacSprings <springs.json>] [-vgacHairCutout on] [-vgacHairTwoSided on] [-vgacLodHeights 0.6,0.3,0.12,0.03]
 // Expects in <dir>: <name>.fbx (meshes named <name>_LOD0..n, optional collision meshes <name>_collider_00.._nn or
 // <name>_collider_mesh (older files: <name>_collider), optional armature), textures
 // base_color.png, normal.png, metallic.png, roughness.png, ao.png and T_<name>_MetallicSmoothness.png (any subset).
@@ -95,6 +95,16 @@
 // filtering 8, so a surface seen at a slant keeps its detail. Normal maps keep the normal-map type; data maps are
 // unchanged. The report's textureSettings lines for the base colour end with the new settings.
 //
+// Version 24 (WP-88): the URP path, rendered and checked in Unity 6000.4.3f1 with URP 17.4.0. The showcase ground took
+// Shader.Find("Standard") whatever the pipeline, and Standard draws magenta under URP, so every snapshot in a URP project had a
+// pink floor; it now takes the pipeline's own Lit shader (PickShader). A URP or HDRP hair fallback has no strand highlight, so
+// its smoothness is cut to HairLitSmoothness (0.35, the share of the map's smoothness VGAC/Hair keeps for its round highlight);
+// before, it sat at full smoothness and read as plastic. Built-in projects are unchanged.
+//
+// Version 25: LODGroup switch heights per platform. -vgacLodHeights carries the platform's list (platforms.yaml
+// lod_screen_heights, LOD0..LOD3). It is set on the LODGroup Unity builds from the _LODn names and on one the script builds.
+// Without a height for every level the group keeps Unity's own, and a warning says so; no LODGroup is built by script then.
+//
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
 using System;
@@ -110,7 +120,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "23";
+    public const string Version = "25";
     public const string HairShaderName = "VGAC/Hair";
     public const string HairCutoutShaderName = "VGAC/HairCutout";
 
@@ -165,6 +175,7 @@ public static class VgacImport
         public string showcase = "";          // the showcase scene the asset now stands in ("" when not updated)
         public int lodCount;
         public List<int> lodTriangles = new List<int>();
+        public List<float> lodSwitchHeights = new List<float>();  // Version 25: each level's screenRelativeTransitionHeight as set
         public int bones;
         public string avatar = "";
         public bool humanoidValid;
@@ -279,6 +290,7 @@ public static class VgacImport
     // G17: categories that get lightmap UVs (environment also gets static flags); G20: categories that cross-fade.
     static readonly string[] LightmapCategories = { "environment", "prop_rigid" };
     static readonly string[] CrossFadeCategories = { "foliage" };
+    const string LodHeightsMissingWarning = "LOD switch heights not set: -vgacLodHeights gives no height for every LOD level, so the LODGroup keeps Unity's own";
     const float CrossFadeWidth = 0.25f;
 
     static bool IsColliderName(string n) => n.Contains("_collider");
@@ -329,6 +341,7 @@ public static class VgacImport
         public bool hairCutout;                // -vgacHairCutout on: alpha cutout hair (Version 17)
         public bool hairTwoSided;              // -vgacHairTwoSided on: two-sided hair (Version 17)
         public float speedScale = 1f, scale = 1f;
+        public float[] lodHeights = new float[0];  // Version 25: switch heights for LOD0..n (-vgacLodHeights)
         public string requestId = "";
 
         // argv: "-vgacName", "X", "-vgacHumanoid", ... (the batch call's own arguments). baseDir, when given, is where
@@ -364,6 +377,7 @@ public static class VgacImport
                 springs = F("-vgacSprings"),
                 scale = ParseFloat(A("-vgacScale"), 1f),
                 speedScale = ParseFloat(A("-vgacSpeedScale"), 1f),
+                lodHeights = ParseFloats(A("-vgacLodHeights")),
                 normalMap = (A("-vgacNormalMap") ?? "on").ToLowerInvariant() != "off",
                 hair = (A("-vgacHair") ?? "off").ToLowerInvariant() == "on",
                 hairShader = (A("-vgacHairShader") ?? "vgac").ToLowerInvariant() == "lit" ? "lit" : "vgac",
@@ -550,19 +564,31 @@ public static class VgacImport
             }
             else if (!bodyShape) report.warnings.Add("no collider mesh");
 
-            // LODGroup: Unity creates it from _LODn names; verify, else build one.
+            // LODGroup: Unity creates it from _LODn names (its own switch heights); verify, else build one. Either way the
+            // platform's heights (-vgacLodHeights, platforms.yaml lod_screen_heights) go on its levels, before the movers and
+            // the cross-fade below read them. Without a height for every level the group keeps its own and the warning says so.
             var lodGroup = instance.GetComponentInChildren<LODGroup>();
             var lodRenderers = renderers.Where(r => r.name.Contains("_LOD") && !IsColliderName(r.name)).OrderBy(r => r.name).ToList();
-            if (lodGroup == null && lodRenderers.Count > 0)
+            int levelCount = lodGroup != null ? lodGroup.GetLODs().Length : lodRenderers.Count;
+            bool heightsOk = levelCount > 0 && a.lodHeights.Length >= levelCount;
+            if (levelCount > 0 && !heightsOk)
+                report.warnings.Add(LodHeightsMissingWarning);
+            if (lodGroup == null && lodRenderers.Count > 0 && heightsOk)
             {
                 lodGroup = instance.AddComponent<LODGroup>();
                 var lods = new LOD[lodRenderers.Count];
-                float[] heights = { 0.6f, 0.3f, 0.12f, 0.03f };
                 for (int i = 0; i < lodRenderers.Count; i++)
-                    lods[i] = new LOD(i < heights.Length ? heights[i] : 0.01f, new[] { lodRenderers[i] });
+                    lods[i] = new LOD(a.lodHeights[i], new[] { lodRenderers[i] });
                 lodGroup.SetLODs(lods);
                 lodGroup.RecalculateBounds();
                 report.warnings.Add("LODGroup built by script, not by importer naming");
+            }
+            else if (lodGroup != null && heightsOk)
+            {
+                var own = lodGroup.GetLODs();
+                for (int i = 0; i < own.Length; i++) own[i].screenRelativeTransitionHeight = a.lodHeights[i];
+                lodGroup.SetLODs(own);
+                lodGroup.RecalculateBounds();
             }
             if (lodGroup != null && movers.Count > 0)
             {
@@ -591,6 +617,7 @@ public static class VgacImport
                         if (mesh) tris += mesh.triangles.Length / 3;
                     }
                     report.lodTriangles.Add(tris);
+                    report.lodSwitchHeights.Add(lod.screenRelativeTransitionHeight);
                 }
             }
             else report.warnings.Add("no LODGroup");
@@ -1094,6 +1121,15 @@ public static class VgacImport
         return ctrl;
     }
 
+    static float[] ParseFloats(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return new float[0];
+        var parts = s.Split(',');
+        var outp = new float[parts.Length];
+        for (int i = 0; i < parts.Length; i++) outp[i] = ParseFloat(parts[i].Trim(), 0f);
+        return outp;
+    }
+
     static float ParseFloat(string s, float fallback) =>
         s != null && float.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : fallback;
 
@@ -1361,6 +1397,8 @@ public static class VgacImport
     // ---------------------------------------------------------------------------------------------------------------
     // Textures and material (G01, G02)
 
+    const float HairLitSmoothness = 0.35f;  // VgacHair.shader's _IsoKeep default
+
     static string[] HairTextures(string name) =>
         new[] { "hair_base_color.png", "hair_normal.png", "hair_ao.png", "hair_flow.png", "T_" + name + "_Hair_MetallicSmoothness.png" };
 
@@ -1404,6 +1442,8 @@ public static class VgacImport
             var tmp = new Report { normalMap = report.normalMap };
             mat = BuildMaterialFrom(assetDir, "hair_base_color.png", "hair_normal.png", "hair_ao.png", hs, tmp);
             report.hairTexturesAssigned.AddRange(tmp.texturesAssigned);
+            // Version 24: URP and HDRP Lit have no strand highlight; keep only the share of smoothness the hair shader keeps.
+            if (!builtin && mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", HairLitSmoothness);
             if (cutoutShader) SetLitCutout(mat, a);
         }
         report.hairCutout = a.hairCutout;
@@ -2753,7 +2793,7 @@ public static class VgacImport
                 ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
                 ground.name = "Ground";
             }
-            var gm = ShowcaseMaterial(ShowcaseDir + "/VGAC Ground.mat", Shader.Find("Standard") ?? Shader.Find("Universal Render Pipeline/Lit"));
+            var gm = ShowcaseMaterial(ShowcaseDir + "/VGAC Ground.mat", PickShader());
             gm.color = new Color(0.2f, 0.2f, 0.21f);
             if (gm.HasProperty("_Glossiness")) gm.SetFloat("_Glossiness", 0.15f);
             if (gm.HasProperty("_Smoothness")) gm.SetFloat("_Smoothness", 0.15f);

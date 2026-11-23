@@ -273,7 +273,7 @@ def test_manifest_block_and_metrics():
 
 def _sc(tmp_path, category, bones=40, rigid=False):
     rig = SimpleNamespace(metrics={"bones": bones, "rigid": rigid}, params={})
-    return SimpleNamespace(dir=tmp_path, asset=SimpleNamespace(category=category), category={"rig_engine": "skintoken"},
+    return SimpleNamespace(platform="pc_mid", dir=tmp_path, asset=SimpleNamespace(category=category), category={"rig_engine": "skintoken"},
                            stage_version=lambda s: rig, settings=SimpleNamespace(clips_libraries={}))
 
 

@@ -2,7 +2,7 @@
 // viewer tool. The session is made when painting starts (or the first undo), so opening step 4 costs nothing extra.
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { ViewerModel, ViewerTool } from '../viewerTool'
-import { checkPaint, DEFAULT_PAINT, PaintSession, paintableMaps, type PaintSettings, type PaintWarning, type SaveMaps } from './paintSession'
+import { checkPaint, DEFAULT_PAINT, modelSaveable, PaintSession, paintableMaps, type PaintSettings, type PaintWarning, type SaveMaps } from './paintSession'
 
 export type PaintState = {
   settings: PaintSettings
@@ -30,6 +30,8 @@ export type PaintState = {
   // The pictures a save sends (colour, and shine and metal when the model has them), or null when not saveable yet.
   saveMaps: () => SaveMaps | null
   saveable: boolean
+  // Whether a save can work for this model at all; known before painting starts.
+  modelSaveable: boolean
   // Which pictures this model has to paint: shine and metal need the model's metallic-roughness picture (WP-32).
   maps: { shine: boolean; metal: boolean }
 }
@@ -47,6 +49,7 @@ export function usePaint(model: ViewerModel | null, look: string | null): PaintS
   const [active, setActive] = useState<Active | null>(null)
   const warnings = useMemo(() => (model ? checkPaint(model, look) : []), [model, look])
   const blocked = warnings.some((w) => w.blocks)
+  const canSave = useMemo(() => (model ? modelSaveable(model) : true), [model])
   const maps = useMemo(() => (model ? paintableMaps(model) : { shine: false, metal: false }), [model])
 
   const start = () => {
@@ -96,6 +99,7 @@ export function usePaint(model: ViewerModel | null, look: string | null): PaintS
     notice,
     saveMaps: () => active?.session.saveableMaps() ?? null,
     saveable: !!active && active.session.saveableMaps() !== null,
+    modelSaveable: canSave,
     maps,
   }
 }

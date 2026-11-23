@@ -19,7 +19,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from . import pipeline
+from . import check_tiers, meshgeom, pipeline
 from .db import SET_ASIDE_ERROR, Asset, Version, _iso, is_stopped, job_to_dict, session_factory, utcnow, version_to_dict
 from .events import bus
 from .jobs import active_queue
@@ -95,10 +95,6 @@ def _facing_stop_reason(c: dict[str, Any]) -> str:
                                      limit=f"{limit:g}" if isinstance(limit, (int, float)) else limit)
 
 
-MODEL_DAMAGE_STOP_REASON = (
-    "The 3D model looks damaged, like torn paper: it has folded edges, open edges or loose pieces beyond what this kind of "
-    "asset normally has. Look at the grey views under the model in step 3 (the texture is off there, so it cannot hide "
-    "anything). If it is torn, build the 3D model again; or press Resume to carry on as it is.")
 FACE_HELD_STOP_REASON = (
     "The face was left as it was, not painted from the picture, because the picture could not be lined up with the "
     "model's face well enough (fit {value} of 1, needs {limit}). The character may be left with a blurry or less "
@@ -111,7 +107,7 @@ BODY_MARKS_STOP_REASON = (
 POSE_STOP_ASK_TAIL = (
     " Autopilot never redraws the pose on its own, because a redraw can change your character.")
 POSE_STOP_OFFER = (
-    " \"Pose it for 3D, then draw the sides\" has step 2 redraw the pose (it checks the redraw and keeps your own picture if "
+    " \"Open the pose, then redraw the side views (Pose for 3D first)\" has step 2 redraw the pose (it checks the redraw and keeps your own picture if "
     "the character changed), or \"Continue anyway\" builds from the picture as it is. Whichever you pick is remembered, so "
     "it is not asked again for this picture.")
 POSE_STOP_NO_OFFER = (
@@ -131,8 +127,6 @@ def _pose_stop_reason(c: dict[str, Any]) -> str:
 # Entry: stage, check name, a test of the failed check, and the sentence (a format string over value and limit, or a
 # function of the check). The step 1 pose check asks once per picture; see ASK_ON_EXISTING.
 STOP_AND_ASK: tuple[tuple[str, str, Any, Any], ...] = (
-    # step 3 geometry (vgac/meshgeom.py): off for every route until the limits are calibrated on bad examples (BLOCK_ROUTES empty)
-    ("mesh", "model_whole", lambda c: (c.get("vars") or {}).get("stop") is True, MODEL_DAMAGE_STOP_REASON),
     # only when both tests had an answer and they disagreed; "not measured" (the toes were not found) is a note on the card
     ("prep", "facing_tests", lambda c: (c.get("vars") or {}).get("measured") is not False, _facing_stop_reason),
     ("prep", "face_matches_picture", lambda c: (c.get("vars") or {}).get("reason") == "poor_fit", FACE_HELD_STOP_REASON),
@@ -152,6 +146,20 @@ def attention_reason(v: Version, stop_on: str) -> str | None:
     "warn" has stopped on any failed check already and "never" never stops."""
     if stop_on != "block":
         return None
+    # A failed check the app shows as "likely to show in the game" stops the autopilot after its step (honest Ready: the
+    # check's own sentence, first). A check that was not measured is a note, never a stop (check_tiers.is_problem), and the
+    # named STOP_AND_ASK checks keep their own wording and step.
+    named = {name for _, name, _, _ in STOP_AND_ASK}
+    likely: list[str] = []
+    for c in _failed_checks(v):
+        if c.get("name") in named or not check_tiers.is_problem(c) or check_tiers.tier_of(c) != "likely":
+            continue
+        # A torn model on a route that rebuilds (buildings, D23) was already built again; what is left only warns.
+        if c.get("name") == "model_whole" and (c.get("vars") or {}).get("route") in meshgeom.REBUILD_ROUTES:
+            continue
+        sentence = str(c.get("help") or c.get("message") or c.get("name") or "").strip()
+        if sentence and sentence not in likely:
+            likely.append(sentence)
     out: list[str] = []
     for stage, name, test, text in STOP_AND_ASK:
         if v.stage != stage:
@@ -165,7 +173,9 @@ def attention_reason(v: Version, stop_on: str) -> str | None:
                 out.append(text.format(value=f"{value:g}" if isinstance(value, (int, float)) else value,
                                        limit=f"{limit:g}" if isinstance(limit, (int, float)) else limit))
                 break
-    return " ".join(out) or None
+    if likely:
+        likely.append("Look at this step's checks; press Resume to carry on as it is.")
+    return " ".join([*likely, *out]) or None
 
 
 def _asked_with(state: dict[str, Any], vid: str) -> list[str]:
@@ -355,7 +365,7 @@ async def _run(aid: str) -> None:
                 fix = state.get("pending_fix")
                 if fix:
                     fstage = fix["stage"]
-                    # A fix at a later step ("Pose it for 3D, then draw the sides" from a paused step 1) builds on the
+                    # A fix at a later step ("Open the pose, then redraw the side views (Pose for 3D first)" from a paused step 1) builds on the
                     # version the autopilot paused on: choosing it is keeping that version.
                     pv = db.get(Version, state["version_id"]) if state.get("version_id") else None
                     if (pv is not None and pv.asset_id == aid and pv.status == "done" and pv.stage in STAGE_ORDER

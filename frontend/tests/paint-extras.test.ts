@@ -5,7 +5,7 @@ import * as THREE from 'three'
 import { MeshBVH } from 'three-mesh-bvh'
 import { fillRegion, paintDab, smudgeDab, type Brush, type Dab, type DabTarget } from '../src/paint/paintDab'
 import { PaintLayer, type StrokeRecord } from '../src/paint/paintLayer'
-import { DEFAULT_PAINT, PaintSession, paintableMaps, targetRgb } from '../src/paint/paintSession'
+import { DEFAULT_PAINT, modelSaveable, PaintSession, paintableMaps, targetRgb } from '../src/paint/paintSession'
 import { SurfacePicker, type ViewerModel } from '../src/viewerTool'
 
 const SIZE = 64
@@ -265,3 +265,23 @@ function findFaceAt(m: THREE.Mesh, x: number, y: number): number {
   if (!hit || hit.faceIndex == null) throw new Error('no face under the point')
   return hit.faceIndex
 }
+
+test('modelSaveable says before painting whether a save can work, and matches what the session finds', () => {
+  const one = square()
+  const two = square()
+  const pic = () => {
+    const t = new THREE.DataTexture(new Uint8Array(SIZE * SIZE * 4).fill(255), SIZE, SIZE)
+    t.needsUpdate = true
+    return t
+  }
+  ;(one.material as THREE.MeshStandardMaterial).map = pic()
+  ;(two.material as THREE.MeshStandardMaterial).map = pic()
+  const modelOf = (meshes: THREE.Mesh[]) => ({ meshes, renderer: {} as THREE.WebGLRenderer, picker: new SurfacePicker(meshes), texturedMaterial: (mesh: THREE.Mesh) => mesh.material }) as unknown as ViewerModel
+  const single = modelOf([one])
+  assert.equal(modelSaveable(single), true)
+  assert.equal(new PaintSession(single).saveableMaps() !== null, true)
+  // Two parts with a colour picture each: no save yet.
+  const split = modelOf([square(), two].map((m, i) => (i === 0 ? ((m.material as THREE.MeshStandardMaterial).map = pic(), m) : m)))
+  assert.equal(modelSaveable(split), false)
+  assert.equal(new PaintSession(split).saveableMaps() === null, true)
+})

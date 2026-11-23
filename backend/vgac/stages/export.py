@@ -44,7 +44,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import colliders, guidance, hairmat, items, library, quality, reference, sockets
+from .. import colliders, guidance, hairmat, items, library, quality, reference, sockets, steptime
 from .. import springs as springs_mod
 from ..beauty import render_beauty, showcase_sky
 from ..db import _iso, utcnow
@@ -65,8 +65,6 @@ PACK_LAYOUTS = {
 # Defaults for a missing input map, as 8-bit values: no metal, middling roughness, no extra shadowing.
 _PACK_DEFAULTS = {"metallic": 0, "roughness": 128, "ao": 255}
 
-
-LOD_SCREEN_HEIGHTS = [0.6, 0.3, 0.12, 0.03]
 
 # G17 (plan 3.8 A5): the Unity importer generates lightmap UVs (UV1) for these categories; environment pieces also get
 # the static flags Contribute GI and Batching Static. The settings are the ones VgacImport.cs uses (the plan gives
@@ -102,45 +100,51 @@ def parse_lods(value: Any) -> list[float] | None:
     return out
 
 
-def lod_list(lods: dict[str, int]) -> list[dict[str, Any]]:
+def lod_list(lods: dict[str, int], platform_id: str) -> list[dict[str, Any]]:
+    """The manifest's LOD levels with the platform's switch height for each (platforms.yaml lod_screen_heights)."""
+    heights = reference.lod_screen_heights(platform_id)
     out = []
     for i in range(len(lods)):
         key = f"LOD{i}"
         if key not in lods:
             continue
-        out.append({"level": i, "triangles": lods[key], "screen_height": LOD_SCREEN_HEIGHTS[i] if i < len(LOD_SCREEN_HEIGHTS) else 0.01})
+        if i >= len(heights):
+            raise ValueError(f"{platform_id} has switch heights for {len(heights)} levels; this asset has LOD{i}")
+        out.append({"level": i, "triangles": lods[key], "screen_height": heights[i]})
     return out
 
 
-# Export folder and file names carry the asset name. A name is cut to this many characters (the full name stays in the
-# manifest's "name" field), so a long name cannot push the export files past Windows' 260-character limit. Two assets
-# never collide: the export name ends with the asset id's first 8 characters, and a cut folder name does too.
-EXPORT_NAME_MAX = 16
+# Export folder and file names carry the asset name. The name is cut to the longest length the library folder leaves room
+# for (library.cut_for_library: EXPORT_NAME_MAX characters at most, MIN_NAME_CUT at least), then "_" and the asset id's
+# first 8 characters, so two assets never collide. The full name stays in the manifest's "name" field. An export made
+# earlier keeps the name it was made with (its params carry export_name, and the item files are read by that name).
+EXPORT_NAME_MAX = library.EXPORT_NAME_MAX
 
 
-def _cut(text: str) -> str:
-    return slug(text)[:EXPORT_NAME_MAX].rstrip("_") or "asset"
+def _cut(text: str, cut: int) -> str:
+    return slug(text)[:cut].rstrip("_") or "asset"
 
 
-def asset_export_name(sc: StageContext) -> str:
-    return f"{_cut(sc.asset.name)}_{sc.asset.id[:8]}"
+def asset_export_name(sc: StageContext, folder_length: int | None = None) -> str:
+    """The export name for this asset under the library folder of folder_length characters (default: the current library).
+    Refuses in plain words when the folder is too deep even for the minimum cut (the setting refuses such a folder first)."""
+    if folder_length is None:
+        folder_length = len(os.path.abspath(str(library.library_root())))
+    cut = library.cut_for_library(folder_length)
+    if cut is None:
+        raise library.LibraryPathError(library.library_path_message())
+    return f"{_cut(sc.asset.name, cut)}_{sc.asset.id[:library.ID_CHARS]}"
 
 
 def check_export_room(version_dir: Path, export_name: str) -> None:
-    """Before an export writes: refuse, in plain words, when Blender could not open this asset's item file. Blender
-    (equip.py) opens items/<name>/<name>.glb under the version folder, and its Python cannot open a file of 260
-    characters or more (measured on this machine: 259 opens, 260 does not). The backend's own Python and ComfyUI's
-    Python open files of 271 characters, so only the files Blender reads are measured. Raises LibraryPathError."""
-    below = f"items/{export_name}/{export_name}.glb"
-    total = len(os.path.abspath(str(version_dir))) + 1 + len(below)
-    if total < library.LONG_PATH_LIMIT:
-        return
-    # library folder + separator + projects/<id>/assets/<id>/export/<id> + separator + below: 259 characters or fewer
-    rel = f"projects/{'x' * 36}/assets/{'x' * 36}/export/{'x' * 36}"
-    most = library.LONG_PATH_LIMIT - 3 - len(rel) - len(below)
-    raise library.LibraryPathError(
-        f"The library folder's path is too long for Blender, which cannot open the files of this asset's export: keep it under "
-        f"{most + 1} characters, for example F:\\Games\\VGAC library.")
+    """Before an export writes: refuse, in plain words, when any path the export writes under this version folder with this
+    name would be 260 characters or more. Blender cannot open a file that long (measured on this machine: 259 opens, 260
+    does not). The held item's files sit under items/<id8>/. Raises LibraryPathError."""
+    folder = len(os.path.abspath(str(version_dir)))
+    for template in library.NAMED_TEMPLATES:
+        tail = template.partition("/export/{v}/")[2]  # the part below the version folder
+        if folder + 1 + len(tail.format(i="x" * library.ID_CHARS, n=export_name)) >= library.LONG_PATH_LIMIT:
+            raise library.LibraryPathError(library.library_path_message())
 
 
 # --- Engine texture packs (G01, G02; docs/GREAT-ASSETS-PLAN.md 3.1) ---------------------------------------------------
@@ -799,7 +803,7 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
     _write_colliders(sc, col_plan, report)
     _write_sockets(sc, name, report)
     _write_take_frames(sc, report)
-    sc.set_metrics(lods=lod_list(report.get("lods") or {}), collider_verts=report.get("collider_verts"), bones=report.get("bones"), clips=report.get("clips") or [],
+    sc.set_metrics(lods=lod_list(report.get("lods") or {}, sc.platform), collider_verts=report.get("collider_verts"), bones=report.get("bones"), clips=report.get("clips") or [],
                    non_manifold_edges=report.get("non_manifold_edges"), boundary_edges=report.get("boundary_edges"), dims=report.get("dims_m"),
                    collider_count=report.get("collider_count", 0), collider_shape=col_plan.get("chosen"),
                    collider_kinds=sorted({p.get("kind") for p in report.get("collider_parts") or []}),
@@ -862,6 +866,8 @@ def _unity_args(sc: StageContext, params: dict[str, Any], name: str) -> tuple[di
     if scale is not None:
         args["-vgacSpeedScale"] = f"{scale:.3f}"
     args.update(engine_args(sc))
+    # Switch heights for the LODGroup the importer builds when the names do not make one (Version 25): this platform's.
+    args["-vgacLodHeights"] = ",".join(f"{h:g}" for h in reference.lod_screen_heights(sc.platform))
     warnings: list[str] = []
     # Hit boxes (G34): the rig stage's hitboxes.json, copied next to the FBX by _pack; the body shape for moving is
     # the export knob movement_shape (auto takes the file's movement.default).
@@ -1187,7 +1193,7 @@ def build_manifest(sc: StageContext, name: str, pack_report: dict[str, Any] | No
         "collider_vertices": (pack_report or {}).get("collider_verts"),
         "collision": _collision_manifest(sc, pack_report, unity_report),
         "lighting": _lighting_manifest(sc, unity_report),
-        "lods": lod_list((pack_report or {}).get("lods") or {}),
+        "lods": lod_list((pack_report or {}).get("lods") or {}, sc.platform),
         "textures": textures,
         "hair_material": _hair_manifest(sc, unity_report),
         "springs": springs_mod.manifest_block(springs_mod.read_doc(sc.file("springs")), unity_report),
@@ -1590,18 +1596,18 @@ async def _export(sc: StageContext, params: dict[str, Any]) -> None:
                   sprite_size=int(params.get("sprite_size") or 128))
     if items.is_held_item(sc):
         await items.pivot_item(sc)  # the item's own files get their pivot at the grip
-    pack_report = await _pack(sc, params, name)
+    pack_report = await steptime.run(sc, "pack", _pack(sc, params, name))
     if not items.is_held_item(sc):
-        await items.equip(sc, name)  # attachments.json, the item files and <name>_equipped.glb
-    unity_report = await _unity(sc, params, name)
+        await steptime.run(sc, "equip", items.equip(sc, name))  # attachments.json, the item files and <name>_equipped.glb
+    unity_report = await steptime.run(sc, "unity", _unity(sc, params, name))
     if unity_report and unity_report.get("ok"):
         howto = unity_howto(unity_report.get("prefab", ""), unity_report.get("controller"))
         line = socket_howto(unity_report.get("sockets") or [], unity_report.get("humanoidValid") is True)
         equipped = items.unity_line(unity_report, name)
         sc.set_metrics(unity_howto=howto + ([line] if line else []) + ([equipped] if equipped else []))
-    await _sprites(sc, params)
-    await render_beauty(sc)  # the finish card's picture in realistic light (beauty.py)
-    await judge(sc)
+    await steptime.run(sc, "sprites", _sprites(sc, params))
+    await steptime.run(sc, "beauty", render_beauty(sc))  # the finish card's picture in realistic light (beauty.py)
+    await steptime.run(sc, "judge", judge(sc))
     finish = getattr(guidance, "finish_lines", None)  # plan 2.4, guidance lane
     if callable(finish):
         sc.set_metrics(finish_lines=finish(sc.asset.category, sc.version.metrics))
@@ -1626,7 +1632,7 @@ async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     mp = sc.dir / "manifest.json"
     mp.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     sc.register("manifest", mp)
-    await _deliver(sc, name, params)
+    await steptime.run(sc, "deliver", _deliver(sc, name, params))
     items.keep_if_equipping(sc)  # a rebuild with the items on is kept
     sc.progress(1.0, "export done")
 

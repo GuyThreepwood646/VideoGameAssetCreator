@@ -12,6 +12,16 @@ export type HelpEntry = {
   technical: string // the technical name, for people who want to search for it
 }
 
+// A help entry's technical line split into the industry term and the name in the files (UX-24). "variant
+// (base_asset_id)" is the term "variant" and the field base_asset_id; a bare snake_case name is a field only.
+export function splitTechnical(technical: string): { industry: string | null; file: string | null } {
+  const t = technical.replace(/\s*\((?:GET|POST|PUT|DELETE|PATCH) [^)]*\)/g, '').trim()
+  if (/^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/.test(t) || /^[a-z]+\.[a-z_.]+$/.test(t)) return { industry: null, file: t }
+  const m = /^([^()]+?) \(([^()]*)\)$/.exec(t)
+  if (m && /(_|\.yaml|\.json|metrics\.|data\/)/.test(m[2])) return { industry: m[1], file: m[2] }
+  return { industry: t, file: null }
+}
+
 const H = (plain: string, meaning: string, why: string, technical: string): HelpEntry => ({ plain, meaning, why, technical })
 
 // ---------------------------------------------------------------------------
@@ -20,7 +30,7 @@ const H = (plain: string, meaning: string, why: string, technical: string): Help
 
 // placeholder: the example shown in the empty "Describe the change" box of this step.
 // Time estimates are not kept here: they come from GET /api/stages (see stageEstimate).
-export type StageText = { plain: string; verb: string; gerund: string; help: HelpEntry; placeholder: string }
+export type StageText = { plain: string; tech: string; verb: string; gerund: string; help: HelpEntry; placeholder: string }
 
 export const STAGE_TEXT: Record<StageId, StageText> = {
   concept: {
@@ -28,55 +38,64 @@ export const STAGE_TEXT: Record<StageId, StageText> = {
     verb: 'Make concept art',
     gerund: 'Painting the concept art',
     placeholder: 'e.g. make the helmet open-faced and the shield round',
-    help: H('Describe', 'Concept art: the first picture of your asset, painted from your description.', 'Everything that follows is built from this picture, so get the look right here.', 'concept'),
+    tech: 'Concept art (text-to-image)',
+    help: H('Describe', 'The first picture of your asset, drawn from your description.', 'Everything later is built from this picture, so get the look right here.', 'Concept art (text-to-image)'),
   },
   turnaround: {
     plain: 'Check all sides',
     verb: 'Check all sides',
     gerund: 'Drawing the other sides',
     placeholder: 'e.g. the back view should show the cloak',
-    help: H('Check all sides', 'We look at your character from the front, sides and back so the 3D model gets the back right.', 'If a view looks wrong, regenerate just that view before building the model.', 'turnaround'),
+    tech: 'Multi-view turnaround',
+    help: H('Check all sides', 'Views of your asset from the front, sides and back.', 'The 3D builder guesses the sides it cannot see; checking them now avoids surprises later.', 'Multi-view turnaround'),
   },
   mesh: {
     plain: 'Build the 3D model',
     verb: 'Build the 3D model',
     gerund: 'Building the 3D model',
     placeholder: 'e.g. hands apart from the backpack arms, thicker sword',
-    help: H('Build the 3D model', 'Turns the pictures into a 3D shape with painted surfaces.', 'This is the raw model; the next step tidies it for the game.', 'mesh'),
+    tech: 'Image-to-3D mesh generation',
+    help: H('Build the 3D model', 'Turns the picture into a textured 3D model sized for your platform.', 'This is the model your game will use.', 'Image-to-3D mesh generation'),
   },
   prep: {
     plain: 'Clean up for the game',
     verb: 'Clean up for the game',
     gerund: 'Cleaning up for the game',
     placeholder: 'e.g. more wear on the armour',
-    help: H('Clean up for the game', 'Shrinks the model to the platform budget, fixes holes, sets its size and makes a tidy texture.', 'Game engines need a clean, light model; this step makes it one.', 'prep'),
+    tech: 'Retopology, UV unwrap, texture bake',
+    help: H('Clean up for the game', 'Turns the model to face forward, sets its real size, puts its anchor point at the base, removes stray bits and checks the textures.', 'Game engines expect models at the right scale, facing the right way, with a clean surface and textures painted for that surface.', 'Retopology, UV unwrap, texture bake'),
   },
   rig: {
     plain: 'Make it move',
     verb: 'Make it move',
     gerund: 'Adding a skeleton',
     placeholder: 'e.g. smoother bending at the left elbow',
-    help: H('Make it move', 'Adds a skeleton and attaches the surface to it so the model can be animated.', 'Without this the model is a statue; with it, walk and idle animations work.', 'rig'),
+    tech: 'Rigging, skin weights, animation',
+    help: H('Make it move', 'Puts a skeleton inside the model, joins the surface to it, and makes the full set of moves for it.', 'Without a skeleton the model cannot animate.', 'Rigging, skin weights, animation'),
   },
   export: {
     plain: 'Hand off to the game',
     verb: 'Hand off to the game',
     gerund: 'Packing the files for the game',
     placeholder: 'e.g. drop the sprite sheet, add another detail level',
-    help: H('Hand off to the game', 'Packs the model, textures, skeleton and animations into files a game engine can load.', 'This is the finished asset you drop into your game.', 'export'),
+    tech: 'Export: FBX / GLB, LODs, colliders, Unity prefab',
+    help: H('Hand off to the game', 'Packages the model with detail levels, a collider, textures and animations, and checks it in Unity.', 'This is what you drop into your game project.', 'Export: FBX / GLB, LODs, colliders, Unity prefab'),
   },
 }
 
 // Internal words that leak into running text (job messages, reasons from the backend) swapped for plain ones (UI-08).
 // Technical names stay in Details and help; this only touches sentences a person reads.
 const JARGON: Array<[RegExp, string]> = [
-  [/pc[ _]mid/gi, 'PC and console'],
-  [/mobile[ _]low/gi, 'phones'],
+  [/pc[ _]mid/gi, 'PC and console'],
+  [/mobile[ _]low/gi, 'phones'],
   [/waiting for a free machine/gi, 'waiting for the graphics card'],
-  [/texture voxel/gi, 'painting the textures'],
-  [/sparse structure/gi, 'shaping the model'],
-  [/uv unwrap(ping)?/gi, 'laying out the textures'],
-  [/consistency checks?/gi, 'comparing the views'],
+]
+// Industry terms are kept, in brackets after the plain words, so the job log teaches the word (UX-25).
+const TERMS: Array<[RegExp, string]> = [
+  [/texture voxel/gi, 'painting the textures'],
+  [/sparse structure/gi, 'shaping the model'],
+  [/uv unwrap(ping)?/gi, 'laying out the textures'],
+  [/consistency checks?/gi, 'comparing the views'],
 ]
 const STEP_QUOTED: Record<string, string> = {
   concept: 'step 1, Describe',
@@ -90,11 +109,28 @@ export function plainJargon(text: string | null | undefined): string {
   if (!text) return ''
   let out = text.replace(/"(concept|turnaround|mesh|prep|rig|export)"/g, (_m, k: string) => STEP_QUOTED[k])
   for (const [re, to] of JARGON) out = out.replace(re, to)
+  for (const [re, to] of TERMS) out = out.replace(re, (m) => `${to} (${m.toLowerCase().replace('uv ', 'UV ')})`)
   return out
 }
 
 export function stagePlain(stage: StageId, info?: StageInfo | null): string {
   return info?.plain_name || STAGE_TEXT[stage].plain
+}
+
+// The industry term shown muted under the step name (UX-03). The backend's technical_short is the one source.
+export function stageTech(stage: StageId, info?: StageInfo | null): string {
+  return info?.technical_short || STAGE_TEXT[stage].tech
+}
+
+// What the Try again button will do, said on the button (UX-11). Null where it could do nothing useful: a step 1 made
+// from a picture the person brought has no description to paint new pictures from.
+export function tryAgainLabel(stage: StageId, opts: { count?: number; fromPicture?: boolean; hasDescription?: boolean } = {}): string | null {
+  if (stage === 'concept') {
+    if (opts.fromPicture && !opts.hasDescription) return null
+    const n = opts.count ?? 1
+    return `Draw ${n} new picture${n > 1 ? 's' : ''} from the description`
+  }
+  return { turnaround: 'Draw all sides again', mesh: 'Build the 3D model again', prep: 'Clean up for the game again', rig: 'Make it move again', export: 'Make the files again' }[stage]
 }
 
 export function stageVerb(stage: StageId, info?: StageInfo | null): string {
@@ -237,17 +273,17 @@ export function platformConsequence(id: string): string {
 }
 
 export const CATEGORY_HELP: Record<string, HelpEntry> = {
-  humanoid: H('Humanoid', 'A person-shaped character: two arms, two legs, standing.', 'Gets a human skeleton with walk, idle and other shared clips.', 'humanoid'),
-  quadruped: H('Quadruped', 'A four-legged animal or creature.', 'Gets a four-legged skeleton; animations are predicted from the shape.', 'quadruped'),
-  winged: H('Winged creature', 'A creature with wings, such as a bird or dragon.', 'Gets a skeleton fitted to its shape; for now it walks and idles but does not flap.', 'winged'),
-  multileg: H('Multi-leg creature', 'A creature with more than four legs, such as a spider.', 'Gets a skeleton fitted to its shape; for now the walk moves up to four legs.', 'multileg'),
-  serpent: H('Serpent or fish', 'A long creature without legs.', 'Gets a spine-chain skeleton; for now it sways rather than slithers.', 'serpent'),
+  humanoid: H('Person or humanoid', 'A person-shaped character: two arms, two legs, standing.', 'Gets a human skeleton with walk, idle and other shared clips.', 'humanoid'),
+  quadruped: H('Four-legged animal', 'A four-legged animal or creature.', 'Gets a four-legged skeleton; animations are predicted from the shape.', 'quadruped'),
+  winged: H('Flying creature', 'A creature with wings, such as a bird or dragon.', 'Gets a skeleton fitted to its shape; for now it walks and idles but does not flap.', 'winged'),
+  multileg: H('Many-legged creature', 'A creature with more than four legs, such as a spider.', 'Gets a skeleton fitted to its shape; for now the walk moves up to four legs.', 'multileg'),
+  serpent: H('Snake or fish', 'A long creature without legs.', 'Gets a spine-chain skeleton; for now it sways rather than slithers.', 'serpent'),
   vehicle: H('Vehicle or mech', 'A car, tank, ship or walking machine.', 'No skeleton; for now it comes out as one solid piece with a collision shape.', 'vehicle'),
-  prop_rigid: H('Rigid prop', 'A solid object that does not bend or open, such as a barrel.', 'No skeleton; just a model with a collision shape.', 'prop_rigid'),
-  prop_articulated: H('Articulated prop', 'An object with a moving part, such as a chest with a lid.', 'For now it comes out as one solid piece; the lid or door does not open yet.', 'prop_articulated'),
-  environment: H('Environment piece', 'A piece of scenery that snaps to a grid, such as a wall or floor tile.', 'No skeleton; sized to the grid with its anchor on a corner, so pieces line up.', 'environment'),
-  foliage: H('Foliage', 'A plant, tree or bush.', 'No skeleton; made to be scattered around a scene.', 'foliage'),
-  material: H('Tileable material', 'A flat, repeating surface such as grass, stone or brick, for floors, walls and ground.', 'Produces a texture only, no 3D model. For a rock, a bush or another object, choose Rigid prop or Foliage.', 'material'),
+  prop_rigid: H('Solid object', 'A solid object that does not bend or open, such as a barrel.', 'No skeleton; just a model with a collision shape.', 'prop_rigid'),
+  prop_articulated: H('Object with moving parts', 'An object with a moving part, such as a chest with a lid.', 'For now it comes out as one solid piece; the lid or door does not open yet.', 'prop_articulated'),
+  environment: H('Building or scenery piece', 'A piece of scenery that snaps to a grid, such as a wall or floor tile.', 'No skeleton; sized to the grid with its anchor on a corner, so pieces line up.', 'environment'),
+  foliage: H('Plant or tree', 'A plant, tree or bush.', 'No skeleton; made to be scattered around a scene.', 'foliage'),
+  material: H('Repeating surface', 'A flat, repeating surface such as grass, stone or brick, for floors, walls and ground.', 'Produces a texture only, no 3D model. For a rock, a bush or another object, choose Rigid prop or Foliage.', 'material'),
 }
 
 export const STYLE_HELP: Record<string, HelpEntry> = {
@@ -271,38 +307,38 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   project: H('Project', 'One game, or one set of assets that share a look.', 'Everything made inside a project matches in style and platform.', 'project'),
   asset: H('Asset', 'One distinct thing: a character, creature, prop or material.', 'Each asset carries its own description, category and platform.', 'asset'),
   version: H('Version', 'One attempt at one step of one asset.', 'Nothing is lost by trying again; every attempt is kept and you choose which one to continue from.', 'version'),
-  prompt: H('Prompt (description)', 'What you want, written in plain words.', 'The better the description, the closer the first picture.', 'prompt'),
+  prompt: H('Description (prompt)', 'What you want, written in plain words.', 'The better the description, the closer the first picture.', 'prompt'),
   category: H('Category', 'What kind of thing this is: a person, an animal, a prop.', 'It decides the pose, the skeleton and the size budget.', 'category'),
   style_preset: H('Style', 'The look: painted, cel shaded, low-poly and so on.', 'Picks the model and the wording added to every description.', 'style_preset'),
-  platform: H('Platform', 'Where the game will run: phone, PC or showcase.', 'Sets how many triangles and how big a texture the model may have.', 'platform_target'),
+  platform: H('Platform', 'Where the game will run: phone, PC or showcase.', 'Sets how many triangles and how big a texture the model may have.', 'Target platform (platform_target)'),
   parts: H('Parts', 'Named pieces of the character that the app should know about, such as a weapon, a lid or a cape.', 'Step 1 adds one sentence to the drawing prompt asking for these as clearly separate pieces. Nothing checks that the picture shows them apart, and the 3D build still joins parts that touch in the picture. The Make it move step finds hanging parts by itself; a part declared as sway, with its point set on the rig, also gets spring bones where that search found nothing. Other parts are not moved.', 'Prompt sentence in stages/concept.py build_prompt; asset parts [{name, kind}]; per rig version parts.json, GET/PUT /api/versions/{id}/parts'),
-  style_lock: H('Look and settings', 'The look every asset in this project shares (technical name: style lock).', 'Keeps a whole game looking like one game.', 'style_lock'),
-  prompt_block: H('Style prompt (style words)', 'Words added in front of every description in this project.', 'This is how the style stays the same from asset to asset.', 'prompt_block'),
+  style_lock: H('Look and settings', 'The look every asset in this project shares (technical name: style lock).', 'Keeps a whole game looking like one game.', 'Style preset (style_lock)'),
+  prompt_block: H('Style words (style prompt)', 'Words added in front of every description in this project.', 'This is how the style stays the same from asset to asset.', 'prompt_block'),
   palette: H('Palette', 'The handful of colours the project uses.', 'Shared colours make assets look like they belong together.', 'palette'),
-  negative: H('Negative prompt (things to avoid)', 'Things the model should leave out, such as text or blur.', 'Removes common mistakes before they happen.', 'negative (style_lock.negative)'),
-  loras: H('LoRAs (style add-ons)', 'Small trained files that push the model toward a particular look.', 'Optional; most projects need none.', 'LoRA (low-rank adaptation), style_lock.loras'),
-  lora: H('LoRA (style add-on)', 'A small trained file that pushes the model toward a particular look.', 'Optional; most projects need none.', 'LoRA (low-rank adaptation)'),
-  model: H('Model (the painter)', 'The AI image model that paints the picture.', 'Different models are faster, slower or suit different styles.', 'checkpoint (data/models.yaml)'),
-  concept_model: H('Model (the painter)', 'The AI image model that paints the first picture of this asset.', 'We suggest one that suits the look and platform; pick another if you prefer its style. You can change it later under Fine-tune.', 'concept_model'),
+  negative: H('Things to avoid (negative prompt)', 'Things the model should leave out, such as text or blur.', 'Removes common mistakes before they happen.', 'negative (style_lock.negative)'),
+  loras: H('Style add-ons (LoRAs)', 'Small trained files that push the model toward a particular look.', 'Optional; most projects need none.', 'LoRA (low-rank adaptation), style_lock.loras'),
+  lora: H('Style add-on (LoRA)', 'A small trained file that pushes the model toward a particular look.', 'Optional; most projects need none.', 'LoRA (low-rank adaptation)'),
+  model: H('Picture model (checkpoint)', 'The AI image model that draws the picture.', 'Different models are faster, slower or suit different styles.', 'Checkpoint (data/models.yaml)'),
+  concept_model: H('Picture model (checkpoint)', 'The AI image model that draws the first picture of this asset.', 'We suggest one that suits the look and platform; pick another if you prefer its style. You can change it later under Fine-tune.', 'concept_model'),
   stage: H('Step', 'One of the six steps every asset goes through: describe, check all sides, build the 3D model, clean up, make it move, hand off.', 'Each step builds on the version you kept in the step before it.', 'stage'),
   // Image generation
   seed: H('Seed', 'A number that picks which of many possible pictures you get.', 'Same seed, same picture; change it to get a different one.', 'seed'),
   steps: H('Steps', 'How many passes the model takes.', 'More passes can add detail but take longer; the default is usually right.', 'steps'),
-  cfg: H('CFG (how strictly the model follows the description)', 'A number for how closely the model sticks to your description.', 'Too high looks forced, too low wanders off.', 'classifier-free guidance scale'),
+  cfg: H('How closely it follows the words (CFG)', 'A number for how closely the model sticks to your description.', 'Too high looks forced, too low wanders off.', 'classifier-free guidance scale'),
   width: H('Width', 'Picture width in pixels.', 'Bigger pictures hold more detail and take longer.', 'width'),
   height: H('Height', 'Picture height in pixels.', 'Bigger pictures hold more detail and take longer.', 'height'),
   size: H('Size', 'Picture size in pixels.', '1024 is the sweet spot; bigger takes longer.', 'width and height'),
-  readiness_block: H('Pose prompt (pose for 3D)', 'Adds the standard pose and plain background to the description.', 'Keep this on: the 3D step needs a clear, whole figure on a plain background.', 'readiness_block'),
-  prompt_override: H('Prompt override (replace description)', 'Use this text instead of the asset description for one attempt.', 'Handy for a one-off experiment without changing the asset.', 'prompt_override'),
+  readiness_block: H('Pose for 3D (pose prompt)', 'Adds the standard pose and plain background to the description.', 'Keep this on: the 3D step needs a clear, whole figure on a plain background.', 'readiness_block'),
+  prompt_override: H('Replace the description (prompt override)', 'Use this text instead of the asset description for one attempt.', 'Handy for a one-off experiment without changing the asset.', 'prompt_override'),
   cutout: H('Cutout', 'The picture with the background removed.', 'The 3D step works from the cutout, so a clean edge matters.', 'cutout (alpha matte)'),
   finetune: H('Fine-tune', 'Re-run this step with different settings.', 'Use it when the result is close but a setting is off; the description stays the same.', 'adjust'),
   instruction: H('Change request', 'What you asked to change in this attempt.', 'Recorded so you can see how this version came about.', 'instruction'),
   // Turnaround
   views: H('Views', 'Which sides to draw: front, left, back, right, a three-quarter view and top.', 'The 3D step uses them to get the back and sides right, and the clean-up step paints the texture from them. For a character, Three-quarter (other side) is drawn too, so both cheeks and both flanks have a picture behind them; untick it to skip it.', 'views; quarter2 is added for humanoids whenever quarter is drawn, unless second_quarter is false'),
   view: H('View', 'One side of the character.', 'Regenerate a single view when only that one looks wrong.', 'view'),
-  turnaround: H('Turnaround (all sides)', 'The same character drawn from several sides.', 'Without it the 3D model has to guess what the back looks like.', 'turnaround'),
+  turnaround: H('All sides (turnaround)', 'The same character drawn from several sides.', 'Without it the 3D model has to guess what the back looks like.', 'turnaround'),
   turn_method: H('How to turn the views', 'How the side, back and three-quarter views are drawn from your picture.', 'Standard works for everything and keeps your look. For a character, all sides in one picture makes the clothes and details match best but looks more photographic. For a rigid prop, shadow-free gives clean white views for the 3D model, with colours a little further from the picture.', 'turn_method: standard (multiple-angles LoRA), sheet (turnaround sheet LoRA), shadow_free (camera-angle LoRA)'),
-  lora_strength: H('Multiple-angles LoRA strength (side-view strength)', 'How hard the multiple-angles LoRA pushes the side-view model (Qwen-Image-Edit) to keep the character consistent across views. Used by the standard way of turning the views only.', 'Raise it if the sides drift from the front; lower it if they look stiff.', 'lora_strength (multi-angle LoRA)'),
+  lora_strength: H('Side-view strength (multiple-angles LoRA)', 'How hard the multiple-angles LoRA pushes the side-view model (Qwen-Image-Edit) to keep the character consistent across views. Used by the standard way of turning the views only.', 'Raise it if the sides drift from the front; lower it if they look stiff.', 'lora_strength (multi-angle LoRA)'),
   pose_ready: H(
     'Pose for 3D first (wide A-pose, open empty hands)',
     'Before the sides are drawn, your picture is redrawn once in a wide A-pose: arms held out about 45 degrees from the body, feet apart, both hands open and empty. Every view and the 3D model start from that picture; your step 1 picture is not changed.',
@@ -315,7 +351,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
     'A grin or an open mouth is painted into the face and shows in every move; a closed mouth suits all of them. New and little tried, so compare the face in the redrawn picture with yours.',
     'neutral_mouth: one more sentence in the pose_ready edit prompt',
   ),
-  auto_reroll: H('Auto re-roll (retry bad views)', 'Automatically redraw a view that fails the consistency check.', 'Saves you a click on most assets.', 'auto_reroll'),
+  auto_reroll: H('Retry bad views (auto re-roll)', 'Automatically redraw a view that fails the consistency check.', 'Saves you a click on most assets.', 'auto_reroll'),
   consistency_ok: H('Sides match', 'Whether every view agrees with the front view in size and colour.', 'Mismatched views make a lopsided model.', 'consistency_ok'),
   views_passed: H('Views that match', 'How many views passed the consistency check.', 'All views should pass before building the model.', 'views_passed'),
   coverage: H('Coverage (fills the frame)', 'How much of the picture the character covers.', 'Too small and the model loses detail.', 'coverage'),
@@ -323,12 +359,12 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   hist_dist: H('Colour match', 'How different the colours are from the front view.', 'Colour drift between views causes patchy textures.', 'hist_dist (histogram distance)'),
   mirror_iou: H('Left-right match', 'How well the left and right views mirror each other.', 'Catches a side view that drew a different character.', 'mirror_iou'),
   // Mesh
-  engine: H('Image-to-3D model (builder)', 'The AI model that turns pictures into a 3D shape.', 'TRELLIS is the default; Hunyuan is the alternative when a shape comes out wrong.', 'engine (trellis | hy3d)'),
+  engine: H('3D builder (image-to-3D model)', 'The AI model that turns pictures into a 3D shape.', 'TRELLIS is the default; Hunyuan is the alternative when a shape comes out wrong.', 'engine (trellis | hy3d)'),
   input_view: H('Input view (build from)', 'Which picture the builder starts from.', 'The three-quarter view usually gives the best shape; the concept keeps the most detail.', 'input_view'),
-  target_faces: H('Triangle count (detail level)', 'How many triangles the model is allowed.', 'More triangles mean more detail and a heavier model.', 'target_faces'),
+  target_faces: H('Detail level (triangle count)', 'How many triangles the model is allowed.', 'More triangles mean more detail and a heavier model.', 'target_faces'),
   triangles: H('Triangles', 'The small flat pieces a 3D model is made of.', 'More triangles mean more detail but a slower game; each platform has a budget.', 'triangles (faces)'),
   budget: H('Budget', 'The most triangles or the biggest texture the platform allows.', 'Staying inside the budget keeps the game fast.', 'budget'),
-  vertices: H('Vertices (points)', 'The corner points of the triangles.', 'Roughly half the triangle count; another measure of weight.', 'vertices'),
+  vertices: H('Points (vertices)', 'The corner points of the triangles.', 'Roughly half the triangle count; another measure of weight.', 'vertices'),
   texture_size: H('Texture size', 'The size of the painted surface image in pixels.', 'Bigger textures look sharper up close and use more memory.', 'texture_size'),
   texture: H('Texture', 'The painted image wrapped around the model.', 'It is what gives the model its colours and surface detail.', 'texture'),
   normal_map: H('Normal map', 'A special texture that fakes small bumps and dents, such as rivets or wood grain, without adding triangles.', 'The model looks detailed up close while staying light enough for the game.', 'normal map'),
@@ -351,31 +387,31 @@ export const TERM_HELP: Record<string, HelpEntry> = {
     'Characters and creatures: keep it on, it removes double walls. Plants: untested so far; thin leaves may come out thicker. Hard objects (props, vehicles): it can round crisp edges and thicken or lose thin parts, so turn it off if the edges matter. Buildings and scenery: off by default so doorways and arches stay open, but a building built with it off at a low triangle count can come out torn; the same building came out whole with it on, as a softer shape. After a build, look at the grey views under the model.',
     'remesh (watertight)',
   ),
-  silhouette_iou: H('Silhouette IoU (outline match)', 'How closely the model outline matches the drawing from each side.', 'Low match means the model does not look like the picture.', 'silhouette IoU (intersection over union)'),
-  iou: H('IoU (outline match)', 'How closely two outlines overlap, from 0 to 1.', 'Low match means the shapes disagree.', 'IoU (intersection over union)'),
-  silhouette: H('Silhouette (outline)', 'The shape of the model seen as a flat shadow.', 'A good outline is what makes a character readable in a game.', 'silhouette'),
+  silhouette_iou: H('Outline match (silhouette IoU)', 'How closely the model outline matches the drawing from each side.', 'Low match means the model does not look like the picture.', 'silhouette IoU (intersection over union)'),
+  iou: H('Outline match (IoU)', 'How closely two outlines overlap, from 0 to 1.', 'Low match means the shapes disagree.', 'IoU (intersection over union)'),
+  silhouette: H('Outline (silhouette)', 'The shape of the model seen as a flat shadow.', 'A good outline is what makes a character readable in a game.', 'silhouette'),
   // Prep
   height_m: H('Size', 'How big the asset is in the game, in metres, measured the way that makes sense for it: height for people, length for cars and snakes.', 'Keeps everything in proportion, so a car is car-sized next to your character.', 'height_m (older name of size_m)'),
   size_m: H('Size', 'How big the asset is in the game, in metres, measured the way that makes sense for it: height for people, length for cars and snakes.', 'Keeps everything in proportion, so a car is car-sized next to your character.', 'Uniform scale so the extent on size_axis equals size_m'),
   face_yaw: H('Forward direction (front)', 'Which side of the model the game treats as its front.', 'Characters walk and cars drive toward their front; if it is wrong, they move sideways.', 'Yaw about Y so the concept front faces +Z'),
-  symmetric: H('Symmetrize (mirror the halves)', 'Mirror one half of the model onto the other.', 'Fixes mismatched arms or legs, but the two halves then share one painted side, so it is off unless you turn it on.', 'Symmetrize across X, then re-bake the maps onto the mirrored mesh'),
+  symmetric: H('Mirror the halves (symmetrize)', 'Mirror one half of the model onto the other.', 'Fixes mismatched arms or legs, but the two halves then share one painted side, so it is off unless you turn it on.', 'Symmetrize across X, then re-bake the maps onto the mirrored mesh'),
   // Textures and light (3.9)
-  padding: H('UV padding (seam space)', 'Extra painted space around each piece of the texture.', 'Stops thin dark lines appearing at seams when the model is far away.', 'UV island padding and edge dilation, in texels'),
-  bake: H('Texture bake (surface painting)', 'Copying the fine detail and colour from the raw model onto the clean game model.', 'If it is painted onto a different shape, the shading looks wavy or faceted.', 'Texture bake (normal, AO, colour) from source to target mesh'),
-  rebake: H('Rebake (paint the surface again)', 'Paint the colours and surface detail onto the cleaned-up model again, even when its shape did not change.', 'If it is painted onto a different shape, the shading looks wavy or faceted.', 'Cycles selected-to-active bake from the mesh stage model'),
-  delight: H('Delight (remove painted-on shadows)', "Shadows and highlights from the original picture that ended up in the model's colours.", "They stay put when your game's sun moves, and crevices look twice as dark. Stylised looks keep them on purpose.", 'Baked lighting in albedo; AO and up-normal guided delight pass'),
-  baked_light: H('Baked lighting (painted-on shadows)', "Shadows and highlights from the original picture that ended up in the model's colours.", "They stay put when your game's sun moves, and crevices look twice as dark. Stylised looks keep them on purpose.", 'Baked lighting in albedo; AO and up-normal guided delight pass'),
+  padding: H('Seam space (UV padding)', 'Extra painted space around each piece of the texture.', 'Stops thin dark lines appearing at seams when the model is far away.', 'UV island padding and edge dilation, in texels'),
+  bake: H('Surface painting (texture bake)', 'Copying the fine detail and colour from the raw model onto the clean game model.', 'If it is painted onto a different shape, the shading looks wavy or faceted.', 'Texture bake (normal, AO, colour) from source to target mesh'),
+  rebake: H('Paint the surface again (rebake)', 'Paint the colours and surface detail onto the cleaned-up model again, even when its shape did not change.', 'If it is painted onto a different shape, the shading looks wavy or faceted.', 'Cycles selected-to-active bake from the mesh stage model'),
+  delight: H('Remove painted-on shadows (delight)', "Takes out the shadows and highlights from the original picture that ended up painted into the model's colours. Games call this delight.", "They stay put when your game's sun moves, and crevices look twice as dark. Stylised looks keep them on purpose.", 'Baked lighting in albedo; AO and up-normal guided delight pass'),
+  baked_light: H('Painted-on shadows (baked lighting)', "Shadows and highlights from the original picture that ended up in the model's colours.", "They stay put when your game's sun moves, and crevices look twice as dark. Stylised looks keep them on purpose.", 'Baked lighting in albedo; AO and up-normal guided delight pass'),
   face_detail: H('Match the face to the picture', 'Paint the face from the picture onto the model, so the eyes, brows and mouth are sharp and look like the picture.', 'The 3D builder makes up the face from one picture and blurs it; this puts the painted face back.', 'Front render, painted head sharpened by Qwen-Image-Edit, fitted to the render, projected through the UVs'),
   source_project: H('Paint the picture onto the model', 'Puts the picture\'s own colours and detail onto the side of the model the picture shows, and the drawn views onto the other sides, so the model looks like the picture. Adds about 2 minutes.', 'The 3D builder makes up its colours and they come out soft. Automatic does this for characters on smooth looks (not Retro 64, Low-poly or a fixed palette); On tries it on any model; Off keeps the builder\'s own colours, for example if the drawn views leave patches.', 'Picture fitted to a render by outline and optical flow, projected through the UVs with depth, edge and stretch limits'),
   face_strength: H('Face strength', 'How much of the painted face goes onto the model.', 'Lower it if the painted face looks pasted on; 1 uses all of it.', 'Projection weight multiplier, 0 to 1'),
   face_closeup_guided: H('Guide the close-up by your face picture (optional)', 'With a picture of the real face (your own close-up in this step, or the face photo given with the new asset), the close-up is drawn with that face\'s features.', 'On by default. The close-up keeps the painting\'s pose, expression and light and takes the eyes, nose, mouth, skin and hair from your picture, so the model looks more like the person. Without a face picture this changes nothing.', 'Qwen-Image-Edit with the painted crop as Picture 1 and the face picture as Picture 2; two tries, each checked like any close-up'),
   quarter_pictures: H('Paint from the three-quarter pictures', 'Whether the two three-quarter pictures from step 2 are painted onto the model, the head included.', 'They fill in the cheeks and the sides of the head. If the head shows a second ear or a seam on the cheek, try it off: the front, side and back pictures still paint the model.', 'Leaves the quarter and quarter2 cut-outs out of the picture projection and the face pass\'s side views'),
   face_sides: H('Paint the cheeks from the side views (optional)', 'Paints the sides of the face from the side views of step 2, where the front picture cannot reach.', 'On by default: it hides the seam where the front painting ends on the cheek. Turn it off if it leaves smudges by the ears or the neck (it did on a bearded face whose side views placed the beard differently); the front of the face is unchanged either way.', 'Second projections from the quarter and side cut-outs, only where the front painted little'),
-  face_density: H('Face texel density (face sharpness)', 'How many texture pixels the face gets. Standard is an eighth of the texture\'s width; High is about 512 across the face, or as many as the picture has detail for.', 'More texels make the eyes and mouth crisp up close. Where the texture budget is 4096, High ships the colour texture at 4096; at 2048 and 1024 the face takes a larger share and the rest of the body gives up at most 12 percent of its sharpness.', 'Face UV island scale and repack (max loss 12 percent), base colour at 4096 on 4096 budgets'),
+  face_density: H('Face sharpness (texel density)', 'How many texture pixels the face gets. Standard is an eighth of the texture\'s width; High is about 512 across the face, or as many as the picture has detail for.', 'More texels make the eyes and mouth crisp up close. Where the texture budget is 4096, High ships the colour texture at 4096; at 2048 and 1024 the face takes a larger share and the rest of the body gives up at most 12 percent of its sharpness.', 'Face UV island scale and repack (max loss 12 percent), base colour at 4096 on 4096 budgets'),
   face_closeup: H('Close-up source (a larger picture of the face)', 'When the face in the picture is small, the image model draws a close-up of the same head and the face is painted from it.', 'A small painted face has too few pixels to fill the texture. The close-up is used only if it is still the same face; otherwise the painting is used.', 'Qwen-Image-Edit close-up at 1024 (drawn once more in the look\'s own words if the first drifts from the painting); each eye and the mouth found again by block matching at the painting\'s resolution and moved back if a little off; checked by likeness, eye, skin and hair colour, and skin texture (a photograph-like close-up is not used)'),
-  hair_detail: H('Hair detail (strands and shading painted on)', 'Strands and clumps along the way the hair falls, darker roots and under-layers, lighter tips and, for painted looks, a soft highlight band.', 'The 3D builder makes hair as one flat-coloured shape; this makes it read as hair without adding to the shape. It stands back when hair cannot be told from skin or clothes.', 'Colour vote over the model and turnaround pictures; flow from oriented line filters or down from the crown; line integral convolution in 3D; strand height in the normal map; more texels in the face relayout'),
-  head_triangles: H('Weighted decimation (more triangles on the head)', 'When the model is shrunk to your platform\'s triangle budget, the head keeps about twice the triangles an even shrink would leave it, and the body gives them up.', 'Players look at the head; with more triangles the outline of the hair and the face is rounder. The total stays inside the budget. Turning it off also turns off the hands\' share. Characters in the Low-poly and Retro 64 looks never get it.', 'The 3D step builds 2.5 times the target; Blender Decimate (collapse) with an inverted vertex group on the top 13 percent of the height, then one rebake'),
-  hand_triangles: H('Weighted decimation (more triangles on the hands)', 'The same for the hands: they keep about three times the triangles an even shrink would leave them, so separate fingers survive the shrink.', 'Fingers are thin, and an even shrink melts them back into mittens. Works only while the head\'s weighted decimation is on; the total stays inside the budget.', 'The hands join the head\'s vertex group (blender/headweight.py hand_zones), hand gain 3.0'),
+  hair_detail: H('Hair detail (strands and shading painted on)', 'Gives the hair strands and clumps along the way it falls, darker roots and under-layers, lighter tips and, for painted looks, a soft highlight band.', 'The 3D builder makes hair as one flat-coloured shape; this makes it read as hair without adding to the shape. It stands back when hair cannot be told from skin or clothes.', 'Colour vote over the model and turnaround pictures; flow from oriented line filters or down from the crown; line integral convolution in 3D; strand height in the normal map; more texels in the face relayout'),
+  head_triangles: H('More triangles on the head (weighted decimation)', 'When the model is shrunk to your platform\'s triangle budget, the head keeps about twice the triangles an even shrink would leave it, and the body gives them up.', 'Players look at the head; with more triangles the outline of the hair and the face is rounder. The total stays inside the budget. Turning it off also turns off the hands\' share. Characters in the Low-poly and Retro 64 looks never get it.', 'The 3D step builds 2.5 times the target; Blender Decimate (collapse) with an inverted vertex group on the top 13 percent of the height, then one rebake'),
+  hand_triangles: H('More triangles on the hands (weighted decimation)', 'The same for the hands: they keep about three times the triangles an even shrink would leave them, so separate fingers survive the shrink.', 'Fingers are thin, and an even shrink melts them back into mittens. Works only while the head\'s weighted decimation is on; the total stays inside the budget.', 'The hands join the head\'s vertex group (blender/headweight.py hand_zones), hand gain 3.0'),
   hair_strength: H('Hair strength', 'How strongly the hair detail is painted: 1 is full, 0 changes nothing.', 'Lower it if the strands look too busy for your look.', 'Blend weight of the colour, normal, roughness and metallic changes on the hair, 0 to 1'),
   hair_material: H('Hair material (its own texture and shader)', 'The hair gets a second material with its own texture, so it holds about three times the texels and, in Unity, a highlight that stretches across the strands.', 'Hair is what people look at up close. It costs one more draw call per character, so Automatic turns it on for PC and Showcase and leaves Phone with one material.', 'Second material slot on the hair triangles (straddling triangles stay with the body), own UV layout and 1024 px maps (2048 on Showcase), flow map, KHR_materials_anisotropy in the GLB, VGAC/Hair Kajiya-Kay shader on the Unity built-in pipeline'),
   textures_full_size: H('Textures at full size', 'Whether Unity imports each texture at the size of its file.', 'Unity shrinks textures over 2048 px unless told otherwise, which softens a 4096 texture.', 'TextureImporter.maxTextureSize against the source size'),
@@ -383,39 +419,39 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   hair_matches_picture: H('Hair detail (strands and shading painted on)', 'Whether the hair got strands and shading, or why the pass stood back.', 'Flat-coloured hair reads as a helmet; painted strands read as hair.', 'Hair mask, flow, texels per cm before and after, the face measures before and after'),
   hair_material_check: H('Hair material (its own texture and shader)', 'Whether the hair got its own material and texture, its texels per cm, or why it stayed in the body material.', 'A second material makes the hair sharper and lets Unity give it a hair highlight, at one more draw call.', 'Triangle split confidence, hair texture texels per cm, body texture texels per cm'),
   hair_material_shipped: H('Hair material in the files', 'Whether the files that ship carry the hair as its own material.', 'Without it the game would show the hair with the body texture only.', 'GLB material count, FBX material slot names, Unity hair material and shader'),
-  pbr_fix: H('PBR range check (realistic colour range)', 'Keep colours, metal and shine inside the range real materials have.', 'Colours outside it look flat, chalky or glowing under modern game lighting.', 'PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0'),
-  pbr_range: H('PBR range check (realistic colour range)', 'Keep colours, metal and shine inside the range real materials have.', 'Colours outside it look flat, chalky or glowing under modern game lighting.', 'PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0'),
-  pivot: H('Pivot (anchor point)', 'Where the model sits when placed: at its feet or its centre.', 'Characters stand on their feet; floating things use the centre.', 'pivot (base | center)'),
+  pbr_fix: H('Realistic colour range (PBR range check)', 'Keep colours, metal and shine inside the range real materials have.', 'Colours outside it look flat, chalky or glowing under modern game lighting.', 'PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0'),
+  pbr_range: H('Realistic colour range (PBR range check)', 'Keep colours, metal and shine inside the range real materials have.', 'Colours outside it look flat, chalky or glowing under modern game lighting.', 'PBR validation: albedo 30 to 240 sRGB, metallic near 0 or 1, roughness above 0'),
+  pivot: H('Anchor point (pivot)', 'Where the model sits when placed: at its feet or its centre.', 'Characters stand on their feet; floating things use the centre.', 'pivot (base | center)'),
   // Scenery on a grid
   grid: H('Grid', 'An invisible floor of squares that scenery pieces line up on.', 'Pieces made to the grid fit together with no gaps or overlaps.', 'Modular grid, grid_m; dimensions rounded to grid steps'),
   grid_m: H('Grid size', 'An invisible floor of squares that scenery pieces line up on.', 'Pieces made to the grid fit together with no gaps or overlaps.', 'Modular grid, grid_m; dimensions rounded to grid steps'),
-  corner_pivot: H('Corner pivot (corner anchor)', 'The point the piece is placed by: its back-left bottom corner.', 'Every piece uses the same corner, so they snap edge to edge.', 'Origin at the bounding-box minimum corner'),
+  corner_pivot: H('Corner anchor (corner pivot)', 'The point the piece is placed by: its back-left bottom corner.', 'Every piece uses the same corner, so they snap edge to edge.', 'Origin at the bounding-box minimum corner'),
   grid_footprint: H('Size on the grid', 'How many grid squares the piece covers on the ground, wide by deep.', 'Pieces made to whole squares fit together with no gaps or overlaps.', 'Footprint in grid cells; automatic rounds width and depth to the nearest whole step (at most 15 percent per side)'),
   grid_height: H('Height on the grid', 'How tall the piece is, rounded to the grid.', 'Walls of the same height line up at the top, and floors sit flush.', 'Height snapped to half grid steps, or set to the chosen value'),
-  smooth_angle: H('Auto-smooth angle (smoothing)', 'The angle above which an edge looks sharp instead of smooth.', 'Lower keeps hard edges; higher rounds things off.', 'smooth_angle (auto smooth)'),
+  smooth_angle: H('Smoothing (auto-smooth angle)', 'The angle above which an edge looks sharp instead of smooth.', 'Lower keeps hard edges; higher rounds things off.', 'smooth_angle (auto smooth)'),
   manifold: H('Clean surface', 'No holes or overlapping edges.', 'Game engines and the skeleton step need a clean surface.', 'manifold'),
   non_manifold_edges: H('Broken edges', 'Edges shared by too many faces or by none.', 'They cause shading errors and rigging problems.', 'non_manifold_edges'),
   watertight: H('Closed shell', 'The surface has no openings.', 'A closed shell cleans up and casts shadows correctly.', 'watertight'),
   boundary_edges: H('Open edges', 'Edges with nothing on one side: the rim of a hole.', 'Zero means the model is closed.', 'boundary_edges'),
   degenerate_faces: H('Zero-area faces', 'Triangles squashed to a line or a point.', 'They cause rendering glitches.', 'degenerate_faces'),
-  uv_set: H('UV map (texture layout)', 'The map that says which part of the texture goes where.', 'There should be exactly one.', 'uv_set'),
-  uv_layers: H('UV maps (texture layouts)', 'How many texture maps the model carries.', 'Exactly one is what engines expect.', 'uv_layers'),
-  uv_islands: H('UV islands (texture pieces)', 'Separate patches in the texture layout.', 'Fewer, bigger pieces waste less texture.', 'uv_islands'),
-  texel_density: H('Texel density (texture sharpness)', 'How many texture pixels cover one metre of surface.', 'Even sharpness across the model avoids blurry patches.', 'texel_density'),
+  uv_set: H('Texture layout (UV map)', 'The map that says which part of the texture goes where.', 'There should be exactly one.', 'uv_set'),
+  uv_layers: H('Texture layouts (UV maps)', 'How many texture maps the model carries.', 'Exactly one is what engines expect.', 'uv_layers'),
+  uv_islands: H('Texture pieces (UV islands)', 'Separate patches in the texture layout.', 'Fewer, bigger pieces waste less texture.', 'uv_islands'),
+  texel_density: H('Texture sharpness (texel density)', 'How many texture pixels cover one metre of surface.', 'Even sharpness across the model avoids blurry patches.', 'texel_density'),
   gate_ok: H('Looks good', 'Whether every quality check passed.', 'A failing check means the asset may misbehave in the game.', 'gate_ok'),
   checks_passed: H('Checks passed', 'How many quality checks passed.', 'All of them should.', 'checks_passed'),
   dims: H('Size', 'Width, depth and height of the model in metres.', 'Sanity check for scale.', 'dims'),
   // Rig
-  rig: H('Rig', 'The skeleton inside the model plus the skin weights that tie the surface to it.', 'A rigged model can be animated: it walks, idles and bends at the joints.', 'rig (armature and skin weights)'),
-  template: H('Rig template (skeleton type)', 'Which skeleton to fit: a standard human one, a generic one, or none.', 'The standard human skeleton gets shared animations for free.', 'template (auto | mixamo | generic | none)'),
+  rig: H('Rig', 'The skeleton inside the model plus the skin weights that tie the surface to it.', 'A rigged model can be animated: it walks, idles and bends at the joints.', 'Rig (armature)'),
+  template: H('Skeleton type (rig template)', 'Which skeleton to fit: a standard human one, a generic one, or none.', 'The standard human skeleton gets shared animations for free.', 'template (auto | mixamo | generic | none)'),
   skeleton: H('Skeleton', 'The set of bones inside the model that animations move.', 'No skeleton, no movement.', 'skeleton (armature)'),
   bones: H('Bones', 'The joints of the skeleton.', 'More bones mean finer movement and a slightly heavier asset.', 'bones'),
   skin_weights: H('Skin weights', 'How much each point of the surface follows each bone.', 'Bad weights make the surface tear or bend wrongly.', 'skin weights'),
-  weight_coverage: H('Weight coverage (surface attached)', 'Share of the surface that follows at least one bone.', 'Unattached points stay behind when the character moves.', 'weight_coverage'),
-  group_per_vertex: H('Max bone influences (bones per point)', 'How many bones one surface point may follow.', '4 is standard; lower is faster, higher bends more smoothly.', 'group_per_vertex (max influences)'),
-  max_influences: H('Max bone influences (bones per point)', 'The most bones any surface point follows.', 'Game engines usually allow 4.', 'max_influences'),
+  weight_coverage: H('Surface attached (weight coverage)', 'Share of the surface that follows at least one bone.', 'Unattached points stay behind when the character moves.', 'weight_coverage'),
+  group_per_vertex: H('Bones per point (max bone influences)', 'How many bones one surface point may follow.', '4 is standard; lower is faster, higher bends more smoothly.', 'group_per_vertex (max influences)'),
+  max_influences: H('Bones per point (max bone influences)', 'The most bones any surface point follows.', 'Game engines usually allow 4.', 'max_influences'),
   weights_normalised: H('Weights add up', 'Each point\'s weights add up to exactly 1.', 'Otherwise the surface drifts when it bends.', 'weights_normalised'),
-  unnormalised_verts: H('Unnormalised vertices (points with bad weights)', 'Surface points whose weights do not add up to 1.', 'Should be zero.', 'unnormalised_verts'),
+  unnormalised_verts: H('Points with bad weights (unnormalised vertices)', 'Surface points whose weights do not add up to 1.', 'Should be zero.', 'unnormalised_verts'),
   single_root: H('One root bone', 'The skeleton starts from one bone.', 'Engines expect one root.', 'single_root'),
   bottom_center_origin: H('Stand on the ground', 'Put the anchor at the feet, centred.', 'The character then stands on the floor when placed.', 'bottom_center_origin'),
   bone_names: H('Bone names', 'The label on every joint of the skeleton.', 'Engines and animation tools match animations to joints by name, so wrong names mean wrong limbs move.', 'Mixamo naming convention (mixamorig:Hips, LeftArm and so on), assigned by geometry'),
@@ -429,51 +465,51 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   clips_library: H('Animation library', 'Which shared set of animations to attach.', 'None skips animations.', 'clips_library'),
   // Creature moves (3.7)
   motion: H('How it moves', 'Whether the creature walks, flies or slithers.', 'Decides which animations it gets; change it for a bird that cannot fly or a fish shaped like a snake.', 'Procedural locomotion mode: legs, wings, wave'),
-  moves: H('Animation clips (moves)', 'The animations made for this creature: standing still, walking, running, turning, attacking, getting hit and so on.', 'Leave out moves your game will never use to keep the file smaller.', 'Procedural clip set (procanim.py)'),
-  clips_source: H('Where the moves come from', 'Human-shaped characters can use a library of hand-made moves; every other skeleton gets moves built for it.', 'The hand-made moves look natural. The built-in ones work on any skeleton and need nothing installed.', 'CC0 Quaternius Universal Animation Library retargeted in Blender, else procedural clips'),
+  moves: H('Moves (animation clips)', 'The animations made for this creature: standing still, walking, running, turning, attacking, getting hit and so on.', 'Leave out moves your game will never use to keep the file smaller.', 'Procedural clip set (procanim.py)'),
+  clips_source: H('Where the moves come from', 'Human-shaped characters can use the library of ready-made moves; every other skeleton gets moves built for it.', 'The library moves look natural. The built-in ones work on any skeleton and need nothing installed.', 'CC0 Quaternius Universal Animation Library retargeted in Blender, else procedural clips'),
   move_size: H('How big the moves are', 'How far the legs, body and wings swing in each move.', 'Small suits heavy or calm creatures; big suits lively ones.', 'Amplitude 0.7, 1.0 or 1.3'),
   move_speed: H('How fast', 'How quickly the moves play.', 'Match the creature\'s size and mood: big animals move slower.', 'Clip speed 0.8, 1.0 or 1.25'),
   // Add a move (rig step)
-  add_move: H('Add a move', 'Pick more hand-made moves for a human-shaped character, such as sitting, blocking with a shield or casting a spell, or take some off.', 'Only the moves are made again; the skeleton and hit boxes stay as they are. Once you hand it off to the game again (step 6), each added move is in the files and in Unity, ready to use.', 'Quaternius Universal Animation Library packs 1 and 2 (CC0), retargeted in Blender; rig params added_moves, removed_moves'),
-  stand_still: H('Stand still', 'The move the character plays when it is not doing anything. New human-shaped characters get the idle the app makes itself: upright, with the arms close to the body and a small breathing sway. You can pick the hand-made library idle instead, or another standing move from the library.', 'The library idle is a ready, relaxed stand that leans forward a little and closes the hands; the one the app makes stands straighter. A character made before this choice keeps the library idle until you change it here. Changing it only makes the moves again; the skeleton stays as it is, and the new Stand still is in the files the next time you hand it off to the game.', 'rig param idle_source: builtin, library or a library clip id; Unity importer Version 20 plays it as the idle of the Locomotion blend'),
+  add_move: H('Add a move', 'Pick more library moves for a human-shaped character, such as sitting, blocking with a shield or casting a spell, or take some off.', 'Only the moves are made again; the skeleton and hit boxes stay as they are. Once you hand it off to the game again (step 6), each added move is in the files and in Unity, ready to use.', 'Quaternius Universal Animation Library packs 1 and 2 (CC0), retargeted in Blender; rig params added_moves, removed_moves'),
+  stand_still: H('Stand still', 'The move the character plays when it is not doing anything. New human-shaped characters get the idle the app makes itself: upright, with the arms close to the body and a small breathing sway. You can pick the move library idle instead, or another standing move from the library.', 'The library idle is a ready, relaxed stand that leans forward a little and closes the hands; the one the app makes stands straighter. A character made before this choice keeps the library idle until you change it here. Changing it only makes the moves again; the skeleton stays as it is, and the new Stand still is in the files the next time you hand it off to the game.', 'rig param idle_source: builtin, library or a library clip id; Unity importer Version 20 plays it as the idle of the Locomotion blend'),
   my_moves: H('Your own animation file', 'An FBX, GLB or BVH file of a human-shaped skeleton that you bring, for example a Mixamo download without skin or a motion capture file.', 'The app recognises the bones by their names and copies the moves onto your character. You are responsible for being allowed to use the file in your game.', 'Bone names: Mixamo, Unreal, Rigify, Unity Humanoid and common BVH names; library/my_moves'),
-  moves_from: H('Where moves come from', 'Human-shaped characters get hand-made moves from a free library (CC0, fine in commercial games), copied onto their own skeleton, and you can add more from that library or bring your own animation file. Other creatures, such as animals, spiders, birds and snakes, get moves the app builds for their own skeleton.', 'Hand-made moves look natural; the built ones fit any skeleton and need nothing extra.', 'Library retarget (retarget.py) for humanoids, procedural clips (procanim.py) for every other skeleton'),
+  moves_from: H('Where moves come from', 'Human-shaped characters get library moves from a free library (CC0, fine in commercial games), copied onto their own skeleton, and you can add more from that library or bring your own animation file. Other creatures, such as animals, spiders, birds and snakes, get moves the app builds for their own skeleton.', 'Moves from the move library look natural; moves made by the app fit any skeleton and need nothing extra.', 'Animation retargeting'),
   // Preview in realistic light (PHOTOREAL-PLAN phase 1)
-  preview_light: H('Preview light', 'The light the 3D preview is shown in: Studio, Outdoors, Overcast, Night, or Flat for plain lights that make the shape easy to check.', 'Metal and shiny parts only look right when there is something around them to reflect. Only the preview changes; your game uses its own lights.', 'Image-based lighting from a CC0 HDRI (three.js RoomEnvironment for Studio), PMREM, Khronos PBR Neutral tone mapping'),
-  beauty_render: H('Beauty render (beauty picture)', 'A finished picture of your asset in the same outdoor light as the preview, made when the files are packed.', 'Good for showing people what you made.', 'Blender Eevee render of the final model under a CC0 HDRI, Filmic or AgX view transform'),
+  preview_light: H('Preview light', 'The light the 3D preview is shown in: Studio, Outdoors, Overcast, Night, or Flat for plain lights that make the shape easy to check.', 'Metal and shiny parts only look right when there is something around them to reflect. Only the preview changes; your game uses its own lights.', 'Image-based lighting (IBL)'),
+  beauty_render: H('Beauty picture (beauty render)', 'A finished picture of your asset in the same outdoor light as the preview, made when the files are packed.', 'Good for showing people what you made.', 'Beauty render'),
   // Hair and fur (docs/HAIR-RESEARCH.md 5.4)
-  hair_pictures: H('Hair-friendly pictures', 'For characters with hair the app adds a short hair sentence to the picture request: in the Painted look, hair as one smooth, simple shape with both eyes clearly visible; in Photoreal, tidy hair with nothing over the face; in Low-poly, Pixel and Retro 64, one simple solid shape. Cel and Clay characters get none, because every wording tried changed the character. Creatures get fur lying flat in clear clumps.', 'The 3D builder turns the outline of the picture into one solid shape, so wispy hair becomes loose flakes and separated locks become jagged edges. Your description always wins: long loose hair, a fringe over one eye, dreadlocks or curls are kept, and long loose hair gets no hair sentence at all.', 'Hair sentence per look in the concept prompt (data/styles.yaml hair, vgac/hairpic.py)'),
-  hair_cards: H('Hair cards (flat strips with a see-through picture of hair on them)', 'How most realistic games make hair: hundreds of flat strips layered from the scalp outward, each showing a lock of hair with see-through gaps.', 'Some styles in the hair library are made of them. The hair built with the 3D model is one solid shape with the colour and strands painted on, which suits painted and stylised looks best.', 'Alpha-tested hair cards'),
-  spring_bones: H('Spring bones (small extra bones that sway on their own)', 'What makes a ponytail, cape or tail swing in a game: short chains of bones that lag behind the body and settle again.', 'The app adds them at the Make it move step to parts that hang clear of the body; hair resting on the shoulders is joined to them and moves only with the body.', 'Spring bone (jiggle bone) chains'),
-  anisotropic_highlight: H('Anisotropic highlight (a shine stretched into a band)', 'The bright band across hair, running across the strands instead of sitting as a round spot.', 'It is much of what makes hair look like hair rather than plastic. The app adds one when the hair has a hair material (its own texture and shader), whether the hair was built with the 3D model or came from the hair library: Unity draws the band with the hair shader the app installs, and the GLB file carries it for engines that read it. Hair without its own material, as on Phone by default, gets no band; in painted looks the picture may already have one painted in.', 'Anisotropic specular (Kajiya-Kay two-band shading in the VGAC/Hair and VGAC/HairCutout shaders in Unity; KHR_materials_anisotropy in the GLB)'),
+  hair_pictures: H('Hair-friendly pictures', 'For characters with hair the app adds a short hair sentence to the picture request: in the Painted look, hair as one smooth, simple shape with both eyes clearly visible; in Photoreal, tidy hair with nothing over the face; in Low-poly, Pixel and Retro 64, one simple solid shape. Cel and Clay characters get none, because every wording tried changed the character. Creatures get fur lying flat in clear clumps.', 'The 3D builder turns the outline of the picture into one solid shape, so wispy hair becomes loose flakes and separated locks become jagged edges. Your description always wins: long loose hair, a fringe over one eye, dreadlocks or curls are kept, and long loose hair gets no hair sentence at all.', 'Hair prompt (data/styles.yaml)'),
+  hair_cards: H('Flat hair strips (hair cards)', 'How most realistic games make hair: hundreds of flat strips layered from the scalp outward, each showing a lock of hair with see-through gaps.', 'Some styles in the hair library are made of them. The hair built with the 3D model is one solid shape with the colour and strands painted on, which suits painted and stylised looks best.', 'Hair cards, alpha test'),
+  spring_bones: H('Swaying extra bones (spring bones)', 'What makes a ponytail, cape or tail swing in a game: short chains of bones that lag behind the body and settle again.', 'The app adds them at the Make it move step to parts that hang clear of the body; hair resting on the shoulders is joined to them and moves only with the body.', 'Spring bones (jiggle bones)'),
+  anisotropic_highlight: H('Shine band on hair (anisotropic highlight)', 'The bright band across hair, running across the strands instead of sitting as a round spot.', 'It is much of what makes hair look like hair rather than plastic. The app adds one when the hair has a hair material (its own texture and shader), whether the hair was built with the 3D model or came from the hair library: Unity draws the band with the hair shader the app installs, and the GLB file carries it for engines that read it. Hair without its own material, as on Phone by default, gets no band; in painted looks the picture may already have one painted in.', 'Anisotropic specular'),
   // Hair from the library (docs/HAIR-LIBRARY-PLAN.md section 7)
-  hair_library: H('Hair library (ready-made hairstyles fitted to the head)', 'A choice per character, off unless you turn it on: the 3D model is built bald, and you pick one of the ready-made hairstyles the app tried on your character. The app fits it to the head, recolours it to the hair in your picture and gives it its own material.', 'Ready-made hairstyles are made by artists and can hang free, so long hair and ponytails swing with spring bones (small extra bones that sway on their own). The hair built with the 3D model often looks more like the picture where the hair rests on the head. Every style is CC0 (free to use, also in games you sell), and the hand-off credits its author. Turn it on when you create the character, or later with Change next to Hair on the asset page.', 'Asset.hair_json; bald turnaround pictures; hairfit rank at the 3D step and attach at Clean up; material slot <name>_Hair; backend/vgac/data/hairlib'),
-  bald_picture: H('Bald picture (the character without hair, used to build the 3D model)', 'A copy of your picture with only the hair taken away, drawn by the picture editor from the front, the three-quarter view and both sides.', 'The 3D model is built from it, so the library hairstyle gets a clean head to sit on. The face is still painted from your own picture. Check that the face and the clothes look the same in both pictures.', 'Qwen-Image-Edit bald edit: bald_front, bald_quarter, bald_left, bald_right; bald_picture check (share of the picture outside the hair that stayed the same)'),
-  alpha_cutout: H('Alpha cutout (see-through parts of a texture)', 'A texture whose pixels are either shown or left out, so a flat strip can look like a lock of hair with gaps between the strands.', 'Hair cards (see-through strips) need it. Each pixel is either fully there or fully gone, which is cheap and draws in the right order in game engines; the edges look a little harder than real see-through.', 'Alpha test (glTF alphaMode MASK, cutoff 0.5), VGAC/HairCutout shader in Unity, mipmaps that keep their coverage'),
-  scalp_cap: H('Scalp cap (a hair-coloured layer under the hair)', 'A thin layer in the hair colour, fitted just over the head under a library hairstyle.', 'Where the hairstyle leaves a small gap, you see hair colour instead of skin.', '2.5 mm off the head surface; role 1 in hair_mesh.npz'),
+  hair_library: H('Ready-made hairstyles (hair library)', 'A choice per character, off unless you turn it on: the 3D model is built bald, and you pick one of the ready-made hairstyles the app tried on your character. The app fits it to the head, recolours it to the hair in your picture and gives it its own material.', 'Ready-made hairstyles are made by artists and can hang free, so long hair and ponytails swing with spring bones (small extra bones that sway on their own). The hair built with the 3D model often looks more like the picture where the hair rests on the head. Every style is CC0 (free to use, also in games you sell), and the hand-off credits its author. Turn it on when you create the character, or later with Change next to Hair on the asset page.', 'Hair library (hair_json)'),
+  bald_picture: H('Hairless picture (bald picture)', 'A copy of your picture with only the hair taken away, drawn by the picture editor from the front, the three-quarter view and both sides.', 'The 3D model is built from it, so the library hairstyle gets a clean head to sit on. The face is still painted from your own picture. Check that the face and the clothes look the same in both pictures.', 'Bald edit (bald_front)'),
+  alpha_cutout: H('See-through texture parts (alpha cutout)', 'A texture whose pixels are either shown or left out, so a flat strip can look like a lock of hair with gaps between the strands.', 'Hair cards (see-through strips) need it. Each pixel is either fully there or fully gone, which is cheap and draws in the right order in game engines; the edges look a little harder than real see-through.', 'Alpha test (alphaMode MASK)'),
+  scalp_cap: H('Layer under the hair (scalp cap)', 'A thin layer in the hair colour, fitted just over the head under a library hairstyle.', 'Where the hairstyle leaves a small gap, you see hair colour instead of skin.', 'Scalp cap'),
   // Hit boxes and the body shape for moving (4.2)
-  socket: H('Socket (attachment point)', 'A named spot on the skeleton where your game can attach a weapon, hat, backpack, or a shield strapped to the forearm.', 'The item then follows the hand, forearm, back or head through every animation.', 'Empty transform named Socket_* parented to a bone; listed in sockets.json'),
-  items: H('Items', 'A sword, shield, bow, quiver, hat or backpack made as its own asset and put on a socket (attachment point) of a character, instead of being part of the body.', 'The character can then really hold the sword when he attacks, and you can swap or take items off in your game. Clothes that bend with the body, such as a cloak or armour, stay part of the body. A shield is strapped to the outside of the forearm. Items you have not moved yourself are fitted to the moves automatically so they stay clear of the body; Fit it for me does the same for one you placed. The hand does not close around the handle (no finger bones).', 'Item asset (prop_rigid, Asset.held_item) with its pivot at the detected grip; attachments.json, <name>_equipped.glb and the Unity prefab "<name> (equipped)"'),
+  socket: H('Attachment point (socket)', 'A named spot on the skeleton where your game can attach a weapon, hat, backpack, or a shield strapped to the forearm.', 'The item then follows the hand, forearm, back or head through every animation.', 'Socket (sockets.json)'),
+  items: H('Items', 'A sword, shield, bow, quiver, hat or backpack made as its own asset and put on a socket (attachment point) of a character, instead of being part of the body.', 'The character can then really hold the sword when he attacks, and you can swap or take items off in your game. Clothes that bend with the body, such as a cloak or armour, stay part of the body. A shield is strapped to the outside of the forearm. Items you have not moved yourself are fitted to the moves automatically so they stay clear of the body; Fit it for me does the same for one you placed. The hand does not close around the handle (no finger bones).', 'Equipped item (attachments.json)'),
   hitboxes: H('Hit boxes', 'Invisible shapes on each body part that tell the game where an attack landed.', 'Hits count where they look like they land, and you can tell a head hit from an arm hit.', 'Per-bone trigger capsules and boxes, fitted from skin weights'),
   hitbox_fit: H('Hit box fit (how snug)', 'How tightly the hit boxes wrap the body.', 'Snug is fairer for the player being hit; loose is kinder to the player aiming.', 'Radius factor 0.9, 1.0 or 1.15 on the 80th-percentile vertex distance'),
   hitbox_regions: H('Body parts with hit boxes', 'Which body parts get their own hit box.', 'Leave out parts your game never needs to tell apart.', 'Region ids from hitboxes.json regions_found'),
   head_sway: H('What may sway on the head', 'Which parts on the head get spring bones.', 'Automatic: hair sways; a hat\'s brim or back, a hood or a helmet moves with the head, because the app cannot tell a hat from cloth by shape alone. A headscarf, ribbon, veil, tassel or feather named in the description may sway. When the description names a hat, helmet or hood, a part must be clearly hair-coloured to sway as hair. Choose Everything that hangs for the old behaviour. Choose Nothing on the head sways to hold the head and all its hair still, built-in or from the library; the body and cloth below the head are not affected.', 'blender/springs.py --head-cloth stiff|sway, --headwear, --head-still; HAIR_SHARE_HEADWEAR 0.8'),
-  springs: H('Spring bones (small extra bones that sway on their own)', 'Parts that hang clear of the body, such as a ponytail, a braid, a cape or a tail, get a short chain of bones that lags behind the body and settles again. The sway is baked into every move, and in Unity a small script makes it react to the game.', 'Only parts that hang clear of the body can move: hair resting on the shoulders is joined to them in the 3D model, and a short haircut has nothing that hangs. Rigid things such as a sword, a scabbard or a quiver are left alone.', 'Voxel slices find parts joined to the body at one end only; 2 to 4 bones per chain, weights faded from the root; a 120 Hz spring simulation with the hit boxes as colliders baked into every clip; springs.json; VgacSpringBones in Unity'),
+  springs: H('Swaying extra bones (spring bones)', 'Parts that hang clear of the body, such as a ponytail, a braid, a cape or a tail, get a short chain of bones that lags behind the body and settles again. The sway is baked into every move, and in Unity a small script makes it react to the game.', 'Only parts that hang clear of the body can move: hair resting on the shoulders is joined to them in the 3D model, and a short haircut has nothing that hangs. Rigid things such as a sword, a scabbard or a quiver are left alone.', 'Voxel slices find parts joined to the body at one end only; 2 to 4 bones per chain, weights faded from the root; a 120 Hz spring simulation with the hit boxes as colliders baked into every clip; springs.json; VgacSpringBones in Unity'),
   movement_shape: H('Character collider (body shape for moving)', 'One simple shape around the whole body that the game uses for walking into walls and standing on floors.', 'It stays still while the hit boxes move, so movement is smooth and predictable.', 'Root CapsuleCollider (direction Y or Z) or BoxCollider'),
   // Export
-  lod: H('LOD (detail levels)', 'Lighter copies of the model used when it is far away.', 'Keeps the game fast with many assets on screen.', 'LOD (level of detail)'),
-  lods: H('LOD (detail levels)', 'Lighter copies of the model used when it is far away, as fractions of the full model.', 'Keeps the game fast with many assets on screen.', 'lods (LOD ratios)'),
-  lod_count: H('LOD count (number of detail levels)', 'How many lighter copies were made.', 'Characters and creatures get four; props and scenery get three.', 'lod_count'),
-  collider: H('Collider (collision shape)', 'Invisible simple shapes the game uses to know where the asset is solid.', 'Without them things pass straight through it; the right shapes keep doorways open and seats usable.', 'Primitive, convex hull (255-triangle cap), CoACD convex decomposition, or mesh collider (static only)'),
+  lod: H('Detail levels (LOD)', 'Lighter copies of the model used when it is far away.', 'Keeps the game fast with many assets on screen.', 'LOD (level of detail)'),
+  lods: H('Detail levels (LOD)', 'Lighter copies of the model used when it is far away, as fractions of the full model.', 'Keeps the game fast with many assets on screen.', 'lods (LOD ratios)'),
+  lod_count: H('Number of detail levels (LOD count)', 'How many lighter copies were made.', 'Characters and creatures get four; props and scenery get three.', 'lod_count'),
+  collider: H('Collision shape (collider)', 'Invisible simple shapes the game uses to know where the asset is solid.', 'Without them things pass straight through it; the right shapes keep doorways open and seats usable.', 'Collider (primitive, convex hull, mesh)'),
   collider_triangles: H('Collider triangles', 'How many triangles the collider (collision shape) has.', 'Unity allows at most 255 in a simple shape and reshapes anything bigger.', 'MeshCollider convex triangle limit'),
   collider_vertices: H('Collider vertices', 'How many vertices (points) the collider has.', 'Unity allows at most 255 triangles in a convex collider; we keep the shape small to stay under it.', 'collider_vertices'),
   collider_verts: H('Collider vertices', 'How many vertices (points) the collider has.', 'Unity allows at most 255 triangles in a convex collider; we keep the shape small to stay under it.', 'collider_verts'),
   collider_present: H('Collider present', 'Whether a collider (collision shape) was made.', 'Needed for physics.', 'collider_present'),
-  collider_max_parts: H('Max collider parts (most shapes)', 'The most separate collider shapes the asset may get.', 'More shapes fit hollow things better; fewer keep physics cheap, which matters most on phones.', 'CoACD max_convex_hull; automatic is 8 for props, 16 for scenery, 6 for vehicles, half on Phone'),
+  collider_max_parts: H('Most shapes (max collider parts)', 'The most separate collider shapes the asset may get.', 'More shapes fit hollow things better; fewer keep physics cheap, which matters most on phones.', 'CoACD max_convex_hull; automatic is 8 for props, 16 for scenery, 6 for vehicles, half on Phone'),
   collider_count: H('Collider count', 'How many separate simple shapes make up the collider.', 'Each shape costs a little physics time every frame, so phones get fewer.', 'Collider components under the Colliders child of the prefab'),
   openings_clear: H('Openings stay open', 'Whether doorways, arches and gaps are left open by the collision shape.', 'A shape that fills a doorway stops players walking through it.', 'Horizontal ray grid; fails when more than 10 percent of opening rays hit the collider'),
   lightmap_uv: H('Baked lighting ready', 'A second texture layout the engine uses to store pre-computed light and shadow.', 'Walls and floors can carry soft, realistic shadows without slowing the game.', 'Lightmap UV (UV1), Unity generateSecondaryUV'),
-  lod_fade: H('LOD cross-fade (smooth detail changes)', 'Far-away copies blend into each other instead of switching at once.', 'Across a forest, sudden switches show as popping; a blend hides it.', 'LODGroup fadeMode CrossFade; URP needs LOD Cross Fade on'),
+  lod_fade: H('Smooth detail changes (LOD cross-fade)', 'Far-away copies blend into each other instead of switching at once.', 'Across a forest, sudden switches show as popping; a blend hides it.', 'LODGroup fadeMode CrossFade; URP needs LOD Cross Fade on'),
   metal_shine: H('Metal and shine', 'A texture that tells the engine which parts are metal and how glossy each part is.', 'Without it armour looks like plastic and wet stone looks dry.', 'MetallicSmoothness map (URP Lit: metallic in RGB, smoothness in alpha)'),
   metallic_smoothness: H('Metal and shine', 'A texture that tells the engine which parts are metal and how glossy each part is.', 'Without it armour looks like plastic and wet stone looks dry.', 'MetallicSmoothness map (URP Lit: metallic in RGB, smoothness in alpha)'),
   orm: H('Surface texture', 'One texture that holds shadowing, roughness and metal in its three colour channels.', 'Unreal, Godot and web viewers read all three from one file, which saves memory.', 'ORM pack (R occlusion, G roughness, B metallic); glTF metallicRoughness'),
@@ -499,12 +535,12 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   variant: H('Variant', "A copy of an asset with one change (outfit, colour, damage) that keeps the original's identity.", 'Make one for the same character in winter clothes or battle-damaged; it starts from the original picture, so it stays recognisable.', 'variant (base_asset_id)'),
   variant_change: H('What changes', 'The one change that makes this variant different from the original.', 'Keep it short: an outfit, a colour scheme, a damage state.', 'variant_change'),
   // Feedback and the gallery
-  feedback: H('Liked it?', 'Thumbs up or down on a result, with an optional note on what was wrong.', 'It only teaches this app which results you liked so it can suggest better settings later. Nothing is sent anywhere; it stays in your own library.', 'feedback (metrics.feedback)'),
+  feedback: H('Liked it?', 'Thumbs up or down on a result, with an optional note on what was wrong.', 'It only teaches this app which results you liked so it can suggest better settings later. Nothing is sent anywhere; it stays in your own library.', 'User feedback (metrics.feedback)'),
   feedback_note: H('What was wrong?', 'A few words on why you did not like this result, such as "face too dark" or "sword bent".', 'Optional. It is kept with the version so you, and the app, can see what to avoid next time.', 'feedback.note'),
   gallery: H('Gallery', 'Every finished asset from every project in one place.', 'Find a finished asset, open it, or copy the folder its files were saved to.', 'gallery (GET /api/gallery)'),
   delivered_to: H('Saved to', 'The folder on this computer where the finished files were copied.', 'Open this folder, or point your game engine at it, to use the asset.', 'delivered_to'),
   // Autopilot
-  autopilot: H('Autopilot', 'Runs every step for you, keeps each result that passes its checks, and stops only when something needs you.', 'Press "Make it" once and come back to a finished asset; you can still change any step afterwards.', 'autopilot (POST /api/assets/{id}/autopilot)'),
+  autopilot: H('Autopilot', 'Runs every step for you, keeps each result that passes its checks, and stops only when something needs you.', 'Press "Create and make it" when you create an asset, or "Make it" on one you already started. Then come back to a finished asset. You can still change any step afterwards.', 'autopilot (POST /api/assets/{id}/autopilot)'),
   stop_on: H('When to stop', 'Which check failures make the autopilot pause: serious problems only, any warning, or never.', 'Serious problems would break the asset in the game, so the default pauses on those and continues past warnings.', 'stop_on (block | warn | never)'),
   until_stage: H('Run until', 'The last step the autopilot runs before it stops.', 'Usually the hand-off; stop earlier if you only want the picture or the model.', 'until_stage'),
   // Style presets
@@ -522,7 +558,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   gpu_kind_model: H('3D model', 'Turning the pictures into a 3D shape with painted surfaces.', 'The heaviest step: it needs a lot of the card\'s memory for a few minutes.', 'mesh stage'),
   gpu_kind_rigging: H('Rigging', 'Adding a skeleton so the model can move.', 'This step only works on the card set up for it, because it needs Blender wired in.', 'rig stage (SkinToken)'),
   gpu_kind_review: H('Review', 'The app looking at a result and saying what it thinks of it.', 'Optional; a review waits if no card may do it, nothing else stops.', 'local judge (judge job)'),
-  gpu_engine: H('ComfyUI instance (graphics engine)', 'The program on this card that paints the pictures and builds the 3D models (ComfyUI). The app starts it by itself when a step needs it, which takes about a minute.', 'The app only ever shuts down an engine it started itself. One started by ComfyUI Desktop or the launcher is left running.', 'ComfyUI instance (POST /api/gpus/{instance}/start and /stop)'),
+  gpu_engine: H('Graphics engine (ComfyUI instance)', 'The program on this card that paints the pictures and builds the 3D models (ComfyUI). The app starts it by itself when a step needs it, which takes about a minute.', 'The app only ever shuts down an engine it started itself. One started by ComfyUI Desktop or the launcher is left running.', 'ComfyUI instance (POST /api/gpus/{instance}/start and /stop)'),
   gpu_idle_stop: H('Shut down when idle', 'After this long with nothing to do, the app shuts down the card\'s graphics engine. That frees the whole card between bursts of work.', 'The next step then waits about a minute while the engine starts again. Only applies to an engine the app started itself; one started by ComfyUI Desktop or the launcher is left running.', 'stop_when_idle_minutes (prefs.json)'),
   gpu_address: H('Address', 'Where the app talks to this card\'s graphics engine. "Found by its card" means the engine was not at the usual address, so the app looked for the one running on this card and uses that.', 'ComfyUI Desktop picks its own address; the app follows it instead of failing. It never takes an engine running on the other card.', 'ComfyUI url, instances.<name>.discover in local/machine.json'),
   gpu_setup_problem: H('Setup problem', 'Something on this computer stops the card\'s graphics engine from being used, for example another program holding its address.', 'The app does not send this card\'s work anywhere else by mistake; fix the problem and press Try again.', 'Supervisor.conflict (instances.py)'),
@@ -531,7 +567,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   setup_show_all: H('Show all checks', 'Every check, including the ones that passed, grouped by tools, graphics engines, models and storage.', 'Useful to confirm a fix, or to see exactly what the app looked for.', 'preflight items'),
   setup_not_checked: H('Not checked', 'The app could not check this right now, usually because the card is off or its graphics engine is not running yet.', 'This is not a problem by itself; the check runs again once the engine is up.', 'state unknown'),
   setup_group_tools: H('Tools', 'The programs the app uses on this computer: Blender for cleaning up, rigging and animation, the Unity editor for the test import, and the shared animation library.', 'Without Blender the last steps cannot run; without Unity only the test import is skipped.', 'blender_exe, unity_exe, unity_project, clips_libraries'),
-  setup_group_engines: H('ComfyUI instances (graphics engines)', 'The programs on the graphics cards that paint the pictures and build the 3D models (ComfyUI), and the parts (nodes) each step needs in them.', 'A missing part stops only the steps that need it.', 'ComfyUI instances, /object_info'),
+  setup_group_engines: H('Graphics engines (ComfyUI instances)', 'The programs on the graphics cards that paint the pictures and build the 3D models (ComfyUI), and the parts (nodes) each step needs in them.', 'A missing part stops only the steps that need it.', 'ComfyUI instances, /object_info'),
   setup_group_models: H('Models', 'The large files the graphics engines learn from: one per image model (the painter), the side-view model (Qwen-Image-Edit), the 3D model builder (TRELLIS.2) and the rigging model (SkinToken).', 'A missing model file stops the step that uses it; you download it once.', 'data/models.yaml, loader node file choices'),
   setup_group_storage: H('Storage', 'Free disk space where your assets are kept, and free memory on this computer.', 'Steps wait when memory is short, and fail to save when the disk is full.', 'library_path, export_path, min_free_ram_gb'),
   setup_needs_attention: H('Setup needs attention', 'At least one thing the app needs is missing or broken.', 'Open the Health page to see what it is and how to fix it.', 'GET /api/setup summary.fails'),
@@ -539,17 +575,17 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   // Recipes: the look carried through every step
   recipe: H('How the look is built', 'How your chosen look is carried through every step: detail level, texture size, shading and how the game engine shows the textures.', 'So a low-poly or Retro 64 asset stays that way all the way into your game, not just in the first picture.', 'reference.recipe'),
   addons: H(
-    'LoRAs (style add-ons)',
+    'Style add-ons (LoRAs)',
     'Small trained files that load on top of the image model and push the picture toward a look. Each one is made for one model family (its base model), so the list changes when you change the model.',
     'You never type a file path or a name: switch one on from the list, or press Add your own LoRA and choose the .safetensors file. Your LoRA files stay in the folders you linked on the setup page (LoRA folders): the app reads them where they are, and copies nothing.',
-    'One LoraLoaderModelOnly per LoRA after the model loader. Tested: data/addons.yaml, files in loras/VGAC/. Yours: the files in your LoRA folders, under their own names.',
+    'LoRA (data/addons.yaml)',
   ),
-  addon_mine: H('Your own LoRA', 'A LoRA file you brought in yourself, listed under Yours for the models you said it was made for.', 'The app has not tested it. If the picture looks wrong, try Subtle or switch it off. Remove takes it off the list; the file stays in its LoRA folder.', 'library/my_addons.json; the file itself stays in your LoRA folder'),
-  addon_painter: H('Base model (which model it was made for)', 'Every LoRA is trained for one model family and only works with that one.', 'Its download page names it, usually as the base model (for example Z-Image Turbo). The app reads the file when it can and leaves this empty when it cannot tell.', 'modelspec.architecture, ss_base_model_version in the file header'),
-  edit_lora: H('Your LoRAs for picture edits', 'A LoRA you added that the app loads on top of its picture-edit model, for one picture-edit step: Refine, the side views, the pose redraw or the face close-up.', 'Off is the default. Each step has its own choice, and a LoRA can change the result in ways you do not expect: check the picture, and try Subtle first.', 'Your LoRA chained after the Lightning LoRA on the Qwen-Image-Edit graph; the version records which ones drew it'),
+  addon_mine: H('Your own LoRA', 'A LoRA file you brought in yourself, listed under Yours for the models you said it was made for.', 'The app has not tested it. If the picture looks wrong, try Subtle or switch it off. Remove takes it off the list; the file stays in its LoRA folder.', 'LoRA (library/my_addons.json)'),
+  addon_painter: H('Base model (which model it was made for)', 'Every LoRA is trained for one model family and only works with that one.', 'Its download page names it, usually as the base model (for example Z-Image Turbo). The app reads the file when it can and leaves this empty when it cannot tell.', 'Base model (ss_base_model_version)'),
+  edit_lora: H('Your picture-edit add-ons (LoRAs)', 'A LoRA you added that the app loads on top of its picture-edit model, for one picture-edit step: Refine, the side views, the pose redraw or the face close-up.', 'Off is the default. Each step has its own choice, and a LoRA can change the result in ways you do not expect: check the picture, and try Subtle first.', 'Your LoRA chained after the Lightning LoRA on the Qwen-Image-Edit graph; the version records which ones drew it'),
   made_for: H('What was it made for?', 'Qwen-Image-Edit is the model this app uses for picture edits. Plain Qwen-Image is a close relative of it, and a LoRA made for it may only partly work there.', 'The app reads the file where it can. When the file does not say, choose: plain Qwen-Image, or not sure, gets a warning. Its download page usually names the model.', 'modelspec.architecture, ss_base_model_version and the file name; a sure Edit signal or plain signal decides'),
-  addon_trigger: H('Trigger words (words the LoRA needs in the description)', 'Some LoRAs only work when certain words are in the description.', 'Its download page lists them. The app adds them to your description for you whenever the LoRA is on.', 'trigger (data/addons.yaml, my_addons.json)'),
-  addon: H('LoRA (style add-on)', 'One small trained file that loads on top of the image model.', 'Switch it off to drop its effect, or pick how strongly it pushes the picture.', 'data/addons.yaml'),
+  addon_trigger: H('Trigger words (words the LoRA needs in the description)', 'Some LoRAs only work when certain words are in the description.', 'Its download page lists them. The app adds them to your description for you whenever the LoRA is on.', 'Trigger words (data/addons.yaml)'),
+  addon: H('Style add-on (LoRA)', 'One small trained file that loads on top of the image model.', 'Switch it off to drop its effect, or pick how strongly it pushes the picture.', 'data/addons.yaml'),
   strength_subtle: H('Subtle', 'The LoRA pushes the picture a little.', 'Keeps more of the model\'s own look.', 'lower LoRA strength (strengths.subtle)'),
   strength_normal: H('Normal', 'The LoRA at the strength it was made for.', 'The safe choice; start here.', 'LoRA strength (strengths.normal)'),
   strength_strong: H('Strong', 'The LoRA pushes the picture harder.', 'Use it when the look does not come through enough; too strong can distort the picture.', 'higher LoRA strength (strengths.strong)'),
@@ -562,8 +598,8 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   people_box: H('Box round the person', 'A box round the main person in a photo you give, suggested for you when the app finds people in it.', 'It keeps the other people, and anything else in the picture, off the character. You can drag it, use the keyboard, or use the whole photo instead. With the whole photo and more than one person in it, the form warns you before the build.', 'POST /api/people (MediaPipe pose landmarker, up to 4 people; the largest, most central person is the main one); the box is sent as crop with the photo and cut before the first picture is drawn'),
   start_from: H('Start from', 'Whether the first picture is painted from your words, is a picture you already have, or comes from a 3D model you already have.', 'With your own picture the app skips painting and goes straight to cutting it out and checking it is ready for 3D. With any of the three you can add feature photos (a face, a body, an outfit).', 'POST /api/projects/{id}/assets with image'),
   what_is_it_note: H('What is it?', 'A few words about your picture, such as "a knight in red armour".', 'Optional. Later steps, such as changing something, read these words, so a short description helps them.', 'asset prompt (note)'),
-  own_picture: H('Use my own picture', 'Start this step from a picture you already have instead of painting one.', 'Your picture is cut out and checked like a painted one; then every later step builds on it.', 'POST /api/assets/{id}/stages/concept/upload'),
-  your_picture: H('Your picture', 'A version made from a picture you added, not painted by the app.', 'It goes through the same cutout and checks as a painted picture.', 'params.source = upload'),
+  own_picture: H('Use my own picture', 'Start this step from a picture you already have instead of drawing one.', 'Your picture is cut out and checked like a drawn one; then every later step builds on it.', 'POST /api/assets/{id}/stages/concept/upload'),
+  your_picture: H('Your picture', 'A version made from a picture you added, not drawn by the app.', 'It goes through the same cutout and checks as a painted picture.', 'params.source = upload'),
   ready_for_3d: H('Ready for 3D', 'Checks that the picture suits the 3D step: one subject, all of it in the picture, big enough, and for people arms away from the body.', 'They only warn; you can keep a picture that fails one. "Redraw it ready for 3D" asks the image edit model to redraw it in the standard pose.', 'readiness checks (one_subject, in_frame, big_enough, arms_away)'),
   one_subject: H('One subject', 'Whether the picture shows one thing on its own.', 'Two characters or loose pieces in one picture become one strange 3D model.', 'connected areas of the cutout'),
   in_frame: H('Whole subject in the picture', 'Whether there is space around the subject on every side.', 'A part cut off at the edge is missing from the 3D model.', 'cutout margin on every side, at least 1 percent'),
@@ -725,6 +761,11 @@ const CHECK_TEXT: Record<string, CheckText> = {
   wings_found: (_v, _l, ok) => (ok ? 'Both wings were found, so it can fly and glide.' : 'We could not find the wings in the skeleton, so it walks but cannot fly.'),
   hitbox_cover: (v, _l, ok, _ctx, vars) => {
     const cover = str(vars.cover) || pct(v)
+    // Both faults on one skeleton (backend rig.hitbox_checks, vars.both): one sentence with both halves.
+    if (!ok && vars.both) {
+      const times = str(vars.times) || num(vars.times)?.toFixed(1) || ''
+      return `The hit boxes are the wrong size in places: they cover only ${cover} of the body, so some hits would pass through, and some boxes stick out ${times} times the body's size, so other hits would land in thin air.`
+    }
     return ok ? `${str(vars.n) || 'The'} hit boxes cover ${cover} of the body and follow the skeleton.` : `The hit boxes cover only ${cover} of the body, so some hits would pass through.`
   },
   hitbox_overreach: (v, _l, ok, _ctx, vars) => (ok ? 'The hit boxes stay close to the body.' : `The hit boxes stick out well past the body (${str(vars.times) || num(v)?.toFixed(1) || v} times its size), so hits would land in thin air.`),
@@ -756,10 +797,10 @@ const CHECK_TEXT: Record<string, CheckText> = {
       return vars.rebuilt
         ? `The first build's base colour (the colour texture) came out too dark, so the 3D model was built again; build ${n0(vars.kept_try)} of ${n0(vars.tries)} keeps ${pct(v)} of the picture's brightness.`
         : `The base colour (the colour texture) keeps ${pct(v)} of the picture's brightness.`
-    return `The base colour (the colour texture) came out much darker than the picture: ${pct(v)} of its brightness, it needs ${pct(l)}. ${vars.rebuilt ? `It was built ${n0(vars.tries)} times and this is the closest. ` : ''}Build it again, or use a picture with some soft light and shadow on the character.`
+    return `The base colour (the colour texture) came out much darker than the picture: ${pct(v)} of its brightness, it needs ${pct(l)}. ${vars.rebuilt ? `It was built ${n0(vars.tries)} times and this is the closest. ` : ''}Build the 3D model again, or use a picture with some soft light and shadow on the character.`
   },
-  texture_padding: (v, _l, ok) => (ok ? `Texture pieces have ${n0(v)} px of space around them, enough for distant views.` : `Texture pieces have only ${n0(v)} px of space, so thin dark seams may show at a distance.`),
-  atlas_used: (v, _l, ok) => (ok ? `The model uses ${pct(v)} of its texture.` : `The model uses only ${pct(v)} of its texture, so it looks less sharp than it could.`),
+  texture_padding: (v, _l, ok) => (ok ? `Texture pieces (UV islands) have ${n0(v)} px of space around them (UV padding), enough for distant views.` : `Texture pieces (UV islands) have only ${n0(v)} px of space (UV padding), so thin dark seams may show at a distance.`),
+  atlas_used: (v, _l, ok) => (ok ? `The model uses ${pct(v)} of its texture (UV space usage).` : `The model uses only ${pct(v)} of its texture (UV space usage), so it looks less sharp than it could.`),
   face_matches_picture: (_v, _l, ok, _ctx, vars) => {
     if (ok) return 'The face was painted from the picture and is sharp.'
     const eye = str(vars.eye_words)
@@ -927,7 +968,7 @@ function sizeSentence(v: unknown, l: unknown, ok: boolean, axis: string): string
 function checkTextFor(id: string): CheckText | null {
   if (CHECK_TEXT[id]) return CHECK_TEXT[id]
   const lod = id.match(/^lod(\d+)_ratio$/)
-  if (lod) return (v, l, ok) => (ok ? `Detail level ${lod[1]} keeps ${pct(v)} of the triangles.` : `Detail level ${lod[1]} keeps ${pct(v)} of the triangles; ${pct(l)} expected.`)
+  if (lod) return (v, l, ok) => (ok ? `Detail level ${lod[1]} (LOD${lod[1]}) keeps ${pct(v)} of the triangles.` : `Detail level ${lod[1]} (LOD${lod[1]}) keeps ${pct(v)} of the triangles; ${pct(l)} expected.`)
   if (/^texture_.+_pow2$/.test(id)) return (v, _l, ok) => (ok ? `The ${mapName(id)} is a power-of-two size.` : `The ${mapName(id)} is ${Array.isArray(v) ? v.join(' x ') : String(v)} px; it must be a power of two.`)
   if (/^texture_.+_square$/.test(id)) return (v, _l, ok) => (ok ? `The ${mapName(id)} is square.` : `The ${mapName(id)} is ${Array.isArray(v) ? v.join(' x ') : String(v)} px; it must be square.`)
   if (/^texture_.+_budget$/.test(id)) return (v, l, ok) => (ok ? `The ${mapName(id)} is ${n0(v)} px, within the ${n0(l)} px budget.` : `The ${mapName(id)} is ${n0(v)} px; the platform allows ${n0(l)} px.`)
@@ -1036,7 +1077,7 @@ export function checkSeverity(check: Check): 'block' | 'warn' {
 // With op "refine" it runs the refine on the version the check is on with `instruction` ("Redraw it ready for 3D").
 export type FixAction = { stage: StageId; params: Record<string, unknown>; label: string; ui?: string; knob?: string; op?: 'refine' | 'upscale'; instruction?: string }
 
-export const REDRAW_LABEL = 'Redraw it ready for 3D'
+export const REDRAW_LABEL = 'Draw it again, ready for 3D'
 
 // The step and the Fine-tune setting each tool lives in.
 export const FIX_TOOLS: Record<string, { stage: StageId; knob?: string; plain: string }> = {
@@ -1051,32 +1092,32 @@ const FIX_LABELS: Record<string, string> = {
   size_m: 'Set the size',
   height_m: 'Set the size',
   facing: 'Turn it to face forward',
-  lod_count: 'Rebuild the detail levels',
+  lod_count: 'Make the detail levels again',
   collider_present: 'Add a collision shape',
   weight_coverage: 'Attach the loose surface',
   weights_normalised: 'Balance the weights',
   manifold: 'Close the holes',
   watertight: 'Close the holes',
-  materials_connected: 'Rebuild for Unity',
-  textures_full_size: 'Rebuild for Unity',
-  clips_loop: 'Rebuild for Unity',
-  clips_face_forward: 'Rebuild for Unity',
-  controller_ready: 'Rebuild for Unity',
-  unity_humanoid_avatar: 'Fit the standard skeleton again',
+  materials_connected: 'Make the files again',
+  textures_full_size: 'Make the files again',
+  clips_loop: 'Make the files again',
+  clips_face_forward: 'Make the files again',
+  controller_ready: 'Make the files again',
+  unity_humanoid_avatar: 'Rig the standard skeleton again',
   clips: 'Make the moves again',
   legs_moved: 'Make the moves again',
-  hitbox_cover: 'Fit them looser',
-  hitbox_overreach: 'Fit them snugger',
+  hitbox_cover: 'Make the hit boxes bigger',
+  hitbox_overreach: 'Make the hit boxes smaller',
   hitbox_fit: 'Try again',
   movement_shape: 'Add a body shape',
   collider_triangles: 'Simplify the collision shape',
   collider_count: 'Use fewer shapes',
   openings_clear: 'Use several shapes',
-  bake_matches: 'Repaint the surface',
+  bake_matches: 'Paint the surface again',
   normal_map_upright: 'Build the 3D model again',
-  texture_matches_picture: 'Build it again',
+  texture_matches_picture: 'Build the 3D model again',
   texture_padding: 'Add more space',
-  atlas_used: 'Repaint the surface',
+  atlas_used: 'Paint the surface again',
   face_matches_picture: 'Paint the face again',
   hair_matches_picture: 'Paint the hair again',
   hair_material: 'Give the hair its own material again',
@@ -1119,11 +1160,15 @@ export function checkFixNote(check: Check): string | null {
   return check.fix_note?.trim() || null
 }
 
+export const BOTH_HITBOX_FIX_LABEL = 'Fit the hit boxes again'
+
 // Where the app can fix a failing check (the backend's check.fix wins). Passing checks have no fix.
 export function checkFix(check: Check): FixAction | null {
   if (checkPassed(check)) return null
   const id = check.id ?? check.name
-  const label = check.fix?.label || check.fix_label || FIX_LABELS[id] || DEFAULT_FIX_LABEL
+  // The one re-fit for both hit-box faults on one skeleton (vars.both), when the backend's own label is not there.
+  const bothHitboxes = id === 'hitbox_cover' && check.vars?.both === true
+  const label = check.fix?.label || check.fix_label || (bothHitboxes ? BOTH_HITBOX_FIX_LABEL : FIX_LABELS[id]) || DEFAULT_FIX_LABEL
   const f = check.fix
   if (f && f.ui) {
     const tool = FIX_TOOLS[f.ui]
@@ -1143,6 +1188,7 @@ export function checkFix(check: Check): FixAction | null {
   // The two facing tests disagreeing (facing_tests): turn to the turn the clean-up decided on, which the check carries.
   const turn = quarterTurn(num(check.vars?.fix_yaw))
   if (id === 'facing_tests' && turn !== null) return { stage: 'prep', params: { face_yaw: turn }, label }
+  if (bothHitboxes) return { stage: 'rig', params: { hitbox_fit: 'normal' }, label }
   if (id === 'hitbox_cover') return { stage: 'rig', params: { hitbox_fit: 'loose' }, label }
   if (id === 'hitbox_overreach') return { stage: 'rig', params: { hitbox_fit: 'snug' }, label }
   if (id === 'hitbox_fit' || id === 'clips' || id === 'legs_moved') return { stage: 'rig', params: {}, label }
@@ -1288,7 +1334,7 @@ export const OPTION_LABELS: Record<string, Record<string, string>> = {
   face_yaw: { auto: 'Automatic', '0': 'As built', '90': 'Turned a quarter to the left', '180': 'Turned around', '270': 'Turned a quarter to the right' },
   motion: { legs: 'Walks on its legs', wings: 'Flies, and walks when it lands', wave: 'Slithers or swims', none: 'Does not move by itself' },
   clips_source: { auto: 'Automatic', library: 'Hand-made library', procedural: 'Built-in moves' },
-  moves: { idle: 'Standing still', walk: 'Walk', run: 'Run', turn: 'Turn on the spot', attack: 'Attack', hit: 'Get hit', death: 'Die', jump: 'Jump', crouch: 'Crouch', roll: 'Roll', interact: 'Use or pick up', flap: 'Fly', glide: 'Glide', takeoff: 'Take off', land: 'Land', slither: 'Slither or swim' },
+  moves: { idle: 'Stand still', walk: 'Walk', run: 'Run', turn: 'Turn on the spot', attack: 'Attack', hit: 'Get hit', death: 'Die', jump: 'Jump', crouch: 'Crouch', roll: 'Roll', interact: 'Use or pick up', flap: 'Fly', glide: 'Glide', takeoff: 'Take off', land: 'Land', slither: 'Slither or swim' },
   move_size: { small: 'Small', normal: 'Normal', big: 'Big' },
   move_speed: { slow: 'Slow', normal: 'Normal', fast: 'Fast' },
   hitboxes: { detailed: 'One per body part', simple: 'Just head and body', none: 'None' },
@@ -1330,7 +1376,7 @@ export const OPTION_LABELS: Record<string, Record<string, string>> = {
 
 // A clip name in a sentence ("Moves: idle, walk, turn and get hit"). turn_left and turn_right are one move, "turn".
 const CLIP_PLAIN: Record<string, string> = {
-  idle: 'idle',
+  idle: 'stand still',
   walk: 'walk',
   run: 'run',
   turn: 'turn',
@@ -1360,7 +1406,7 @@ const CLIP_PLAIN: Record<string, string> = {
 // The moves a creature can make, by how it moves (the category yaml's clips, with turn as one move).
 export const MOVES_BY_MOTION: Record<string, string[]> = {
   legs: ['idle', 'walk', 'run', 'turn', 'attack', 'hit', 'death'],
-  // Human-shaped characters also get the hand-made library's extra moves.
+  // Human-shaped characters also get the move library's extra moves.
   human: ['idle', 'walk', 'run', 'turn', 'attack', 'hit', 'death', 'jump', 'crouch', 'roll', 'interact'],
   wings: ['idle', 'walk', 'flap', 'glide', 'takeoff', 'land', 'attack', 'hit', 'death'],
   wave: ['idle', 'slither', 'turn', 'attack', 'hit', 'death'],
@@ -1411,8 +1457,7 @@ export function libraryMissingLine(): string {
 
 // A clip's name in the viewer's clip picker: "Walk", "Turn left", "Get hit", "Die".
 const CLIP_LABELS: Record<string, string> = {
-  idle: 'Standing still',
-  attack: 'Sword attack',
+  idle: 'Stand still',
   jump_start: 'Jump (take off)',
   jump_loop: 'Jump (in the air)',
   jump_land: 'Jump (land)',
@@ -1421,15 +1466,15 @@ const CLIP_LABELS: Record<string, string> = {
   interact: 'Use or pick up',
 }
 
-// "Moves: 15 hand-made (free library) and 2 built in." from the rig version's metrics; '' when it does not say.
+// "Moves: 15 from the move library (free) and 2 built in." from the rig version's metrics; '' when it does not say.
 export function movesSourceLine(metrics: Record<string, unknown>): string {
   // Moves from the person's own files ("Add a move", metrics.moves source "mine") are counted on their own.
   const mine = Array.isArray(metrics.moves) ? metrics.moves.filter((m) => (m as { source?: string; made?: boolean })?.source === 'mine' && (m as { made?: boolean }).made !== false).length : 0
   const lib = (Array.isArray(metrics.library_clips) ? metrics.library_clips.length : 0) - mine
   const proc = Array.isArray(metrics.procedural_clips) ? metrics.procedural_clips.length : 0
   const yours = mine ? `, ${mine} from your own file${mine > 1 ? 's' : ''}` : ''
-  if (metrics.clips_source === 'library' && lib + mine > 0) return `Where they come from: ${lib} hand-made (a free library, fine for commercial games)${yours}${proc ? ` and ${proc} built in` : ''}.`
-  if (metrics.clips_source === 'procedural') return 'Where they come from: built in, made for this skeleton.'
+  if (metrics.clips_source === 'library' && lib + mine > 0) return `Where they come from: ${lib} from the move library (free, fine for commercial games)${yours}${proc ? ` and ${proc} made by the app` : ''}.`
+  if (metrics.clips_source === 'procedural') return 'Where they come from: made by the app for this skeleton.'
   return ''
 }
 
@@ -1702,6 +1747,18 @@ export function examplePrompts(category: string): [string, string] {
 // Errors
 // ---------------------------------------------------------------------------
 
+// One sentence for a person: a wrapper such as "The marks could not be found: ..." in front of a plain message is
+// dropped, however many were stacked, so the message that says what to do comes first (WP-96).
+export function oneSentence(message: string): string {
+  let out = message.trim()
+  for (let i = 0; i < 5; i++) {
+    const m = /^[A-Z][^:]{0,70} could not be [a-z ]+:\s+([A-Z][\s\S]*)$/.exec(out)
+    if (!m) break
+    out = m[1]
+  }
+  return out
+}
+
 export function humanError(raw: string | null | undefined): string {
   const r = (raw ?? '').toLowerCase()
   if (!r) return 'Something went wrong in this step. Try again.'
@@ -1730,6 +1787,16 @@ export function firstFailing(metrics: Record<string, unknown>, ctx: CheckContext
     for (const [name, v] of Object.entries(metrics.views as Record<string, { passed?: boolean }>)) if (v && v.passed === false) return `The ${name} view does not match the front view.`
   }
   return null
+}
+
+// The most serious tier among a version's failed checks (backend check_tiers.py), or null when none failed or none
+// carries a tier. "advice" alone means nothing here is likely to show in the game: a near miss is never a red dot (UX-10).
+export function failingTier(metrics: Record<string, unknown>): 'likely' | 'look' | 'advice' | null {
+  const checks = metrics.checks
+  if (!Array.isArray(checks)) return null
+  const tiers = (checks as Check[]).filter((c) => c && typeof c === 'object' && !checkPassed(c)).map((c) => c.tier)
+  if (tiers.length === 0 || tiers.some((t) => !t)) return null
+  return tiers.includes('likely') ? 'likely' : tiers.includes('look') ? 'look' : 'advice'
 }
 
 export function looksGood(metrics: Record<string, unknown>): boolean | null {

@@ -312,6 +312,20 @@
    "required": false,
    "note": "Size from the GitHub release asset; GitHub gives no checksum for it, so the SHA-256 is that of the owner's copy, which is the file the app was built with."
   },
+  "upscale_wood": {
+   "url": "https://github.com/Kim2091/Kim2091-Models/releases/download/4x-PBRify_UpscalerV4/4x-PBRify_UpscalerV4.pth",
+   "page": "https://github.com/Kim2091/Kim2091-Models/releases/tag/4x-PBRify_UpscalerV4",
+   "size": 140345646,
+   "sha256": "82db39e31e01da6816a9814c0553a8dcdb7bd2d655353e67075c9295068cb789",
+   "dest": "upscale_models",
+   "save_as": "4x-PBRify_UpscalerV4.pth",
+   "publisher": true,
+   "name": "4x-PBRify UpscalerV4 (wood upscaler)",
+   "licence": "CC0-1.0",
+   "extra": true,
+   "required": false,
+   "note": "Needed only for the wood material upscaler (backend/vgac/graphs/material.py); without it wood is drawn at the texture size, exactly as before. Licence proof: the release page at the page link says License: CC0, and OpenModelDB lists CC0-1.0 with commercial use allowed (bakeoff/wp58/models/pbrify_v4/LICENCE-NOTE.md). The host repository reports NOASSERTION and has no LICENSE file, so the release notes and OpenModelDB are the proof. Size and SHA-256 are those of the file the app was tested with, checked against the release download on 2026-11-21."
+  },
   "anima": {
    "url": "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-turbo-v1.1.safetensors",
    "page": "https://huggingface.co/circlestone-labs/Anima",
@@ -693,6 +707,7 @@
     "addon:turnaround_white",
     "model:upscale_photo",
     "model:upscale_art",
+    "model:upscale_wood",
     "model:face_model"
    ]
   },

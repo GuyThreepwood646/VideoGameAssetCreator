@@ -108,6 +108,11 @@ function EmptyGallery() {
   )
 }
 
+// "16 Nov 2026": the month in words, so it reads the same wherever the computer's date format puts the day.
+export function dayMonthYear(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
 function GalleryCard({ item, categoryName }: { item: GalleryItem; categoryName: string }) {
   const { presets } = usePresets()
   const thumbUrl = libraryUrl(item.thumbnail)
@@ -135,21 +140,21 @@ function GalleryCard({ item, categoryName }: { item: GalleryItem; categoryName: 
           {look && libraryUrl(item.glb ?? item.preview) && <Viewer url={libraryUrl(item.glb ?? item.preview) as string} height={240} turntableDefault showBonesDefault={false} />}
         </div>
       )}
-      <div className="chips">
-        <span className="chip" title={item.category}>
+      <div className="chips gallery-tags">
+        <span className="tag" title={item.category}>
           {categoryName}
         </span>
-        <span className="chip" title={platformPlain(item.platform_target)}>
+        <span className="tag" title={platformPlain(item.platform_target)}>
           {platformPlain(item.platform_target).split(':')[0]}
         </span>
         {style && (
-          <span className="chip" title={item.style_preset}>
+          <span className="tag" title={item.style_preset}>
             {style}
           </span>
         )}
       </div>
       <div className="muted small" title={when ? new Date(when).toLocaleString() : undefined}>
-        Finished {when ? `${new Date(when).toLocaleDateString()} (${timeAgo(when)})` : 'at an unknown time'}
+        Finished {when ? `${dayMonthYear(when)} (${timeAgo(when)})` : 'at an unknown time'}
       </div>
       <DeliveredRow path={item.delivered_to} versionId={item.export_version_id} />
       {(item.fbx || item.glb) && (

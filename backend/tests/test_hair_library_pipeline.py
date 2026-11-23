@@ -147,8 +147,12 @@ class Engines:
                 out = Path(args[1])
                 out.write_bytes(b"glTF-prep " + Path(args[0]).read_bytes())
                 budget = int(args[args.index("--budget") + 1]) if "--budget" in args else None
+                # prep scales the model to the step's size (--size), so the report's extent is that size, as in the real run
+                size = float(args[args.index("--size") + 1]) if "--size" in args else 1.7
+                k = size / 1.7
                 (self.dir / "prep_report.json").write_text(json.dumps({
-                    "triangles": (budget or 18000) if eng.body_at_budget else min(18000, budget or 18000), "vertices": 9000, "dims_m": [0.6, 0.3, 1.7], "size_extent_m": 1.7,
+                    "triangles": (budget or 18000) if eng.body_at_budget else min(18000, budget or 18000), "vertices": 9000,
+                    "dims_m": [round(0.6 * k, 4), round(0.3 * k, 4), round(size, 4)], "size_extent_m": round(size, 4),
                     "non_manifold_edges": 0, "boundary_edges": 0, "degenerate_faces": 0, "uv_layers": 1, "bones": 0,
                     "rebaked": False, "decimated": False, "head_triangles": 1200, "budget_seen": budget}))
             return ""
@@ -430,7 +434,13 @@ for _stage, _part, _keys in (("turnaround", "files", ["quarter2", "quarter2_cuto
                              ("mesh", "metrics", ["texture_fidelity"]), ("prep", "params", ["source_project_mode"]),
                              ("prep", "metrics", ["srcproject_applied", "srcproject_reason", "srcproject_upscale", "texture_fidelity"]),
                              # Shape loss (WP-16, 2026-11-19): how far the budget reduction moved the surface, a metric only.
-                             ("prep", "metrics", ["shape_loss"])):
+                             ("prep", "metrics", ["shape_loss"]),
+                             # WP-16 outline check: before and after the reduction as outlines from seven views.
+                             ("prep", "metrics", ["outline"]),
+                             # WP-86 (2026-11): the re-bake's unreached-texel count, recorded on every clean-up (None when not re-baked).
+                             ("prep", "metrics", ["rebake_unreached"]),
+                             # Per-step time log (WP-91): metrics.timing on every run through the dispatcher.
+                             ("turnaround", "metrics", ["timing"]), ("mesh", "metrics", ["timing"]), ("prep", "metrics", ["timing"])):
     GOLDEN_OFF[_stage][_part] = sorted(GOLDEN_OFF[_stage][_part] + _keys)
 # Today's checks that stand back when the model is bald on purpose.
 GONE_ON = {"prep": {"checks": {"hair_matches_picture"}}}

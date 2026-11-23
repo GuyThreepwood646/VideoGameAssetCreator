@@ -18,14 +18,17 @@ import yaml
 from .config import DATA_DIR
 
 STAGE_ORDER = ("concept", "turnaround", "mesh", "prep", "rig", "export")
-STAGE_LABELS = {
-    "concept": "Concept",
-    "turnaround": "Preview turnaround",
-    "mesh": "Mesh and texture",
-    "prep": "Game-ready prep",
-    "rig": "Rig",
-    "export": "Export",
+# The one source of step names (UX-03). The plain name leads; the technical line is the industry term, three to six words.
+# guidance.py reads it for the help text and /api/stages sends both; the frontend has no copy of its own.
+STAGE_NAMES = {
+    "concept": {"plain": "Describe", "technical": "Concept art (text-to-image)"},
+    "turnaround": {"plain": "Check all sides", "technical": "Multi-view turnaround"},
+    "mesh": {"plain": "Build the 3D model", "technical": "Image-to-3D mesh generation"},
+    "prep": {"plain": "Clean up for the game", "technical": "Retopology, UV unwrap, texture bake"},
+    "rig": {"plain": "Make it move", "technical": "Rigging, skin weights, animation"},
+    "export": {"plain": "Hand off to the game", "technical": "Export: FBX / GLB, LODs, colliders, Unity prefab"},
 }
+STAGE_LABELS = {s: n["plain"] for s, n in STAGE_NAMES.items()}
 TURNAROUND_VIEWS = ("front", "left", "back", "right", "quarter", "quarter2", "top")
 
 # Knobs that apply to some categories only carry `categories` (docs/GREAT-ASSETS-PLAN.md 2.3). Material has no mesh
@@ -83,7 +86,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("prompt_override", "string", "", description="Replaces the asset prompt for this version"),
         # {add-on id: off | subtle | normal | strong}; ids missing here keep the recipe and style lock choice. The
         # schema read (_schema) adds `catalog`: the concept add-ons with label, help, strengths and base models.
-        _param("addons", "addons", None, label="LoRAs (style add-ons)", options=list(ADDON_CHOICES),
+        _param("addons", "addons", None, label="Style add-ons (LoRAs)", options=list(ADDON_CHOICES),
                description="The recipe and the style lock decide when empty"),
     ],
     "turnaround": [
@@ -96,9 +99,9 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("lora_strength", "number", 0.9, min=0.0, max=1.5, step=0.05),
         # The person's own LoRAs for the views and the pose redraw (docs/PLAN-qwen-edit-loras-2026-11-18.md). A view
         # LoRA can stop the views turning, so a changed choice redraws every view it applies to.
-        _param("view_addons", "edit_addons", None, label="Your LoRAs for the side views", options=list(ADDON_CHOICES),
+        _param("view_addons", "edit_addons", None, label="Your side-view add-ons (LoRAs)", options=list(ADDON_CHOICES),
                description="Your own LoRAs for the side views, loaded after the built-in views LoRA. Can stop the views turning correctly; when not set, the ones you set to start on for this kind of asset (System, Your library)"),
-        _param("pose_addons", "edit_addons", None, categories=["humanoid"], label="Your LoRAs for the pose redraw",
+        _param("pose_addons", "edit_addons", None, categories=["humanoid"], label="Your pose-redraw add-ons (LoRAs)",
                options=list(ADDON_CHOICES),
                description="Your own LoRAs for the pose redraw only. The posed picture feeds the 3D build; when not set, the ones you set to start on for this kind of asset (System, Your library)"),
         _param("seed", "integer", None, min=0, max=2**31 - 1),
@@ -133,7 +136,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("seed", "integer", None, min=0, max=2**31 - 1),
         _param("remesh", "boolean", None, description="Watertight remesh before decimation; category default when empty (off for scenery so doorways stay open)"),
         # G03: UnwrapMesh accepts 0 to 16 texels; the plan's 64 is beyond the node.
-        _param("padding", "integer", None, min=1, max=16, label="UV padding (seam space, in pixels)",
+        _param("padding", "integer", None, min=1, max=16, label="Seam space in pixels (UV padding)",
                description="Automatic when empty: 4 px at 1024, 8 at 2048, 16 at 4096"),
     ],
     "prep": [
@@ -156,10 +159,10 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("shading", "select", "auto", label="Shading", options=list(SHADING_OPTIONS), categories=SURFACE_CATEGORIES,
                description="Automatic follows the recipe: flat for low-poly, smooth for the rest"),
         # G07, G08: the style decides when empty (data/styles.yaml delight_default and pbr_fix_default).
-        _param("delight", "select", "auto", options=list(DELIGHT_OPTIONS), categories=SURFACE_CATEGORIES, label="Delight (remove painted-on shadows)"),
-        _param("pbr_fix", "boolean", None, categories=SURFACE_CATEGORIES, label="PBR range check (realistic colour range)",
+        _param("delight", "select", "auto", options=list(DELIGHT_OPTIONS), categories=SURFACE_CATEGORIES, label="Remove painted-on shadows (delight)"),
+        _param("pbr_fix", "boolean", None, categories=SURFACE_CATEGORIES, label="Realistic colour range (PBR range check)",
                description="On for realistic styles, off for others, when empty"),
-        _param("rebake", "boolean", False, categories=SURFACE_CATEGORIES, label="Rebake (paint the surface again)",
+        _param("rebake", "boolean", False, categories=SURFACE_CATEGORIES, label="Paint the surface again (rebake)",
                description="Prep repaints by itself when mirroring or shrinking changes the shape"),
         # The picture painted into the base colour (vgac/srcproject.py). Empty: by itself for a character on a smooth
         # look. On: any model. Off: never.
@@ -171,12 +174,12 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("face_strength", "number", 1.0, min=0.0, max=1.0, step=0.1, categories=["humanoid"], label="Face strength",
                description="How much of the painted face goes onto the model: 1 is all of it"),
         _param("face_density", "select", "auto", options=["auto", "standard", "high"], categories=["humanoid"],
-               label="Face texel density (face sharpness)",
+               label="Face sharpness (texel density)",
                description="Automatic picks High where the platform's texture allows it and the picture has the detail, else Standard"),
         _param("face_closeup", "boolean", True, categories=["humanoid"], label="Close-up source (a larger picture of the face)",
                description="When the face in the picture is small, draw a close-up of it and use it if it is still the same face"),
         # Your own LoRAs for the face close-up only (never the sharpening redraw): docs/PLAN-qwen-edit-loras-2026-11-18.md.
-        _param("face_addons", "edit_addons", None, categories=["humanoid"], label="Your LoRAs for the face close-up",
+        _param("face_addons", "edit_addons", None, categories=["humanoid"], label="Your face add-ons (LoRAs)",
                options=list(ADDON_CHOICES), description="Your own LoRAs for the face close-up only; when not set, the ones you set to start on for this kind of asset (System, Your library)"),
         _param("face_closeup_guided", "boolean", True, categories=["humanoid"], label="Guide the close-up by your face picture (optional)",
                description="With your own close-up, or a face picture given with the new asset, the close-up is drawn with that face's features; off draws it from the painting alone"),
@@ -196,9 +199,9 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                label="Hair material (its own texture and shader)",
                description="The hair gets a second material with its own texture, so it is sharper and shines like hair in Unity; costs one more draw call. Automatic: on for PC and Showcase, off for Phone"),
         # More triangles on the head (vgac/headtris.py): humanoids in looks with smooth shading and the full budget.
-        _param("head_triangles", "boolean", True, categories=["humanoid"], label="Weighted decimation (more triangles on the head)",
+        _param("head_triangles", "boolean", True, categories=["humanoid"], label="More triangles on the head (weighted decimation)",
                description="When the 3D model was built with room for it, the head keeps about twice its share of the triangles and the body gives them up; the total stays inside the budget"),
-        _param("hand_triangles", "boolean", True, categories=["humanoid"], label="Weighted decimation (more triangles on the hands)",
+        _param("hand_triangles", "boolean", True, categories=["humanoid"], label="More triangles on the hands (weighted decimation)",
                description="Only with head_triangles: the hands keep about three times their even share of the triangles; needs the 3D model built with room (the head weighting's)"),
     ],
     "rig": [
@@ -213,7 +216,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                                                       "flap", "glide", "takeoff", "land", "slither"],
                categories=["humanoid", "quadruped", "multileg", "winged", "serpent"], description="Every move of the category when empty"),
         _param("clips_source", "select", "auto", options=["auto", "library", "procedural"], categories=["humanoid"],
-               description="Automatic uses the hand-made library for human-shaped characters when it is installed"),
+               description="Automatic uses the app's move library for human-shaped characters when it is installed"),
         _param("move_size", "select", "normal", options=["small", "normal", "big"], categories=["humanoid", "quadruped", "multileg", "winged", "serpent"]),
         _param("move_speed", "select", "normal", options=["slow", "normal", "fast"], categories=["humanoid", "quadruped", "multileg", "winged", "serpent"]),
         _param("hitboxes", "select", None, options=["detailed", "simple", "none"], categories=["humanoid", "quadruped", "multileg", "winged", "serpent"],
@@ -244,10 +247,10 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     ],
     "export": [
         _param("lods", "string", None, description="LOD ratios after LOD0, comma separated, e.g. 0.5, 0.25, 0.1; category default when empty"),
-        _param("collider", "select", "auto", label="Collider (collision shape)", options=["auto", "hull", "decompose", "mesh", "none"],
+        _param("collider", "select", "auto", label="Collision shape (collider)", options=["auto", "hull", "decompose", "mesh", "none"],
                categories=["prop_rigid", "prop_articulated", "vehicle", "environment", "foliage"],
                description="The invisible shapes the game uses to know where this is solid."),
-        _param("collider_max_parts", "integer", None, label="Max collider parts (most shapes)", min=1, max=32,
+        _param("collider_max_parts", "integer", None, label="Most shapes (max collider parts)", min=1, max=32,
                categories=["prop_rigid", "prop_articulated", "vehicle", "environment"],
                description="Automatic when empty: 8 for props, 16 for scenery, 6 for vehicles, half on Phone"),
         _param("movement_shape", "select", "auto", options=["auto", "upright", "along", "box", "none"], categories=["humanoid", "quadruped", "multileg", "winged", "serpent"]),
@@ -366,6 +369,38 @@ def _load_yaml(path) -> Any:
         return yaml.safe_load(f) or {}
 
 
+def _platform_table(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Platform rows by id. Every platform must carry lod_screen_heights (LOD0..LOD3 switch heights, each a fraction in
+    (0, 1], falling as the level gets lighter) and lod_reference_height_px. The last level must still show at least
+    LOD_CULL_MIN_PX on that reference screen, so it never culls an object that is still that tall. A platform without
+    these stops the app from loading."""
+    table: dict[str, dict[str, Any]] = {}
+    for p in rows:
+        pid = p.get("id")
+        heights = p.get("lod_screen_heights")
+        if not isinstance(heights, list) or len(heights) != 4:
+            raise ValueError(f"platform {pid!r} needs lod_screen_heights: four switch heights (LOD0..LOD3) in platforms.yaml")
+        vals = [float(h) for h in heights]
+        if not all(0 < h <= 1 for h in vals) or any(b >= a for a, b in zip(vals, vals[1:])):
+            raise ValueError(f"platform {pid!r} lod_screen_heights must fall from 1 down to 0, each in (0, 1]: {vals}")
+        ref = p.get("lod_reference_height_px")
+        if not isinstance(ref, (int, float)) or ref <= 0:
+            raise ValueError(f"platform {pid!r} needs lod_reference_height_px (the screen height the heights are judged on)")
+        if vals[-1] * ref < LOD_CULL_MIN_PX:
+            raise ValueError(f"platform {pid!r}: the last LOD height {vals[-1]} on {ref:g} px culls below {LOD_CULL_MIN_PX:g} px")
+        table[pid] = p
+    return table
+
+
+def lod_screen_heights(platform_id: str) -> list[float]:
+    """The Unity switch heights for a platform, LOD0..LOD3 (platforms.yaml)."""
+    return [float(h) for h in platform(platform_id)["lod_screen_heights"]]
+
+
+# The smallest on-screen height (pixels, on the platform's reference screen) the last LOD may cull at.
+LOD_CULL_MIN_PX = 32
+
+
 @lru_cache(maxsize=1)
 def _data() -> dict[str, Any]:
     categories: dict[str, dict[str, Any]] = {}
@@ -376,7 +411,7 @@ def _data() -> dict[str, Any]:
         categories[c["id"]] = c
     styles = {s["id"]: {**s, "prompt_block": " ".join(str(s.get("prompt_block", "")).split())}
               for s in _load_yaml(DATA_DIR / "styles.yaml").get("styles", [])}
-    platforms = {p["id"]: p for p in _load_yaml(DATA_DIR / "platforms.yaml").get("platforms", [])}
+    platforms = _platform_table(_load_yaml(DATA_DIR / "platforms.yaml").get("platforms", []))
     models = _load_yaml(DATA_DIR / "models.yaml").get("models", {})
     addon_path = DATA_DIR / "addons.yaml"
     addon_list = (_load_yaml(addon_path).get("addons") or []) if addon_path.is_file() else []
@@ -502,7 +537,7 @@ def stages() -> list[dict[str, Any]]:
             if labels and entry["type"] in ("select", "multiselect"):
                 item["option_labels"] = {str(k): v for k, v in labels.items()}
             schema.append(item)
-        out.append({"id": s, "label": STAGE_LABELS[s], "plain_name": g.get("plain_name", STAGE_LABELS[s]),
+        out.append({"id": s, "label": STAGE_LABELS[s], "plain_name": g.get("plain_name", STAGE_LABELS[s]), "technical_short": g.get("technical_short", ""),
                     "plain_verb": g.get("plain_verb", "Run"), "help": g.get("help", {}),
                     "estimate_seconds": g.get("estimate_seconds", 60), "adjust_schema": schema})
     return out
@@ -770,6 +805,29 @@ SURFACE_SWITCHES = ("face_layout", "colour_per_face", "face_keeps_texture")
 # them to the resolved recipe only when set, so a look without them keeps its recipe and digest).
 RECIPE_OPTIONAL: dict[str, tuple[str, ...]] = {"mesh": ("triangle_cap", "bake_texture"), "surface": SURFACE_SWITCHES}
 # The noun of the recipe's plain sentence, per category.
+# The picker's headings (UX-08), in order. The category keys and labels are unchanged; only the grouping is new.
+CATEGORY_GROUPS = (
+    ("Characters and creatures", ("humanoid", "quadruped", "multileg", "winged", "serpent")),
+    ("Objects and vehicles", ("prop_rigid", "prop_articulated", "vehicle")),
+    ("Places and plants", ("environment", "foliage")),
+    ("Surfaces", ("material",)),
+)
+
+
+def category_group(category_id: str) -> str:
+    """The heading a category sits under in the picker; a category in no group goes under the last one."""
+    for name, ids in CATEGORY_GROUPS:
+        if category_id in ids:
+            return name
+    return CATEGORY_GROUPS[-1][0]
+
+
+def category_order(category_id: str) -> int:
+    """Where a category sits in the picker: by group, then in the order the group lists it."""
+    flat = [i for _name, ids in CATEGORY_GROUPS for i in ids]
+    return flat.index(category_id) if category_id in flat else len(flat)
+
+
 CATEGORY_NOUNS = {"humanoid": "character", "quadruped": "creature", "winged": "flying creature", "multileg": "creature",
                   "serpent": "creature", "vehicle": "vehicle", "prop_rigid": "prop", "prop_articulated": "prop",
                   "environment": "scenery piece", "foliage": "plant", "material": "material"}

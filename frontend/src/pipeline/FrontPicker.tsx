@@ -1,7 +1,7 @@
 // "Which way is the front?" (plan 3.2): the face_yaw knob as four picture buttons plus Automatic. Each picture is a
 // still of the built 3D model seen from the front camera, turned by that option's angle; the person picks the one
 // where the front faces them. While a still is rendering, or when there is no model to draw, a top-down drawing of
-// the turn stands in (SVG, no emoji). When Automatic is chosen, the angle prep actually used carries a "chosen" mark.
+// the turn stands in (SVG, no emoji). When Automatic is chosen, the angle prep actually used carries an "Automatic picks this" note under it (not the selected border, which is only the person's own choice).
 import { useId } from 'react'
 import { Info } from '../components/Info'
 import { useGlbYawSnapshots } from '../glbSnapshot'
@@ -61,9 +61,9 @@ export function FrontPicker({ value, onChange, options, optionLabels, label = 'W
               <input type="radio" name={name} checked={on} onChange={() => pick(o)} />
               <span className="front-pic">
                 {src ? <img src={src} alt={`The model ${optionLabel(p, o).toLowerCase()}, seen from the front`} /> : <TurnIcon yaw={yaw} />}
-                {chosen && <span className="front-chosen">chosen</span>}
               </span>
               <span className="front-label">{optionLabel(p, o)}</span>
+              {chosen && <span className="front-chosen">Automatic picks this</span>}
             </label>
           )
         })}

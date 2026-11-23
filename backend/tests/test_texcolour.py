@@ -103,7 +103,7 @@ def _fake_builds(ratios: list[float]):
 
 def test_first_dark_then_good_keeps_the_second():
     calls, build = _fake_builds([0.16, 0.67, 0.9])
-    best, tries = asyncio.run(texcolour.build_with_rerolls(1234, True, build, calls["aside"].append, calls["back"].append, texture_tries=0))
+    best, tries = asyncio.run(texcolour.build_with_rerolls(1234, True, build, calls["aside"].append, calls["back"].append))
     assert best == 1 and len(tries) == 2
     assert calls["seeds"] == [1234, texcolour.try_seed(1234, 1)] and calls["seeds"][1] != 1234
     assert calls["aside"] == [0] and calls["back"] == []
@@ -113,13 +113,13 @@ def test_first_dark_then_good_keeps_the_second():
 
 def test_all_three_dark_keeps_the_closest_and_fails():
     calls, build = _fake_builds([0.16, 0.48, 0.29])
-    best, tries = asyncio.run(texcolour.build_with_rerolls(99, True, build, calls["aside"].append, calls["back"].append, texture_tries=0))
+    best, tries = asyncio.run(texcolour.build_with_rerolls(99, True, build, calls["aside"].append, calls["back"].append))
     assert len(tries) == texcolour.MAX_TRIES == 3
     assert best == 1 and calls["aside"] == [0, 1] and calls["back"] == [1]
     c = texcolour.check(texcolour.record(best, tries))
     assert c["ok"] is False and c["severity"] == "block" and c["value"] == 0.48
-    assert "built 3 times" in c["help"] and "Build it again" in c["help"]
-    assert c["fix"] == {"stage": "mesh", "params": {"seed": None}, "label": "Build it again"}
+    assert "built 3 times" in c["help"] and "Build the 3D model again" in c["help"]
+    assert c["fix"] == {"stage": "mesh", "params": {"seed": None}, "label": "Build the 3D model again"}
 
 
 def test_nothing_to_compare_builds_once():
@@ -198,9 +198,8 @@ def stage(tmp_path, monkeypatch):
         if state["stop_at"] == n:
             raise jobs.JobCancelled()
         state["seeds"].append(seed)
-        tseed = k.get("texture_seed")
         (sc.dir / "model.glb").write_text(f"glb {seed}")
-        (sc.dir / "base_color.png").write_text(f"base {seed} tex {tseed}")
+        (sc.dir / "base_color.png").write_text(f"base {seed}")
         r = state["ratios"][n]
         return {"seed": seed, "elapsed": 100.0, "maps": {"base_color": sc.dir / "base_color.png"}, "other": [],
                 "metrics": {"atlas_used": 0.5 + n / 100}, "match": {"ratio": r, "ok": r >= texcolour.RATIO_MIN, "picture_luma": 180, "texture_luma": 180 * r}}
@@ -218,29 +217,30 @@ def stage(tmp_path, monkeypatch):
     return state, run
 
 
-def test_stage_keeps_the_texture_only_second_build_and_its_shape(stage):
+def test_stage_dark_first_build_is_built_again_with_a_new_seed(stage):
     state, run = stage
     sc = run({"seed": 4242})
     assert state["seeds"][0] == 4242  # the person's seed is honoured for the first build
-    # The second build is texture-only (ratio 0.67 passes): same shape seed, its own texture seed.
-    assert state["seeds"] == [4242, 4242]
-    assert sc.version.params["seed"] == 4242 and sc.version.params["first_seed"] is None
-    assert sc.version.metrics["seed"] == 4242 and sc.version.metrics["texture_tries"] == 2
-    assert (sc.dir / "base_color.png").read_text() == f"base 4242 tex {texcolour.texture_try_seed(4242, 1)}"
+    # The retry is a full rebuild with the next seed (ratio 0.67 passes); there is no texture-only try.
+    assert state["seeds"] == [4242, texcolour.try_seed(4242, 1)]
+    assert sc.version.params["seed"] == texcolour.try_seed(4242, 1) and sc.version.params["first_seed"] == 4242
+    assert sc.version.metrics["seed"] == texcolour.try_seed(4242, 1) and sc.version.metrics["texture_tries"] == 2
+    assert (sc.dir / "base_color.png").read_text() == f"base {texcolour.try_seed(4242, 1)}"
     assert not (sc.dir / mesh_stage.TRIES_DIR).exists()
     assert sc.registered["glb"] == sc.dir / "model.glb"
-    assert any("only the texture is painted again" in m for m in sc.messages)
+    assert any("3D model is being built again" in m for m in sc.messages)
 
 
 def test_stage_all_dark_keeps_the_closest_files(stage):
     state, run = stage
     state["ratios"] = [0.16, 0.48, 0.29]
     sc = run({"seed": 10})
-    # Build 1 (texture only, 0.48) is the closest; the kept build keeps the shape seed.
-    assert state["seeds"] == [10, 10, texcolour.try_seed(10, 1)]
-    assert sc.version.params["seed"] == 10 and sc.version.metrics["texture_try_kept"] == 2
-    assert (sc.dir / "model.glb").read_text() == "glb 10"
-    assert (sc.dir / "base_color.png").read_text() == f"base 10 tex {texcolour.texture_try_seed(10, 1)}"
+    # Build 1 (0.48) is the closest; each retry is a full rebuild with the next seed.
+    assert state["seeds"] == [10, texcolour.try_seed(10, 1), texcolour.try_seed(10, 2)]
+    kept = texcolour.try_seed(10, 1)
+    assert sc.version.params["seed"] == kept and sc.version.metrics["texture_try_kept"] == 2
+    assert (sc.dir / "model.glb").read_text() == f"glb {kept}"
+    assert (sc.dir / "base_color.png").read_text() == f"base {kept}"
     assert sc.version.metrics["atlas_used"] == 0.51  # the kept build's own measures
     assert sc.version.metrics["elapsed_seconds_all"] == 300.0
 
@@ -280,9 +280,9 @@ def test_stop_mid_rebuild_and_resume_builds_the_same_tries(stage):
     # Stopped during the second build: the version still has the first seed, which a Resume carries.
     state["stop_at"] = None
     sc = run({"seed": first})
-    # The texture-only second build (same shape seed) passes, so the resumed run stops there.
-    assert state["seeds"] == [first, first]
-    assert sc.version.params["seed"] == first
+    # The second build (a full rebuild with the next seed) passes, so the resumed run stops there.
+    assert state["seeds"] == [first, texcolour.try_seed(first, 1)]
+    assert sc.version.params["seed"] == texcolour.try_seed(first, 1)  # the kept second build, as a fresh run makes it
 
 
 def test_stopped_version_keeps_the_first_seed(stage, tmp_path):
@@ -320,4 +320,4 @@ def test_albedo_range_kept_look_excused_only_while_as_bright_as_the_picture():
 
 def test_check_guide_entry_reads_plainly():
     g = guidance.CHECK_GUIDE[texcolour.CHECK_ID]
-    assert g["severity"] == "block" and g["fix_label"] == "Build it again"
+    assert g["severity"] == "block" and g["fix_label"] == "Build the 3D model again"

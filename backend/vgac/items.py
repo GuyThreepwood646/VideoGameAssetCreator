@@ -1016,13 +1016,16 @@ async def equip(sc: Any, name: str) -> dict[str, Any] | None:
         if "glb" not in files:
             skipped.append({"item": it.name, "reason": "the item has no GLB"})
             continue
+        # The folder is the item's id, not its export name: the export name repeats in every file name, and the path
+        # must stay under the library folder limit (library.py). The stored relative paths are what readers use.
         export_name = ex.params.get("export_name") or Path(files["glb"]).stem
-        d = items_dir / export_name
+        folder = str(it.id)[:library.ID_CHARS]
+        d = items_dir / folder
         d.mkdir(parents=True, exist_ok=True)
         rel = {}
         for k, p in files.items():
             shutil.copy2(p, d / p.name)
-            rel[k] = f"items/{export_name}/{p.name}"
+            rel[k] = f"items/{folder}/{p.name}"
         s = have[at["socket"]]
         grip = ex.metrics.get("grip") or {}
         t = item_type(at.get("type"))

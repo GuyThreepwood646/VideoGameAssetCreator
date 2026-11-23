@@ -117,6 +117,20 @@ NOTES: dict[str, tuple[str, str]] = {
     "height_m": ("legacy", "Older versions only: this is now the size check. Run Clean up for the game again to get it."),
 }
 
+# WP-86 and WP-92 (warnings only): no button changes the cause yet, so each says what to do.
+NOTES.update({
+    "painted_share": ("by_hand", "Build the 3D model again from a clear, straight, full-length front picture, or accept the 3D builder's own colours."),
+    "uv_transfer_offset": ("by_hand", "Run the skeleton step again; if it repeats, build the 3D model again and rig that one."),
+    "slivers": ("by_hand", "Build the 3D model again for another try, or accept it: thin triangles only matter where the model bends or is lit closely."),
+    "texel_density_spread": ("by_hand", "Run Clean up for the game again; if the same parts stay blurry, accept it or build the 3D model again."),
+    "flipped_shells": ("by_hand", "Build the 3D model again for another try, and look at hair, leaves and cloth in the viewer from both sides."),
+    "unreached_texels": ("by_hand", "Run Clean up for the game again, or accept it if the empty patches are out of sight."),
+})
+
+# WP-16 outline check: no button changes the budget, so the line says what is honest.
+NOTES["outline_kept"] = ("by_hand", "Look at the model from the side and from above in the viewer. If a thin part or a hole is gone, build the 3D model again, "
+                         "or choose a platform with a larger triangle budget so Clean up keeps more of it; if it looks right, accept it.")
+
 # Checks that are not in CHECK_GUIDE and carry their own fix when the app has one (rig.py fingers_check, limbjoins).
 OWN_FIX = {"fingers", "limb_joins"}
 

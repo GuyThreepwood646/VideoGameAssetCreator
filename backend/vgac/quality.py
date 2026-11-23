@@ -298,3 +298,67 @@ def rig_checks(info: dict[str, Any], rig_expected: bool, min_coverage: float = 0
 def summarise(checks: list[Check]) -> dict[str, Any]:
     failed = [c["name"] for c in checks if not c["passed"]]
     return {"checks": checks, "checks_passed": len(checks) - len(failed), "checks_failed": failed, "gate_ok": not failed}
+
+
+# --- WP-86 and WP-92: warnings for things that were measured but never judged. None blocks shipping, and each limit is wide
+# on purpose: the library has only humanoid (and three prop) samples, so none is calibrated per category yet. -----------------
+
+# Painted share (stages/prep.py): of the surface, the share the picture painting painted. Lowest on 54 applied runs of
+# humanoid characters: 0.29 (5th percentile 0.33, median 0.69).
+PAINTED_SHARE_MIN = 0.20
+# UV transfer (blender/rig_fix.py): the farthest a face's nearest reference face was, as a share of the model's size. Every
+# one of 59 recorded humanoid transfers was 0.0.
+UV_TRANSFER_OFFSET_MAX = 0.02
+# Slivers: the share of triangles with a corner under meshchecks.SLIVER_ANGLE_DEG. Humanoid 0.1 to 7.3 percent, 3 props 0.1 to 0.7.
+SLIVER_SHARE_MAX = 0.15
+# Texel-density spread (meshchecks.texel_density_spread): p95 over p5 of the pieces' density. Humanoid 1.0 to 3.05 (the face
+# and hair pieces are laid out deliberately denser); 3 props 1.0.
+TEXEL_DENSITY_SPREAD_MAX = 4.0
+# Flipped shells: the share of the surface in shells that look inside out. 0 on all 62 humanoid and 3 prop samples.
+FLIPPED_SHELLS_MAX = 0.05
+# Re-bake (blender/rebake.py measure_unreached): the share of covered texels no ray reached. Environments were recorded at 15 to 19 percent.
+UNREACHED_TEXELS_MAX = 0.02
+
+
+def painted_share_check(share: Any, limit: float = PAINTED_SHARE_MIN) -> Check | None:
+    """painted_share: the picture painting ran (picture_projection passes) but painted little of the surface."""
+    if not isinstance(share, (int, float)) or isinstance(share, bool):
+        return None
+    return check("painted_share", float(share) >= limit, round(float(share), 4), limit)
+
+
+def uv_transfer_check(uvs: Any, limit: float = UV_TRANSFER_OFFSET_MAX) -> Check | None:
+    """uv_transfer_offset: texture coordinates were copied from the reference model and the nearest reference face was far away."""
+    off = (uvs or {}).get("max_face_offset") if isinstance(uvs, dict) else None
+    if not isinstance(off, (int, float)) or isinstance(off, bool):
+        return None
+    return check("uv_transfer_offset", float(off) <= limit, round(float(off), 5), limit)
+
+
+def mesh_measure_checks(mm: dict[str, Any] | None) -> list[Check]:
+    """slivers, texel_density_spread and flipped_shells from meshchecks.measure_glb; a measure that is missing makes no check."""
+    out: list[Check] = []
+    if not mm:
+        return out
+    s = mm.get("slivers")
+    if s and s.get("faces"):
+        out.append(check("slivers", s["share"] <= SLIVER_SHARE_MAX, round(float(s["share"]), 4), SLIVER_SHARE_MAX,
+                         vars={"count": s["count"], "faces": s["faces"]}))
+    d = mm.get("texel_density")
+    if d and isinstance(d.get("spread"), (int, float)):
+        out.append(check("texel_density_spread", d["spread"] <= TEXEL_DENSITY_SPREAD_MAX, round(float(d["spread"]), 2),
+                         TEXEL_DENSITY_SPREAD_MAX, vars={"islands": d["islands"]}))
+    f = mm.get("flipped_shells")
+    if f and f.get("shells"):
+        out.append(check("flipped_shells", f["flipped_share"] <= FLIPPED_SHELLS_MAX, round(float(f["flipped_share"]), 4),
+                         FLIPPED_SHELLS_MAX, vars={"flipped": f["flipped"], "shells": f["shells"]}))
+    return out
+
+
+def unreached_check(u: Any, limit: float = UNREACHED_TEXELS_MAX) -> Check | None:
+    """unreached_texels: the share of covered texels the re-bake's rays never reached (blender/rebake.measure_unreached)."""
+    share = (u or {}).get("share") if isinstance(u, dict) else None
+    if not isinstance(share, (int, float)) or isinstance(share, bool):
+        return None
+    return check("unreached_texels", float(share) <= limit, round(float(share), 4), limit,
+                 vars={"texels": u.get("texels"), "covered": u.get("covered")})

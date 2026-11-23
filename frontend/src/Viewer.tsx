@@ -56,6 +56,8 @@ export type HitboxDoc = {
 // One row of the clip sidecar (anim_clips.json).
 export type ClipInfo = { name: string; loop?: boolean; seconds?: number; hold_last?: boolean; label?: string }
 export type Shading = 'textured' | 'wireframe' | 'normals'
+// Plain word first, the industry term in brackets (UX-04): the normals view paints the surface direction as colour.
+const SHADING_LABEL: Record<Shading, string> = { textured: 'Textured', wireframe: 'Wireframe', normals: 'Bumps (normals)' }
 // 'gltf': segments already in glTF axes (rig_info bone_segments_gltf).
 // 'unknown': older rig_info without them; may be Blender Z-up, so that is tried too.
 export type BonesSpace = 'gltf' | 'unknown'
@@ -1398,16 +1400,15 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
   return (
     <section className={'viewer ' + className} style={{ height: large ? 'min(86vh, 960px)' : height }}>
       <div className="viewer-toolbar">
+        <div className="vt-group" role="group" aria-label="View">
+        <span className="vt-label">View</span>
         <div className="segmented">
           {(['textured', 'wireframe', 'normals'] as Shading[]).map((s) => (
             <button key={s} type="button" aria-pressed={shading === s} onClick={() => changeShading(s)}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
+              {SHADING_LABEL[s]}
             </button>
           ))}
         </div>
-        <button type="button" aria-pressed={turntable} onClick={() => setTurntable((t) => !t)} title={reduceMotion && !turntable ? 'Off because your system asks for less motion; press to spin the model' : undefined}>
-          Turntable
-        </button>
         <details className="viewer-show">
           <summary title="Choose what to show on the model">Show</summary>
           <div className="viewer-show-pop">
@@ -1451,6 +1452,12 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
           </div>
         </details>
         <LightPicker value={light} onChange={chooseLight} note={lightNote} />
+        </div>
+        <div className="vt-group" role="group" aria-label="Motion">
+        <span className="vt-label">Motion</span>
+        <button type="button" aria-pressed={turntable} onClick={() => setTurntable((t) => !t)} title={reduceMotion && !turntable ? 'Off because your system asks for less motion; press to spin the model' : undefined}>
+          Turntable
+        </button>
         {clips.length > 0 && (
           <>
             {orderedClips.length <= 10 ? (
@@ -1476,6 +1483,9 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
             </button>
           </>
         )}
+        </div>
+        <div className="vt-group" role="group" aria-label="Camera">
+        <span className="vt-label">Camera</span>
         <div className="segmented" role="group" aria-label="What dragging does">
           <button type="button" aria-pressed={dragMode === 'turn'} onClick={() => setDragMode('turn')} title="Dragging turns the model">
             Turn
@@ -1493,6 +1503,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         <button type="button" aria-pressed={large} onClick={() => setLarge((l) => !l)} title={large ? 'Back to the normal size' : 'Makes the preview taller, for looking at small parts'}>
           Larger view
         </button>
+        </div>
         <span className="viewer-status" aria-live="polite">
           {hoverLabel ?? status}
         </span>

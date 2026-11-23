@@ -55,7 +55,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .. import buildpose, colourmatch, facing, guidance, hairlib, headgraft, headtris, imaging, library, meshgeom, normalfix, quality, reference, texcolour, texfidelity
+from .. import buildpose, colourmatch, facing, guidance, hairlib, headgraft, headtris, imaging, library, meshgeom, normalfix, quality, reference, steptime, texcolour, texfidelity
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.pixal3d import FOV_NODE, PIXAL3D_VIEWS, pixal3d_graph
@@ -377,29 +377,28 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     tries_dir = sc.dir / TRIES_DIR
     shutil.rmtree(tries_dir, ignore_errors=True)  # a Resume starts the tries again from the first
 
-    # Texture-only tries come first (the shape is kept; see texcolour.try_plan), then full rebuilds. The four-view build
-    # has no texture seed in its graph and keeps full rebuilds only.
-    texture_tries = texcolour.TEXTURE_TRIES if views is None else 0
-
     async def build_once(seed: int, n: int) -> dict[str, Any]:
-        tseed = texcolour.try_plan(first_seed, n, texture_tries)[1]
         return await _trellis_build(sc, name, n, seed, target_faces, tex, upsample, remesh, padding, keep_normal, picture,
-                                    tex_steps=tex_steps, match_to=src, views=names, fov=angle, texture_seed=tseed)
+                                    tex_steps=tex_steps, match_to=src, views=names, fov=angle)
+
+    async def build_shape_try(seed: int, n: int) -> dict[str, Any]:
+        return await _trellis_build(sc, name, n, seed, target_faces, tex, upsample, remesh, padding, keep_normal, picture,
+                                    tex_steps=tex_steps, match_to=src, views=names, fov=angle)
 
     def on_retry(n: int, last: dict[str, Any]) -> None:
-        if texcolour.try_kind(n, texture_tries) == "texture_only":
-            sc.progress(0.05, f"The colours came out too dark against the picture, so only the texture is painted again "
-                              f"(build {n + 1} of {texcolour.MAX_TRIES})")
-            return
         sc.progress(0.05, f"The colours came out too dark against the picture, so the 3D model is being built again "
                           f"(build {n + 1} of {texcolour.MAX_TRIES})")
 
     best, tries = await texcolour.build_with_rerolls(first_seed, picture is not None, build_once,
                                                      lambda n: _keep_aside(sc.dir, tries_dir / f"try{n + 1}"),
-                                                     lambda n: _bring_back(tries_dir / f"try{n + 1}", sc.dir), on_retry,
-                                                     texture_tries=texture_tries)
-    shutil.rmtree(tries_dir, ignore_errors=True)
+                                                     lambda n: _bring_back(tries_dir / f"try{n + 1}", sc.dir), on_retry)
     kept = tries[best]
+    all_builds = list(tries)
+    shape = None
+    if meshgeom.rebuilds_wanted(sc.asset.category):
+        kept, extra, shape = await _shape_gate(sc, kept, build_shape_try, tries_dir)
+        all_builds += extra
+    shutil.rmtree(tries_dir, ignore_errors=True)
     for key in ("glb", *kept["maps"].keys(), *kept["other"]):
         p = sc.dir / ("model.glb" if key == "glb" else f"{key}.png")
         if p.is_file():
@@ -411,11 +410,76 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     sc.set_metrics(engine="trellis", builder=builder, seed=kept["seed"], elapsed_seconds=kept["elapsed"], target_faces=target_faces, texture_size=tex,
                    unwrap_padding_px=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
                    normal_map=keep_normal, recipe=recipe_with_builder(rec, builder),
-                   elapsed_seconds_all=round(sum(float(t["elapsed"] or 0) for t in tries), 1))
+                   elapsed_seconds_all=round(sum(float(t["elapsed"] or 0) for t in all_builds), 1))
     if picture is not None:
         sc.set_metrics(picture_colour=picture, **texcolour.record(best, tries))
+        sc.set_metrics(texture_match=kept.get("match"))  # the kept build's own, which a shape rebuild may have replaced
+    if shape is not None:
+        sc.set_metrics(shape_rebuild=shape)
     if views is None and headgraft.wanted(sc.asset.category, params, hairlib.is_library(sc), "trellis"):
         await _head_build(sc, params, src, int(kept["seed"]), target_faces, tex, upsample, remesh, padding, keep_normal, tex_steps)
+
+
+# --- The shape gate: build again when the model is torn (WP-83, decision D23) -----------------------------------
+# A broken 3D model never stops an automatic build. On a route in meshgeom.REBUILD_ROUTES the kept build's grey-view measures
+# (mesh_health.py) are judged here; when one is over its limit the model is built again with the next seeds (at most
+# meshgeom.REBUILD_MAX extra builds, each a full build through the same job), the best is kept (meshgeom.pick_best: whole
+# and colour-passing first, then whole only, then colour only, then neither; lowest folded share, then lowest seed, within
+# each) and, when it still fails, the model_whole check says so on the finished page.
+SHAPE_DIR = "shape_health"
+
+
+async def _health(sc: StageContext, glb: Path, tag: str) -> dict[str, Any] | None:
+    """mesh_health.py on one build: its report, or None when Blender failed (then the build counts as unmeasured)."""
+    out = sc.dir / SHAPE_DIR / tag
+    try:
+        with steptime.part(sc, "shape_health"):
+            await sc.blender("mesh_health.py", [glb, out, 64], log_name=f"shape_{tag}.log", timeout=sc.settings.blender_timeout_seconds)
+        return json.loads((out / "health.json").read_text())
+    except Exception as e:  # noqa: BLE001  (a build that cannot be measured is not rebuilt for it)
+        sc.set_metrics(shape_health_error=str(e)[:300])
+        return None
+
+
+def _shape_try(build: dict[str, Any], report: dict[str, Any] | None, passed: bool | None) -> dict[str, Any]:
+    """One shape try's record: its folded share, the grey-view verdict, and its base colour against the picture (the same
+    texcolour.compare every build makes; None when the colour could not be measured)."""
+    folded = None if report is None else float((report.get("folded") or {}).get("120", 0.0))
+    m = build.get("match")
+    colour = None if m is None else {"ratio": m.get("ratio"), "ok": bool(m.get("ok"))}
+    return {"seed": build["seed"], "folded": folded, "passed": passed, "elapsed": build.get("elapsed"), "colour": colour}
+
+
+async def _shape_gate(sc: StageContext, kept: dict[str, Any], build_again, tries_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    """Judge the kept build; while it fails, build again with the next seeds (at most REBUILD_MAX). Returns (the build to keep,
+    the extra builds made, the record kept in metrics.shape_rebuild). The kept build's files are in the version folder."""
+    category = sc.asset.category
+    report = await _health(sc, sc.dir / "model.glb", "try1")
+    passed = None if report is None else meshgeom.passes(category, report)
+    tried = [_shape_try(kept, report, passed)]
+    builds = [kept]
+    if passed is not False:  # whole, or not measurable: nothing to rebuild
+        return kept, [], {"tries": tried, "kept_try": 1, "extra_builds": 0, "kept_passed": passed}
+    extra: list[dict[str, Any]] = []
+    for i in range(1, meshgeom.REBUILD_MAX + 1):
+        _keep_aside(sc.dir, tries_dir / f"shape{i}")
+        seed = texcolour.try_seed(int(kept["seed"]), i)
+        sc.progress(0.05, f"The 3D model came out torn, so it is being built again (extra build {i} of {meshgeom.REBUILD_MAX})")
+        with steptime.part(sc, "shape_rebuild"):
+            build = await build_again(seed, texcolour.MAX_TRIES + i - 1)
+        report = await _health(sc, sc.dir / "model.glb", f"try{i + 1}")
+        passed = None if report is None else meshgeom.passes(category, report)
+        builds.append(build)
+        extra.append(build)
+        tried.append(_shape_try(build, report, passed))
+        if passed is not False:
+            break
+    best = meshgeom.pick_best(tried)
+    if best != len(builds) - 1:
+        _keep_aside(sc.dir, tries_dir / f"shape{len(builds)}")
+        _bring_back(tries_dir / f"shape{best + 1}", sc.dir)
+    return builds[best], extra, {"tries": tried, "kept_try": best + 1, "extra_builds": len(extra),
+                                 "kept_passed": tried[best]["passed"]}
 
 
 # --- The head built on its own (vgac/headgraft.py, docs/HEAD-BUILD-PLAN.md) -------------------------------------
@@ -541,7 +605,7 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
                          padding: int, keep_normal: bool, picture: dict[str, Any] | None,
                          dest: Path | None = None, tag: str = "", tex_steps: int = DEFAULT_TEX_STEPS,
                          match_to: Path | None = None, views: dict[str, str] | None = None,
-                         fov: float | None = None, texture_seed: int | None = None) -> dict[str, Any]:
+                         fov: float | None = None) -> dict[str, Any]:
     """One TRELLIS.2 build into the version folder (or `dest`): model.glb and the maps, normal map flipped, maps grown
     into the seams, and the base colour measured against the picture. `tag` names a second build of the same version
     (the head built on its own). `match_to` is the picture the base colour is shifted towards afterwards
@@ -562,9 +626,10 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
     if views:
         graph = pixal3d_graph(views, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps, fov=fov)
     else:
-        graph = convert_graph(name, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps,
-                              texture_seed=texture_seed)
-    entry = await sc.comfy(graph, poll=5.0, message=message, base=base, span=span)
+        graph = convert_graph(name, prefix, target_faces, tex, upsample, seed, remesh, padding=padding, tex_steps=tex_steps)
+    with steptime.part(sc, "head_graph" if tag else "graph"):   # includes any wait for the card
+        entry = await sc.comfy(graph, poll=5.0, message=message, base=base, span=span)
+    t_after = time.monotonic()
     glb = await sc.download_mesh(entry, out / "model.glb")
     if not keep_normal:
         # The recipe's look: no bump map (the GLB's own copy goes too).
@@ -582,8 +647,6 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
             else:
                 other.append(key)
     metrics: dict[str, Any] = {}
-    if texture_seed is not None:
-        metrics["texture_seed"] = int(texture_seed)
     if views:
         used = camera_fov(entry) if fov is None else round(float(fov), 2)
         if used is not None:
@@ -610,6 +673,7 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
             match = texcolour.compare(picture, await asyncio.to_thread(texcolour.texture_stats, maps.get("base_color"), Path(glb)))
         except Exception as e:  # noqa: BLE001  (not measured: kept as it is, like a build that passes)
             metrics["texture_match_error"] = str(e)[:300]
+    steptime.add(sc, "head_after_graph" if tag else "after_graph", time.monotonic() - t_after)   # download, normal fix, seams, colour match
     return {"seed": seed, "elapsed": entry.get("elapsed_seconds"), "maps": maps, "other": other, "metrics": metrics, "match": match}
 
 
@@ -652,15 +716,18 @@ async def _hy3d(sc: StageContext, params: dict[str, Any]) -> None:
     octree = int(params.get("octree") or HY3D_OCTREE)
     sc.set_params(engine="hy3d", seed=seed, steps=steps, cfg=cfg, octree=octree)
     sc.use_model("hy3d_mv")
-    entry = await sc.comfy(hy3d_graph(names, sc.prefix("model"), steps=steps, cfg=cfg, seed=seed, octree_resolution=octree,
-                                      unwrap_resolution=HY3D_UNWRAP_RESOLUTION, unwrap_padding=imaging.unwrap_padding(HY3D_UNWRAP_RESOLUTION),
-                                      remesh=HY3D_REMESH_RESOLUTION),
-                           poll=5.0, message="Hunyuan3D-2mv", base=0.05, span=0.7)
+    with steptime.part(sc, "graph"):
+        entry = await sc.comfy(hy3d_graph(names, sc.prefix("model"), steps=steps, cfg=cfg, seed=seed, octree_resolution=octree,
+                                          unwrap_resolution=HY3D_UNWRAP_RESOLUTION, unwrap_padding=imaging.unwrap_padding(HY3D_UNWRAP_RESOLUTION),
+                                          remesh=HY3D_REMESH_RESOLUTION),
+                               poll=5.0, message="Hunyuan3D-2mv", base=0.05, span=0.7)
+    t_after = time.monotonic()
     glb = await sc.download_mesh(entry, sc.dir / "model.glb")
     sc.register("glb", glb)
     # The raw mesh is unwrapped at full detail (UnwrapMesh, pec) so prep can paint it and shrink it after (stages/prep.py).
     sc.set_metrics(engine="hy3d", seed=seed, elapsed_seconds=entry.get("elapsed_seconds"), textured=False,
                    unwrap_resolution=HY3D_UNWRAP_RESOLUTION)
+    steptime.add(sc, "after_graph", time.monotonic() - t_after)
 
 
 async def audit(sc: StageContext) -> None:
@@ -879,7 +946,8 @@ async def judge(sc: StageContext) -> None:
     if hg:
         checks.append(buildpose.redraw_guard_check("hand_guard", "The hand redraw", hg, int(hg.get("tries") or 1) > 1,
                                                    "It was not used; the 3D model was built from your own picture."))
-    gc = meshgeom.check(sc.asset.category, sc.version.metrics.get("geometry"), (sc.version.params or {}).get("remesh"))
+    extra_builds = int(((sc.version.metrics or {}).get("shape_rebuild") or {}).get("extra_builds") or 0)
+    gc = meshgeom.check(sc.asset.category, sc.version.metrics.get("geometry"), (sc.version.params or {}).get("remesh"), extra_builds)
     if gc:
         checks.append(gc)
     sc.set_metrics(**quality.summarise(checks))
@@ -985,7 +1053,7 @@ async def run(sc: StageContext, params: dict[str, Any]) -> None:
         await _trellis(sc, params)
     else:
         raise ValueError(f"unknown mesh engine {engine!r}")
-    await audit(sc)
+    await steptime.run(sc, "audit", audit(sc))   # silhouette render, geometry and hair checks in Blender, then judge
 
 
 async def upload(sc: StageContext, params: dict[str, Any], view: str | None = None) -> None:

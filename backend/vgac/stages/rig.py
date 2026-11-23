@@ -34,8 +34,9 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from .. import declared_parts, guidance, headtris, imaging, library, limbjoins, quality
+from .. import declared_parts, guidance, headtris, imaging, library, limbjoins, quality, steptime
 from ..comfy import ComfyClient, ComfyError
+from ..moves import move_label
 from ..graphs.skintoken import TEMPLATES, rig_graph
 from ..imaging import contact_sheet
 from .base import StageContext
@@ -98,9 +99,15 @@ def hitbox_checks(doc: dict[str, Any] | None, error: str | None = None) -> list[
     n = int(doc["count"])
     out = []
     cover, cmin = doc.get("cover"), float(doc.get("cover_min") or 0.85)
+    over, omax = doc.get("overreach"), float(doc.get("overreach_max") or 1.6)
+    short = cover is not None and float(cover) < cmin
+    too_big = over is not None and float(over) > omax
+    if short and too_big:
+        # Too few boxes in one place and too big in another: one item with one re-fit (the two fixes would undo each other).
+        return [_check("hitbox_cover", False, round(float(cover), 4), cmin, n=n, cover=f"{round(float(cover) * 100)}%",
+                       times=f"{float(over):.1f}", both=True)]
     if cover is not None:
         out.append(_check("hitbox_cover", float(cover) >= cmin, round(float(cover), 4), cmin, n=n, cover=f"{round(float(cover) * 100)}%"))
-    over, omax = doc.get("overreach"), float(doc.get("overreach_max") or 1.6)
     if over is not None:
         out.append(_check("hitbox_overreach", float(over) <= omax, round(float(over), 2), omax, n=n, times=f"{float(over):.1f}"))
     return out
@@ -545,7 +552,8 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
     mesh_name = await sc.stage_input(src, f"vgac_{sc.version.id[:8]}_rig_in.glb")
     graph = rig_graph(mesh_name, sc.prefix("rig"), target_faces, template=template, group_per_vertex=gpv, bottom_center_origin=bco)
     try:
-        entry = await sc.comfy(graph, poll=5.0, message="SkinToken rig", base=0.05, span=0.5)
+        with steptime.part(sc, "skintoken"):   # includes any wait for the card
+            entry = await sc.comfy(graph, poll=5.0, message="SkinToken rig", base=0.05, span=0.5)
     except ComfyError as e:
         if e.is_assertion() or any("skin" in m.lower() and "empty" in m.lower() for m in e.exception_messages):
             await _skip(sc, "SkinToken returned an empty skinning prediction (rigid object)", src)
@@ -563,8 +571,9 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         # The Mixamo template's names are wrong on real rigs; rig_fix renames humanoid bones by geometry.
         fix_report = sc.dir / "rig_fix.json"
         skeleton = "humanoid" if template == TEMPLATES["mixamo"] else "other"
-        await sc.blender("rig_fix.py", [raw_glb, rig_glb, "--reference", src, "--report", fix_report, "--skeleton", skeleton],
-                         log_name="rig_fix.log", timeout=sc.settings.blender_timeout_seconds)
+        with steptime.part(sc, "rig_fix"):
+            await sc.blender("rig_fix.py", [raw_glb, rig_glb, "--reference", src, "--report", fix_report, "--skeleton", skeleton],
+                             log_name="rig_fix.log", timeout=sc.settings.blender_timeout_seconds)
         if fix_report.is_file():
             rep = json.loads(fix_report.read_text(encoding="utf-8")) or {}
             ref, names = rep.get("reference") or {}, rep.get("bone_names") or {}
@@ -584,25 +593,25 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         rig_glb = raw_glb
     cut = None
     if template == TEMPLATES["mixamo"]:
-        await _joins(sc, rig_glb, params)
-        await _leg_skin(sc, rig_glb, params)
-        await _limb_joins(sc, rig_glb)
-        cut = await _separate_joined(sc, src, rig_glb)  # then the shoulder skin pass, after any cut
-        await _fingers(sc, rig_glb, params)
-        await _finger_rigid(sc, rig_glb, params)
-        await _palm_down(sc, rig_glb, params)
-        await _sleeve_skin(sc, rig_glb)
-        await _worn_region(sc, rig_glb, params)
+        await steptime.run(sc, "joins", _joins(sc, rig_glb, params))
+        await steptime.run(sc, "leg_skin", _leg_skin(sc, rig_glb, params))
+        await steptime.run(sc, "limb_joins", _limb_joins(sc, rig_glb))
+        cut = await steptime.run(sc, "separate_joined", _separate_joined(sc, src, rig_glb))  # then the shoulder skin pass, after any cut
+        await steptime.run(sc, "fingers", _fingers(sc, rig_glb, params))
+        await steptime.run(sc, "finger_rigid", _finger_rigid(sc, rig_glb, params))
+        await steptime.run(sc, "palm_down", _palm_down(sc, rig_glb, params))
+        await steptime.run(sc, "sleeve_skin", _sleeve_skin(sc, rig_glb))
+        await steptime.run(sc, "worn_region", _worn_region(sc, rig_glb, params))
     sc.register("glb", rig_glb)
     link_textures(sc)
     await _cut_pictures(sc, cut)
     sc.set_metrics(rigid=False, elapsed_seconds=entry.get("elapsed_seconds"), faces_rigged=int(faces_text[0]) if faces_text and str(faces_text[0]).isdigit() else None,
                    template=template)
-    await _inspect(sc, rig_glb, bend_test)
-    await fit_hitboxes(sc, rig_glb, hp)
-    await _animate(sc, rig_glb, params)
-    await _skin_stretch(sc)
-    await judge(sc)
+    await steptime.run(sc, "inspect", _inspect(sc, rig_glb, bend_test))
+    await steptime.run(sc, "hitboxes", fit_hitboxes(sc, rig_glb, hp))
+    await steptime.run(sc, "animate", _animate(sc, rig_glb, params))
+    await steptime.run(sc, "skin_stretch", _skin_stretch(sc))
+    await steptime.run(sc, "judge", judge(sc))
 
 
 def _locate_output(sc: StageContext, paths: list[str]) -> Path:
@@ -642,7 +651,7 @@ async def _inspect(sc: StageContext, rig_glb: Path, bend_test: bool) -> None:
             sc.register("bones", bones_png)
         strip_paths = [info_dir / f for f in [bones_png.name if bones_png else "rest.png"] + [fn for k, fn in (info.get("renders") or {}).items() if k != "rest"] if (info_dir / f).is_file()]
         if strip_paths:
-            sc.register("bend_strip", contact_sheet(strip_paths, sc.dir / "bend_strip.png", cell=384, columns=len(strip_paths), labels=[p.stem for p in strip_paths]))
+            sc.register("bend_strip", contact_sheet(strip_paths, sc.dir / "bend_strip.png", cell=384, columns=len(strip_paths), labels=[_bend_label(p.stem) for p in strip_paths]))
         sc.set_metrics(bones=info.get("bones"), bone_names=info.get("bone_names"), roots=info.get("roots"),
                        weight_coverage=round(float(info.get("weight_coverage", 0.0)), 4), max_influences=info.get("max_influences"),
                        unnormalised_verts=info.get("unnormalised_verts"), bent=info.get("bent"))
@@ -1004,6 +1013,13 @@ async def _after_moves(sc: StageContext, anim_glb: Path, params: dict[str, Any])
     await _strip(sc, anim_glb)
 
 
+def _bend_label(stem: str) -> str:
+    """The words under a picture of the bend strip: the skeleton, then each bend in degrees."""
+    if stem.startswith("bend_") and stem[5:].isdigit():
+        return f"Bent {stem[5:]} degrees"
+    return "Skeleton" if stem in ("bones", "rest") else stem.replace("_", " ").capitalize()
+
+
 async def _strip(sc: StageContext, anim_glb: Path) -> None:
     """The rendered strip of the final clips (anim_strip)."""
     if not (sc.version.metrics.get("clips") or []):
@@ -1016,7 +1032,7 @@ async def _strip(sc: StageContext, anim_glb: Path) -> None:
     for clip, files in (frames.get("clips") or {}).items():
         for i, f in enumerate(files):
             paths.append(frames_dir / f)
-            labels.append(f"{clip} {i}")
+            labels.append(f"{move_label(clip)}, frame {i + 1}")
     if paths:
         strip = contact_sheet(paths, sc.dir / "anim_strip.png", cell=256, columns=frames.get("frames", 6), labels=labels)
         sc.register("anim_strip", strip)
@@ -1221,7 +1237,7 @@ async def _retarget(sc: StageContext, anim_glb: Path, params: dict[str, Any], ch
     t0 = time.monotonic()
     sc.set_metrics(library_skipped=None, library_missing=None)
     try:
-        sc.progress(0.82, "moving the hand-made clips onto the skeleton")
+        sc.progress(0.82, "moving the move-library clips onto the skeleton (retargeting)")
         await sc.blender("retarget.py", args, log_name="retarget.log", timeout=sc.settings.blender_timeout_seconds)
     except Exception as e:  # noqa: BLE001
         rep = json.loads(report.read_text()) if report.is_file() else {}
@@ -1956,7 +1972,7 @@ def fingers_check(bone_names: list[str] | None, segments: list[dict[str, Any]] |
         todo = ("Making the 3D model again with \"Open the hands first (hands only)\" turned on, or making the side views again with \"Pose for 3D first\" "
                 "turned on, gives the hands separate fingers; then rig again.")
         fix = {"stage": "mesh", "params": {"hand_edit": True}}
-        label = "Make the 3D model again with open hands"
+        label = "Build the 3D model again with open hands"
     else:
         cause = ("The skeleton step did not place every finger bone, although the model's hand may have enough shape for it. "
                  "Where the fingers are pressed together or small in the model, the skeleton step leaves them out. ")
@@ -2007,9 +2023,12 @@ async def judge(sc: StageContext) -> None:
         m = sc.version.metrics
         if m.get("rig_restore") is not None:
             checks.append(quality.check("rig_restore", bool(m["rig_restore"].get("ok")), bool(m["rig_restore"].get("ok")), True))
+            uvc = quality.uv_transfer_check(m["rig_restore"].get("uvs"))  # WP-92: warning only
+            if uvc is not None:
+                checks.append(uvc)
         clips, missing = m.get("clips") or [], m.get("missing_clips") or []
         checks.append(quality.check("clips", bool(clips) and not missing, clips, clips + missing, vars={"missing": missing}))
-        # The hand-made library was meant to run (humanoid, automatic or library) but gave no clips.
+        # The move library was meant to run (humanoid, automatic or library) but gave no clips.
         if m.get("library_skipped") is None and "library_clips" in m and (m.get("library_clips") or m.get("retarget_error")):
             lib = m.get("library_clips") or []
             checks.append(quality.check("library_clips", bool(lib) and not m.get("retarget_error"), len(lib), ">0",

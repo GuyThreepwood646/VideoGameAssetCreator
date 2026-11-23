@@ -5,7 +5,7 @@ import { Info } from '../components/Info'
 import { JobLog } from '../components/JobLog'
 import { Disclosure, ErrorText, Field, SubmitTextarea, type FixRequest, PanelClose } from '../components/ui'
 import { useEvents } from '../events'
-import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, MODEL_IMPORT_SECONDS, plainJargon, platformPlain, stageEstimate, stageGerund, stagePlain, suggestFallback, VARIANT_EXAMPLES } from '../help'
+import { autopilotLine, autopilotSecondsLeft, fmtDuration, humanError, MODEL_IMPORT_SECONDS, plainJargon, platformPlain, stageEstimate, stageGerund, stagePlain, stageTech, suggestFallback, VARIANT_EXAMPLES } from '../help'
 import { autopilotStage, isAutopilotActive, type AutopilotActions } from '../pipeline/AutopilotPanel'
 import { ItemsPanel } from '../pipeline/ItemsPanel'
 import { HairRailLine, HairRebuildNote, HairSettingPanel, useHairPanel } from '../pipeline/HairSetting'
@@ -75,7 +75,7 @@ export default function AssetPage() {
       const byText = (txt: string) => [...document.querySelectorAll<HTMLButtonElement>('.happy-answers button, button.try-again')].find((b) => b.innerText.trim().toLowerCase().startsWith(txt))
       const k = e.key.toLowerCase()
       if (k === 'k') byText('yes, keep')?.click()
-      else if (k === 'r') byText('try again')?.click()
+      else if (k === 'r') document.querySelector<HTMLButtonElement>('[data-try-again]')?.click()
       else if (k === 'c') byText('change something')?.click()
       else if (k === 'arrowleft' || k === 'arrowright') {
         const list = [...document.querySelectorAll<HTMLButtonElement>('.candidate')]
@@ -443,15 +443,20 @@ export default function AssetPage() {
             const cls = ['rail-stage', s === stage ? 'active' : '', reached ? 'reached' : 'future', kept ? 'kept' : ''].join(' ')
             const stopped = st !== 'running' && stoppedVersions(asset, s).length > 0
             // A step with a Stop or Resume button next to it needs no status word: the button says it.
-            const meta = st === 'running' ? '' : stopped ? 'stopped' : st === 'error' ? 'failed' : kept ? 'kept' : st === 'done' ? 'choose one' : ''
+            // Step 5 for a category with no skeleton engine only runs when the asset declares moving parts (WP-29).
+            const movingPartsOnly = s === 'rig' && !reached && ref !== null && ref.categories.find((c) => c.id === asset.category)?.rig_engine === 'none' && asset.parts.length === 0
+            const meta = movingPartsOnly ? 'Only for moving parts' : st === 'running' ? '' : stopped ? 'stopped' : st === 'error' ? 'failed' : kept ? 'kept' : st === 'done' ? 'choose one' : ''
             const help = stageInfo(s)
             return (
               <div key={s} className={cls + (stopped ? ' stopped' : '')}>
                 <button type="button" className="rail-stage-btn" onClick={() => navigate(`/assets/${asset.id}/${s}`)} title={stagePlain(s, help)} aria-current={s === stage ? 'step' : undefined}>
                   <span className={'sdot sdot-' + st} />
                   <span className="rail-index">{i + 1}</span>
-                  <span className="rail-label">{stagePlain(s, help)}</span>
-                  <span className="rail-meta">{meta}</span>
+                  <span className="rail-label">
+                    {stagePlain(s, help)}
+                    <span className="tech-term rail-tech">{stageTech(s, help)}</span>
+                  </span>
+                  <span className={'rail-meta' + (movingPartsOnly ? ' rail-meta-note' : '')}>{meta}</span>
                 </button>
                 <Info term={'stage.' + s} />
               </div>

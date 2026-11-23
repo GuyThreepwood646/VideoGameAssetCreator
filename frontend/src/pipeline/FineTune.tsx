@@ -318,7 +318,7 @@ export function FineTune({
       // A first build has no current model yet: its starting count is the usual one.
       if (curN !== null && !levels.some((l) => l.value === curN)) levels.push({ label: `${submitLabel ? 'Usual' : 'Current'} (${curN.toLocaleString('en-US')} triangles)`, value: curN })
       return (
-        <Field key={p.name} label="Triangle count (detail level)" term="param.target_faces" hint="More triangles mean more detail and a heavier model">
+        <Field key={p.name} label="Detail level (triangle count)" term="param.target_faces" hint="More triangles mean more detail and a heavier model">
           <select value={cur === null || cur === undefined ? '' : String(cur)} disabled={disabled} onChange={(e) => set('target_faces', e.target.value === '' ? null : Number(e.target.value))}>
             {levels.map((l) => (
               <option key={String(l.value)} value={l.value === null ? '' : String(l.value)}>
@@ -510,7 +510,7 @@ export function FineTune({
       )}
       {(advanced.length > 0 || turnaroundAddons.length > 0) && (
         <Disclosure label={advanced.length ? `Advanced (${advanced.length} more setting${advanced.length > 1 ? 's' : ''})` : 'Advanced'} open={advOpen} onToggle={setAdvOpen}>
-          {advanced.length > 0 && <div className="adjust-grid">{advanced.map((p) => renderField(p, true))}</div>}
+          {advanced.length > 0 && <AdvancedGroups params={advanced} render={(p) => renderField(p, true)} />}
           <TurnaroundAddons entries={turnaroundAddons} method={turnMethod} />
         </Disclosure>
       )}
@@ -524,6 +524,46 @@ export function FineTune({
         <span className="muted small">{withText && changed.length ? 'Your described change goes with it. ' : ''}{changed.length ? `${changed.length} changed: ${changed.map((p) => `${paramPlain(p.name, p.label)}: ${changeText(p, initial[p.name])} to ${changeText(p, values[p.name])}`).join(', ')}` : submitLabel ? 'the usual settings for your look and platform' : 'no changes yet'}</span>
       </div>
     </form>
+  )
+}
+
+// The headings of the Advanced settings (UX-15). A setting not listed goes under Other.
+export const ADVANCED_GROUPS: Array<{ name: string; knobs: string[] }> = [
+  { name: 'Picture and views', knobs: ['model', 'seed', 'width', 'height', 'steps', 'readiness_block', 'prompt_override', 'views', 'turn_method', 'lora_strength', 'auto_reroll', 'pose_ready', 'neutral_mouth', 'view_addons', 'pose_addons', 'addons'] },
+  { name: 'Shape', knobs: ['engine', 'builder', 'camera_angle', 'input_view', 'target_faces', 'upsample', 'head_build', 'head_crop', 'hand_edit', 'remesh', 'size_m', 'face_yaw', 'grid_footprint', 'grid_height', 'grid_m', 'symmetric', 'pivot', 'smooth_angle', 'head_triangles', 'hand_triangles'] },
+  { name: 'Surface and textures', knobs: ['texture_size', 'tex_steps', 'padding', 'shading', 'delight', 'pbr_fix', 'rebake', 'source_project'] },
+  { name: 'Face', knobs: ['face_detail', 'face_strength', 'face_density', 'face_closeup', 'face_closeup_guided', 'face_addons', 'quarter_pictures', 'face_sides'] },
+  { name: 'Hair', knobs: ['hair_detail', 'hair_strength', 'hair_material'] },
+  { name: 'Skeleton and moves', knobs: ['template', 'group_per_vertex', 'bottom_center_origin', 'bend_test', 'motion', 'moves', 'clips_source', 'move_size', 'move_speed', 'hitboxes', 'hitbox_fit', 'hitbox_regions', 'part_legs', 'springs', 'head_sway', 'arm_pose', 'hand_pose', 'finger_curl', 'neutral_pose'] },
+  { name: 'Files for the game', knobs: ['lods', 'collider', 'collider_max_parts', 'movement_shape', 'formats', 'unity', 'clips_library', 'sprites', 'sprite_directions', 'sprite_frames', 'sprite_size'] },
+]
+
+export function groupAdvanced<T extends { name: string }>(params: T[]): Array<{ name: string; items: T[] }> {
+  const out: Array<{ name: string; items: T[] }> = []
+  for (const g of [...ADVANCED_GROUPS, { name: 'Other', knobs: [] as string[] }]) {
+    const items = params.filter((p) => (g.name === 'Other' ? !ADVANCED_GROUPS.some((x) => x.knobs.includes(p.name)) : g.knobs.includes(p.name)))
+    if (items.length) out.push({ name: g.name, items })
+  }
+  return out
+}
+
+// Advanced settings under small headings; the yes-or-no ones in one column, the rest in the grid. One group needs no heading.
+function AdvancedGroups({ params, render }: { params: AdjustParam[]; render: (p: AdjustParam) => ReactNode }) {
+  const groups = groupAdvanced(params)
+  return (
+    <>
+      {groups.map((g) => {
+        const flags = g.items.filter((p) => p.type === 'boolean')
+        const rest = g.items.filter((p) => p.type !== 'boolean')
+        return (
+          <section key={g.name} className="adv-group" aria-label={groups.length > 1 ? g.name : undefined}>
+            {groups.length > 1 && <h4 className="adv-group-name">{g.name}</h4>}
+            {rest.length > 0 && <div className="adjust-grid">{rest.map(render)}</div>}
+            {flags.length > 0 && <div className="adv-flags">{flags.map(render)}</div>}
+          </section>
+        )
+      })}
+    </>
   )
 }
 

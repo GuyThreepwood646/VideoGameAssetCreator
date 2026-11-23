@@ -1,7 +1,8 @@
 import { openFolderAndSay } from '../notify'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type EditChoice, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
+import { assetAttention } from '../pipeline/finish'
+import { api, ApiError, itemsApi, libraryUrl, selectedVersion, STAGES, stageState, STYLE_MODELS, MODEL_KINDS, MODEL_MAX_MB, type AssetSummary, type Category, type EditChoice, type ItemDetect, type PlatformId, type Project, type Suggestion } from '../api'
 import { ImageDrop, nameFromFile, type PickedImage } from '../components/ImageDrop'
 import { FeaturePhotos } from '../components/FeaturePhotos'
 import { featureCrop, foundPeople, usedFeatures, type FeatureSlot, type StartFrom } from '../featurePhotos'
@@ -22,7 +23,7 @@ import { differentLook, lookLabelForStyle, presetById, projectStyleFor, syncLook
 import { categoryLabel, useRefData } from '../refdata'
 import { useConfirm } from '../components/Confirm'
 
-// Shown as soon as Tileable material is chosen, so nobody picks it for a rock or a bush and is surprised by a flat swatch.
+// Shown as soon as Repeating surface is chosen, so nobody picks it for a rock or a bush and is surprised by a flat swatch.
 const MATERIAL_NOTE = `${CATEGORY_HELP.material.meaning} ${CATEGORY_HELP.material.why}`
 
 export default function ProjectPage() {
@@ -124,7 +125,7 @@ export default function ProjectPage() {
           )}
         </div>
       </section>
-      <aside className="col col-side">{project && <CreateAssetForm project={project} />}</aside>
+      <aside className="col col-side">{project && <CreateAssetForm project={project} assets={assets ?? null} />}</aside>
     </div>
   )
 }
@@ -135,7 +136,11 @@ const FILTER_LABEL: Record<AssetFilter, string> = { all: 'All', progress: 'In pr
 function assetStatus(a: AssetSummary): Exclude<AssetFilter, 'all'> {
   const sts = STAGES.map((x) => stageState(a, x))
   if (sts.includes('error')) return 'needs'
-  if (sts.every((x) => x === 'done')) return 'ready'
+  if (sts.every((x) => x === 'done')) {
+    // Finished, but a check the app counts against it (likely to show, or worth a look) means it needs a look.
+    const att = assetAttention(a)
+    return att.likely + att.look > 0 ? 'needs' : 'ready'
+  }
   return 'progress'
 }
 
@@ -163,19 +168,27 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
   const [name, setName] = useState(asset.name)
   const concept = selectedVersion(asset, 'concept')
   const thumb = libraryUrl(concept?.files.cutout ?? concept?.files.image)
+  // The checkerboard shows through a picture that has not arrived yet; a placeholder shimmer stands in until it does.
+  const [thumbLoaded, setThumbLoaded] = useState(false)
+  const doneSteps = STAGES.filter((x) => stageState(asset, x) === 'done').length
   return (
     <div className="asset-card-wrap">
       <Link to={`/assets/${asset.id}`} className="asset-card">
-        <div className="asset-thumb checker">{thumb ? <img src={thumb} alt="" /> : <span className="muted small">no picture yet</span>}</div>
+        <div className={'asset-thumb checker' + (thumb && !thumbLoaded ? ' thumb-loading' : '')}>{thumb ? <img src={thumb} alt="" onLoad={() => setThumbLoaded(true)} onError={() => setThumbLoaded(true)} /> : <span className="muted small">no picture yet</span>}</div>
         <div className="asset-name">{asset.name}</div>
         <div className="muted small">{categoryName}</div>
         {(() => {
           const sts = STAGES.map((x) => stageState(asset, x))
           const failedAt = sts.indexOf('error')
-          const label = failedAt >= 0 ? `Needs a look: ${stagePlain(STAGES[failedAt])}` : sts.some((x) => x === 'running') ? 'Working' : sts.every((x) => x === 'done') ? 'Ready' : sts.every((x) => x === 'none') ? 'Not started' : 'In progress'
-          return <div className={'small ' + (failedAt >= 0 ? 'bad-text' : 'muted')}>{label}</div>
+          const att = sts.every((x) => x === 'done') ? assetAttention(asset) : { likely: 0, look: 0 }
+          const label = failedAt >= 0 ? `Needs a look: ${stagePlain(STAGES[failedAt])}`
+            : sts.some((x) => x === 'running') ? 'Working'
+            : att.likely ? `Not ready to use yet: ${att.likely} likely to show in the game`
+            : att.look ? `Needs a look: ${att.look} worth a look`
+            : sts.every((x) => x === 'done') ? 'Ready' : sts.every((x) => x === 'none') ? 'Not started' : 'In progress'
+          return <div className={'small ' + (failedAt >= 0 || att.likely || att.look ? 'bad-text' : 'muted')}>{label}</div>
         })()}
-        <div className="stage-dots" aria-label="stage progress">
+        <div className="stage-dots" role="img" aria-label={`${doneSteps} of ${STAGES.length} steps done`} title={`${doneSteps} of ${STAGES.length} steps done`}>
           {STAGES.map((s) => {
             const st = stageState(asset, s)
             return <span key={s} className={'sdot sdot-' + st} title={`${stagePlain(s)}: ${st === 'none' ? 'not started' : st === 'done' ? 'done' : st === 'running' ? 'working' : 'failed'}`} />
@@ -183,14 +196,6 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
         </div>
       </Link>
       <div className="asset-card-tools">
-        <label className="small tile-toggle" title="Show this asset's picture on the project's tile on the Projects page">
-          <input
-            type="checkbox"
-            checked={asset.show_on_project !== false}
-            onChange={(e) => void api.updateAsset(asset.id, { show_on_project: e.target.checked }).then(onChanged)}
-          />{' '}
-          Show on the project tile
-        </label>
         {badge && (
           <button type="button" className="chip chip-accent" aria-expanded={badge.open} onClick={badge.toggle} title="Show or hide the variants of this asset">
             {badge.text}
@@ -202,6 +207,15 @@ function AssetCard({ asset, categoryName, onChanged, confirm, badge }: { asset: 
             <button type="button" className="link small" onClick={() => setRenaming(true)}>
               Rename
             </button>
+          <label className="small tile-toggle more-check" title="Show this asset's picture on the project's tile on the Projects page">
+            <input
+              type="checkbox"
+              checked={asset.show_on_project !== false}
+              onChange={(e) => void api.updateAsset(asset.id, { show_on_project: e.target.checked }).then(onChanged)}
+            />{' '}
+            Show on the project tile
+          </label>
+
             {selectedVersion(asset, 'export')?.status === 'done' && (
               <button type="button" className="link small" onClick={(e) => {
                   e.currentTarget.closest('details')?.removeAttribute('open')
@@ -257,7 +271,28 @@ export function autoName(prompt: string): string {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : ''
 }
 
-function CreateAssetForm({ project }: { project: Project }) {
+// The kind the project has most of; null for an empty project (UX-08).
+export function mostUsedCategory(assets: AssetSummary[]): string | null {
+  const counts = new Map<string, number>()
+  for (const a of assets) counts.set(a.category, (counts.get(a.category) ?? 0) + 1)
+  let best: string | null = null
+  for (const [id, n] of counts) if (best === null || n > (counts.get(best) ?? 0)) best = id
+  return best
+}
+
+// The picker's categories under their headings, in the backend's order.
+export function groupCategories(list: Category[]): Array<{ name: string; items: Category[] }> {
+  const out: Array<{ name: string; items: Category[] }> = []
+  for (const c of list) {
+    const name = c.group ?? 'Other'
+    const g = out.find((x) => x.name === name)
+    if (g) g.items.push(c)
+    else out.push({ name, items: [c] })
+  }
+  return out
+}
+
+function CreateAssetForm({ project, assets }: { project: Project; assets: AssetSummary[] | null }) {
   const navigate = useNavigate()
   const { ref, error: refError } = useRefData()
   const [name, setName] = useState('')
@@ -303,12 +338,13 @@ function CreateAssetForm({ project }: { project: Project }) {
 
   useEffect(() => {
     if (!ref) return
-    if (!category && ref.categories[0]) {
-      const first = ref.categories.find((c) => c.id === 'humanoid') ?? ref.categories[0]
+    // Wait for the project's assets, so the default is its most-used kind, not a guess that then jumps.
+    if (!category && ref.categories[0] && assets) {
+      const first = ref.categories.find((c) => c.id === mostUsedCategory(assets)) ?? ref.categories.find((c) => c.id === 'humanoid') ?? ref.categories[0]
       setCategory(first.id)
       setParts(first.parts_default ?? [])
     }
-  }, [ref, category])
+  }, [ref, category, assets])
 
   // The look follows the project's unless the person has picked one; it is set when the looks arrive, not before.
   useEffect(() => {
@@ -494,12 +530,22 @@ function CreateAssetForm({ project }: { project: Project }) {
         />
       )}
       {fromPicture && sizeNote(picture) && <div className="tool-note small">{sizeNote(picture)}</div>}
-      <Field label="1. What are you making?" term={'category.' + category} hint={cat ? (cat.id === 'material' ? MATERIAL_NOTE : cat.rig_engine === 'none' ? 'No skeleton; it will not animate.' : 'It will get a skeleton and can be animated.') : undefined}>
+      <Field label="1. What are you making?" term={'category.' + category}>
         <div className="category-tiles" role="radiogroup" aria-label="What are you making?">
-          {ref?.categories.map((c) => (
-            <button key={c.id} type="button" role="radio" aria-checked={category === c.id} aria-pressed={category === c.id} className="category-tile" onClick={() => changeCategory(c.id)}>
-              {c.label}
-            </button>
+          {groupCategories(ref?.categories ?? []).map((g) => (
+            <div key={g.name} className="category-group" role="group" aria-label={g.name}>
+              <div className="category-group-name">{g.name}</div>
+              <div className="category-group-tiles">
+                {g.items.map((c) => (
+                  <button key={c.id} type="button" role="radio" aria-checked={category === c.id} aria-pressed={category === c.id} className="category-tile" onClick={() => changeCategory(c.id)}>
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+              {cat && g.items.some((c) => c.id === cat.id) && (
+                <div className="field-hint category-note">{cat.label}: {cat.id === 'material' ? MATERIAL_NOTE : cat.rig_engine === 'none' ? 'no skeleton; it will not animate.' : 'it will get a skeleton and can be animated.'}</div>
+              )}
+            </div>
           ))}
         </div>
       </Field>
@@ -516,14 +562,14 @@ function CreateAssetForm({ project }: { project: Project }) {
       <FeaturePhotos slots={featureSlots} onChange={setFeatureSlots} startFrom={startFrom} category={category} disabled={busy} />
       {features.length > 0 && !fromModel && (
         <EditLoras
-          purpose="Your LoRAs for combining the photos"
+          purpose="Your photo-combining add-ons (LoRAs)"
           entries={editLoras(myLoras)}
           choices={combineLoras}
           disabled={busy}
           onChange={(id, choice) => setCombineLoras((cur) => ({ ...cur, [id]: choice }))}
         />
       )}
-      <Field label="3. Name (optional)" hint={`Optional. We will call it "${fallbackName}" if you leave this empty.`}>
+      <Field label="3. Name (optional)" hint={`We will call it "${fallbackName}" if you leave this empty.`}>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder={fallbackName === 'Untitled' ? 'Knight' : fallbackName} />
       </Field>
       {described && (

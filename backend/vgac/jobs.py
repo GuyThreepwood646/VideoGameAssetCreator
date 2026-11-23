@@ -1366,6 +1366,7 @@ class JobQueue:
             vs = self.stopped_versions(db, asset_id, stage)
             for v in vs:
                 v.error = SET_ASIDE_ERROR
+                v.selected = False
             db.commit()
             for v in vs:
                 _publish_version(v)

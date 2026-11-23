@@ -12,6 +12,7 @@ import { paintSaveBody } from '../../paint/savePaint'
 import type { ViewerModel } from '../../viewerTool'
 import { HairPicker, kindWords } from '../HairPicker'
 import { SmoothPaint, TouchUp } from './TouchUp'
+import { FaceSheet } from '../../components/FaceSheet'
 import { ShapeLogNote } from './ShapeTab'
 import type { FixAction } from '../../help'
 
@@ -26,6 +27,19 @@ const TEXTURE_NAMES: Record<string, string> = {
   roughness: 'shine',
   metallic: 'metal',
   emissive: 'glow',
+}
+
+// The industry term shown muted after the plain name (UX-04).
+const TEXTURE_TECH: Record<string, string> = {
+  base_color: 'base colour',
+  normal: 'normal map',
+  orm: 'ORM pack',
+  metallic_roughness: 'metallic-roughness',
+  occlusion: 'ambient occlusion',
+  ao: 'ambient occlusion',
+  roughness: 'roughness, inverse of shine',
+  metallic: 'metallic',
+  emissive: 'emissive',
 }
 
 // Hair from the library at Clean up (metrics.hair_library on the prep version).
@@ -166,7 +180,7 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
             {tris !== null ? `Your model: ${tris.toLocaleString('en-US')} triangles` : 'triangle count unknown'}
             {libHairOn && tris !== null && typeof libHair?.triangles === 'number' ? ` in the body and ${libHair.triangles.toLocaleString('en-US')} in the hair` : ''}
             {typeof version.metrics.texture_size === 'number' ? `, ${version.metrics.texture_size} px texture` : ''}
-            {version.stage === 'mesh' && version.params?.head_room ? ' (over the budget on purpose: the clean-up step brings it back and gives the head more of them)' : ''}
+            {version.stage === 'mesh' && version.params?.head_room ? ' (over the budget on purpose: the clean-up step brings it back down and gives the head a bigger share of the triangles)' : ''}
           </div>
         </div>
         {greyViews && (
@@ -243,7 +257,7 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
               <Info term="term.face_detail" />
             </div>
             <a href={faceSheet} target="_blank" rel="noreferrer" className="tiling-thumb" title="Open the full picture">
-              <img src={faceSheet} alt="The face from the picture, the 3D face before, and the 3D face after" />
+              <FaceSheet src={faceSheet} alt="The face from the picture, the 3D face before, and the 3D face after" />
             </a>
             <div className="small muted">The picture, the 3D face before, and after it was painted from the picture.</div>
             {faceMetrics?.face_texels_after ? (
@@ -339,7 +353,10 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
               {textures.map((k) => (
                 <a key={k} href={libraryUrl(version.files[k])} target="_blank" rel="noreferrer" className="texture-thumb" title={k}>
                   <img src={libraryUrl(version.files[k])} alt={k} />
-                  <span className="small">{TEXTURE_NAMES[k] ?? k.replace(/_/g, ' ')}</span>
+                  <span className="small">
+                    {TEXTURE_NAMES[k] ?? k.replace(/_/g, ' ')}
+                    {TEXTURE_TECH[k] && <span className="tech-term"> {TEXTURE_TECH[k]}</span>}
+                  </span>
                 </a>
               ))}
             </div>

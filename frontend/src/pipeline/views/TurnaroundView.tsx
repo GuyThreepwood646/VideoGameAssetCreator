@@ -86,12 +86,12 @@ function PoseReadyRow({ version, originalFiles, cutout }: { version: Version; or
   const original = originalFiles ? (cutout ? (originalFiles.cutout ?? originalFiles.image) : originalFiles.image) : null
   const items: PictureItem[] = [
     ...(original ? [{ src: libraryUrl(original)!, label: 'Your step 1 picture' }] : []),
-    { src: libraryUrl(posed)!, label: 'Redrawn for 3D' },
+    { src: libraryUrl(posed)!, label: 'Drawn again for 3D' },
   ]
   return (
     <div className="pose-ready-row">
       <div className="view-intro view-intro-flush muted small">
-        <strong>Redrawn for 3D (Pose for 3D first was on)</strong>
+        <strong>Drawn again for 3D (Pose for 3D first was on)</strong>
         <Info term="param.pose_ready" /> Every view below and the 3D model start from the redrawn picture{mouth ? ', which also has a closed mouth' : ''}; your step 1 picture is unchanged. Check that nothing that belongs to the design is gone (extra arms, claws, tools) and that the colours still match. If it is wrong, turn Pose for 3D first off under Fine-tune and draw the views again.
       </div>
       <div className="views-row">
@@ -252,7 +252,7 @@ export function TurnaroundView({ version, onRedraw, words = '', onWords, busy, l
               {!locked && (
                 <label className={'redraw-pick' + (on ? ' on' : '')}>
                   <input type="checkbox" checked={on} onChange={() => toggle(view)} />
-                  <span>{on ? 'Will be redrawn' : 'Redraw this view'}</span>
+                  <span>{on ? 'Will be drawn again' : 'Draw this view again'}</span>
                 </label>
               )}
             </div>
@@ -298,7 +298,7 @@ export function TurnaroundView({ version, onRedraw, words = '', onWords, busy, l
               </button>
             )}
             <button type="button" className="redraw-go" disabled={!ticked.length || busy} onClick={redraw} title={ticked.length ? 'Draws the ticked views again and makes one new version' : 'Tick at least one view first'}>
-              {ticked.length > 1 ? `Redraw ${ticked.length} views` : ticked.length === 1 ? 'Redraw 1 view' : 'Redraw'}
+              {ticked.length > 1 ? `Draw ${ticked.length} views again` : ticked.length === 1 ? 'Draw 1 view again' : 'Draw again'}
             </button>
           </div>
         </div>

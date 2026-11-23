@@ -20,7 +20,7 @@ PORT_A, PORT_B = 59481, 59482
 @pytest.fixture
 def bare(tmp_path: Path, short_library_root: Path, monkeypatch: pytest.MonkeyPatch):
     """The tracked defaults with nothing laid over them (no machine settings yet), unused ports, a temporary library
-    (a short folder: the app refuses a library path over 89 characters, and pytest's own folders are longer)."""
+    (a short folder: the app refuses a library path over the library limit, and pytest's own folders are longer)."""
     cfg = {
         "instances": {"a": {"url": f"http://127.0.0.1:{PORT_A}", "gpu": "RTX 3060", "role": "3d"},
                       "b": {"url": f"http://127.0.0.1:{PORT_B}", "gpu": "RTX 3080", "role": "images"}},

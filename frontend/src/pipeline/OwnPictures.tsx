@@ -276,7 +276,7 @@ function ConceptUpload({ asset, busy, act, onCreated }: { asset: Asset; busy: bo
   return (
     <div className="own-pictures">
       <div className="row-gap">
-        <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} title={material ? 'Make this material from a photo you have' : 'Start from a picture you already have instead of painting one'}>
+        <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} title={material ? 'Make this material from a photo you have' : 'Start from a picture you already have instead of drawing one'}>
           {material ? 'Use my own photo' : 'Use my own picture'}
         </button>
         <Info term="term.own_picture" />

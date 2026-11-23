@@ -161,7 +161,7 @@ def test_speed_scale_for_creatures_only():
 
 def test_unity_args_pass_hitboxes_and_clip_info(tmp_path):
     rig = SimpleNamespace(metrics={"bones": 30}, params={})
-    sc = SimpleNamespace(dir=tmp_path, category={"rig_engine": "skintoken_generic", "size_m": 1.2},
+    sc = SimpleNamespace(dir=tmp_path, platform="pc_mid", category={"rig_engine": "skintoken_generic", "size_m": 1.2},
                          stage_version=lambda s: rig, settings=SimpleNamespace(clips_libraries={}))
     args, flags, _ = export._unity_args(sc, {}, "wolf")
     assert "-vgacHitboxes" not in args and "-vgacClipInfo" not in args

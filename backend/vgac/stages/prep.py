@@ -72,7 +72,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import creaturemetal, face, facing, guidance, hairlib, hairmat, headtris, imaging, library, lightfix, normalfix, quality, reference, skinmetal, srcproject, texcolour
+from .. import creaturemetal, face, facing, guidance, hairlib, hairmat, headtris, imaging, library, lightfix, meshchecks, normalfix, quality, reference, skinmetal, srcproject, steptime, texcolour
 from .. import hair as hairfind
 from ..blender import gridfit
 from . import face_detail, hair_detail
@@ -88,6 +88,8 @@ TEXTURE_KEYS = ("base_color", "normal", "metallic", "roughness", "ao")
 LIGHT_SCORE_LIMIT = 0.2
 ATLAS_USED_MIN = 0.35  # the unwrap normally lands between 0.45 and 0.6; a mirrored, un-rebaked model sat at 0.28
 BAKE_MATCH_MIN = 0.99
+OUTLINE_IOU_MIN = 0.92  # outline_kept: lowest outline overlap (IoU) over the views between the model before and after the budget reduction
+OUTLINE_REGION_MAX = 0.02  # outline_kept: largest lost or filled patch of an outline, as a share of the outline's area
 ALBEDO_CLIPPED_MAX = 0.05  # albedo_range: share of non-metal texels that are pure black (under 4 sRGB) or pure white (over 250)
 ALBEDO_DARK_LOOK_FAULT = 0.5  # in a kept look, more than this share outside 30..240 while darker than the picture fails
 ALBEDO_DARK_NOTE = 0.15  # and the share of dark texels (under 30) over which the passing sentence says so; black cloth and dark hair are not a fault
@@ -239,7 +241,7 @@ async def shrink_after_paint(sc: StageContext, out: Path, current: dict[str, Pat
     sc.set_metrics(triangles=report.get("triangles"), vertices=report.get("vertices"), decimated=bool(report.get("decimated")),
                    triangles_before_budget=report.get("triangles_before_budget"), rebaked=True,
                    rebake_reason=report.get("rebake_reason"), rebake_seconds=report.get("rebake_seconds") or 0.0,
-                   shrink_rebaked=True, texture_size=tex)
+                   shrink_rebaked=True, texture_size=tex, rebake_unreached=report.get("rebake_unreached"))
     sc.register("glb", out)
     sc.register("report", sc.dir / "prep_report.json")
     # The maps were baked onto the shrunk model (out), so that is the bake reference the layout check compares against
@@ -356,8 +358,10 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         args += ["--maps", maps_json, "--tex", tex, "--padding", imaging.unwrap_padding(tex), "--margin", imaging.dilation_px(tex),
                  "--rebake", "always" if params.get("rebake") else "auto", "--category", sc.asset.category]
     sc.progress(0.1, "Blender prep")
-    await sc.blender("prep.py", args, log_name="prep.log")
+    with steptime.part(sc, "blender_prep"):   # waits for the host's Blender; the re-bake below is inside it
+        await sc.blender("prep.py", args, log_name="prep.log")
     report = json.loads((sc.dir / "prep_report.json").read_text())
+    steptime.add(sc, "rebake", report.get("rebake_seconds") or None)
     sc.register("glb", out)
     sc.register("report", sc.dir / "prep_report.json")
     rebaked = bool(report.get("rebaked"))
@@ -374,8 +378,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
                    non_manifold_edges=report.get("non_manifold_edges"), boundary_edges=report.get("boundary_edges"),
                    degenerate_faces=report.get("degenerate_faces"), uv_layers=report.get("uv_layers"), bones=report.get("bones"),
                    rebaked=rebaked, rebake_reason=report.get("rebake_reason"), rebake_seconds=report.get("rebake_seconds") or 0.0,
-                   decimated=bool(report.get("decimated")), texture_size=tex, triangles_before_budget=report.get("triangles_before_budget"),
-                   shape_loss=report.get("shape_loss"), **head_metrics(report, head))
+                   rebake_unreached=report.get("rebake_unreached") if rebaked else None, decimated=bool(report.get("decimated")), texture_size=tex, triangles_before_budget=report.get("triangles_before_budget"),
+                   shape_loss=report.get("shape_loss"), outline=report.get("outline"), **head_metrics(report, head))
     if report.get("grid"):
         sc.set_metrics(**grid_metrics(report["grid"]))
         tiling = report.get("tiling_png")
@@ -393,8 +397,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         # Light is removed after the painting (vgac/lightfix.py) when the pictures are painted on: the projection paints
         # their light back in over a de-light done here. The de-light here stays for models nothing is painted on.
         light_after = surface["delight"] == "remove" and srcproject.on(params, sc.asset.category, look)
-        result = await asyncio.to_thread(texture_pass, out, bake_glb, maps, sc.dir, tex, surface["delight"], surface["pbr_fix"],
-                                         rebaked, look, light_after)
+        result = await steptime.run(sc, "texture_pass", asyncio.to_thread(texture_pass, out, bake_glb, maps, sc.dir, tex, surface["delight"],
+                                                                         surface["pbr_fix"], rebaked, look, light_after))
         for key, p in result["files"].items():
             sc.register(key, p)
         sc.set_metrics(**result["metrics"], delight_mode=surface["delight"], delight_source=surface["delight_source"])
@@ -417,8 +421,10 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         if paint_first or srcproject.on(params, sc.asset.category, look):
             # the facing was decided (or chosen by hand): the front pictures are fitted on the front half only
             front_known = facing_.get("face_best_turn") is not None or facing_.get("facing_source") == "chosen"
-            current = await srcproject.run_stage(sc, out, current, params, keep=body_views, head_yaw=head_yaw,
-                                                 front_known=front_known)
+            with steptime.part(sc, "projection"):   # the picture painted on: pose search, fits and the compose are inside it
+                current = await srcproject.run_stage(sc, out, current, params, keep=body_views, head_yaw=head_yaw,
+                                                     front_known=front_known)
+            steptime.add(sc, "pose_search", pose_search_seconds(sc))   # summed over the views (fitted at the same time)
         if paint_first and tri_limit["limit"] and int(report.get("triangles") or 0) > int(tri_limit["limit"]):
             # the same head (and hands) protection as the budget pass of the normal path (only when the head is weighted)
             head_args = (["--protect-head", headtris.HEAD_SHARE, "--head-gain", headtris.HEAD_GAIN]
@@ -427,7 +433,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
                                                look, surface["delight"], surface["pbr_fix"], light_after, keep_normal, head_args)
 
         async def paint_body_again(glb_: Path, maps_: dict[str, Path]) -> dict[str, Path]:
-            return await srcproject.run_again(sc, glb_, maps_, body_views)
+            with steptime.part(sc, "second_compose"):
+                return await srcproject.run_again(sc, glb_, maps_, body_views)
 
         # "The face matters" off on the asset: the pass is skipped unless this run turns it on
         face_matters = getattr(sc.asset, "face_matters", None) is not False
@@ -451,10 +458,14 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         hf = await hair_detail.find(sc, out, current, rec, params,
                                     skin_metal=(sm["metrics"]["skin_metal"].get("metal_share_before") if sm["metrics"]["skin_metal"].get("ran") else None))
         face_detail_seed = params.get("face_detail_seed")
-        fd = await face_detail.run(sc, out, current, rec, params, hair_plan=hf.get("plan"), face_detail_seed=face_detail_seed,
-                                   after_relayout=paint_body_again if body_views.get("views") else None,
-                                   body_painted=bool(body_views.get("views")),
-                                   head_yaw=head_yaw)
+        with steptime.part(sc, "face_detail"):   # the second compose and the sharpening redraw are inside it
+            fd = await face_detail.run(sc, out, current, rec, params, hair_plan=hf.get("plan"), face_detail_seed=face_detail_seed,
+                                       after_relayout=paint_body_again if body_views.get("views") else None,
+                                       body_painted=bool(body_views.get("views")),
+                                       head_yaw=head_yaw)
+        fdm = (fd.get("metrics") or {}).get("face_detail") or {}
+        steptime.add(sc, "sharpening", fdm.get("redraw_seconds") or None)
+        steptime.add(sc, "face_rebake", (fdm.get("layout") or {}).get("rebake_seconds") or None)
         body_views.clear()  # several large pictures per view: let them go
         for key, p in fd["files"].items():
             sc.register(key, p)
@@ -467,7 +478,7 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
             # the new layout (the face's own texels in particular)
             after_face, sm2 = await clear_skin_metal(sc, out, after_face)
             sc.set_metrics(skin_metal_again=sm2["metrics"]["skin_metal"])
-        hd = await hair_detail.run(sc, out, after_face, rec, params, hf, fd.get("layout"))
+        hd = await steptime.run(sc, "hair_detail", hair_detail.run(sc, out, after_face, rec, params, hf, fd.get("layout")))
         for key, p in hd["files"].items():
             sc.register(key, p)
         sc.set_metrics(**hd["metrics"])
@@ -493,7 +504,25 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         await asyncio.to_thread(imaging.glb_replace_images, out, drop_normal=True)
     if hair is not None:
         await attach_hair(sc, out, hair, mesh_v.metrics if mesh_v else {})
-    await judge(sc)
+    await steptime.run(sc, "judge", judge(sc))
+
+
+def pose_search_seconds(sc: StageContext) -> float | None:
+    """The seconds the pose search took, summed over the views it ran for, from the record the projection pass keeps for
+    each view (metrics.srcproject_views[view].pose_search.seconds: outline, terms, refine, settle, d2). The views are
+    searched at the same time, so this can be longer than the time it held up the step. None: no search ran."""
+    try:
+        total, found = 0.0, False
+        for info in ((sc.version.metrics or {}).get("srcproject_views") or {}).values():
+            rec = info.get("pose_search") if isinstance(info, dict) else None
+            secs = rec.get("seconds") if isinstance(rec, dict) else None
+            if isinstance(secs, dict):
+                for k, v in secs.items():
+                    if k != "fit" and isinstance(v, (int, float)):
+                        total, found = total + float(v), True
+        return round(total, 1) if found else None
+    except Exception:  # noqa: BLE001  (timing never fails a job)
+        return None
 
 
 def late_cap_of(rec: dict[str, Any], look: dict[str, Any], tex: int) -> int | None:
@@ -507,10 +536,9 @@ def late_cap_of(rec: dict[str, Any], look: dict[str, Any], tex: int) -> int | No
 
 
 async def ship_late(sc: StageContext, glb: Path, maps: dict[str, Path], look: dict[str, Any], tex: int) -> dict[str, Path]:
-    """The look's texture treatment (apply_look: shrink to look.cap) after everything was painted at the bake size; the
-    base colour shrunk by area within each texture piece (imaging.shrink_by_island) and the pieces grown into the empty
-    space again, so no piece takes in a neighbour's colour or the background. The GLB, the version's files and the
-    metrics follow. -> the maps from here."""
+    """The look's texture treatment (apply_look: shrink to look.cap) after everything was painted at the bake size; every
+    map shrunk per texture piece (apply_look, imaging.shrink_by_island), so no piece takes in a neighbour's colour or the
+    background. The GLB, the version's files and the metrics follow. -> the maps from here."""
     def work() -> tuple[dict[str, Any], dict[str, Path], int | None]:
         out_dir = sc.dir / "shipped"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -518,12 +546,6 @@ async def ship_late(sc: StageContext, glb: Path, maps: dict[str, Path], look: di
         base = imaging.read_map(maps["base_color"])
         files: dict[str, Path] = {}
         m, mr_size = apply_look(look, uvf, maps, files, base, int(base.shape[0]), out_dir)
-        cap = int(look["cap"])
-        if files.get("base_color") is not None and uvf is not None:
-            # each texel from its own texture piece only (an area average across pieces lying a texel apart left slivers
-            # of the neighbouring piece's colour on Bob's hat), then the pieces grown into the empty space again
-            imaging.write_map(imaging.shrink_by_island(base, uvf, cap), files["base_color"])
-            imaging.dilate_png(files["base_color"], imaging.rasterise_uv(uvf, cap)["labels"] > 0, imaging.dilation_px(cap))
         imaging.glb_replace_images(glb, base_color=files.get("base_color"), metallic=files.get("metallic"), roughness=files.get("roughness"),
                                    normal=files.get("normal"), mr_size=mr_size)
         return m, files, mr_size
@@ -961,17 +983,26 @@ def apply_look(look: dict[str, Any], uvf: dict[str, Any], maps: dict[str, Path],
             if Path(maps["base_color"]).resolve() != original.resolve():
                 shutil.copy2(maps["base_color"], original)
             files["base_color_original"] = original
-        im = Image.fromarray((np.clip(new_base, 0, 1) * 255).round().astype("uint8"), "RGB").resize((target, target), Image.BOX)
-        files["base_color"] = imaging.write_map(np.asarray(im, dtype="float32") / 255.0, out_dir / "base_color.png")
+        if uvf is not None:
+            # per island: each texel is averaged from its own UV island only, then the islands are grown into the empty
+            # space, so no island takes in a neighbour's colour or the background (the box filter blended them)
+            base = np.clip(np.asarray(new_base, dtype=np.float32), 0.0, 1.0)
+            files["base_color"] = imaging.write_map(imaging.shrink_by_island(base, uvf, target), out_dir / "base_color.png")
+            imaging.dilate_png(files["base_color"], imaging.rasterise_uv(uvf, target)["labels"] > 0, imaging.dilation_px(target))
+        else:
+            im = Image.fromarray((np.clip(new_base, 0, 1) * 255).round().astype("uint8"), "RGB").resize((target, target), Image.BOX)
+            files["base_color"] = imaging.write_map(np.asarray(im, dtype="float32") / 255.0, out_dir / "base_color.png")
     keys = ("metallic", "roughness", "ao") + (("normal",) if look.get("normal_map", True) else ())
     for key in keys:
         src = files.get(key) or maps.get(key)
         if src is None or not Path(src).is_file():
             continue
         if imaging.image_size(src)[0] > target:
-            if key == "normal" and uvf is not None:
-                # per island, as the base colour is shrunk in ship_late: no blending across island borders
+            if uvf is not None and key == "normal":
+                # per island, as the base colour: no blending across island borders
                 files[key] = imaging.shrink_normal_islands(src, uvf, target, out_dir / f"{key}.png")
+            elif uvf is not None:
+                files[key] = imaging.shrink_map_islands(src, uvf, target, out_dir / f"{key}.png")
             elif key == "normal":
                 files[key] = imaging.shrink_normal(src, target, out_dir / f"{key}.png")
             else:
@@ -1134,10 +1165,29 @@ def prep_checks(report: dict[str, Any], params: dict[str, Any], metrics: dict[st
     up = upscale_check(metrics.get("srcproject_upscale"))
     if up is not None:
         checks.append(up)
+    oc = outline_check(report)
+    if oc is not None:
+        checks.append(oc)
     ff = (metrics.get("srcproject_face_finder") or {}).get("missing")
     if ff:  # the processor finder was asked for and is not there (nothing asked for: nothing said)
         checks.append(quality.check("face_finder", False, ff, "found", vars={"reason": ff}))
     return checks
+
+
+def outline_check(report: dict[str, Any]) -> dict[str, Any] | None:
+    """outline_kept (WP-16 follow-up, warning only): the model before the budget reduction and the final model drawn as
+    outlines from seven fixed views (vgac/blender/outline.py). Fails when the worst view overlaps less than
+    OUTLINE_IOU_MIN, or a lost or filled-in patch is bigger than OUTLINE_REGION_MAX of the outline. None when prep did
+    not try; not measured when it tried and could not."""
+    o = report.get("outline")
+    if not isinstance(o, dict):
+        err = report.get("outline_error")
+        return quality.not_measured("outline_kept", "whether the outline survived the clean-up", str(err)) if err else None
+    iou, region = float(o["iou_min"]), float(o["region_max"])
+    view = o.get("region_max_view") if region > OUTLINE_REGION_MAX else o.get("iou_min_view")
+    return quality.check("outline_kept", iou >= OUTLINE_IOU_MIN and region <= OUTLINE_REGION_MAX, round(iou, 4), OUTLINE_IOU_MIN,
+                         vars={"region": round(region, 4), "region_limit": OUTLINE_REGION_MAX, "kind": o.get("region_max_kind"),
+                               "view": view})
 
 
 def facing_check(metrics: dict[str, Any], category_id: str | None = None) -> dict[str, Any] | None:
@@ -1330,6 +1380,19 @@ async def judge(sc: StageContext) -> None:
         checks.append(pc)
         if m.get("srcproject_applied"):
             checks += srcproject.neck_checks(m)
+            ps = quality.painted_share_check(m.get("srcproject_painted_share"))  # WP-92: warning only
+            if ps is not None:
+                checks.append(ps)
+    # WP-86 and WP-92 (warnings only): the re-bake's unreached texels, slivers, texel-density spread and flipped shells.
+    uc = quality.unreached_check(m.get("rebake_unreached"))
+    if uc is not None:
+        checks.append(uc)
+    if "mesh_measures" not in m and sc.file("glb") is not None:
+        mm = await asyncio.to_thread(meshchecks.measure_glb, sc.file("glb"))
+        if mm is not None:  # a GLB that cannot be read gives no measure and no check (never a pass)
+            sc.set_metrics(mesh_measures=mm)
+            m = sc.version.metrics
+    checks += quality.mesh_measure_checks(m.get("mesh_measures"))
     checks += look_checks(rec, report, m, {k: sc.file(k) for k in TEXTURE_KEYS}, sc.asset.category)
     checks += face_detail.face_checks(m)
     checks += hair_detail.hair_checks(m)

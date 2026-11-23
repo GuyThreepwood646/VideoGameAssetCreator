@@ -24,6 +24,16 @@ function cardState(inst: HealthInstance): string {
   return 'Ready'
 }
 
+// The host lane (Blender and Unity) is not a graphics card: it has no card name, so name it as the computer.
+function instanceName(name: string, inst: HealthInstance): string {
+  return inst.gpu || (name === 'host' ? 'This computer (Blender and Unity)' : `Image card ${name.toUpperCase()}`)
+}
+
+// What an instance is, under its name: the card, its job, its address. The host lane has no card or address.
+function instanceMeta(inst: HealthInstance): string {
+  return [inst.gpu, inst.role, inst.url].filter(Boolean).join(' / ') + (inst.comfyui_version ? ` / ComfyUI ${inst.comfyui_version}` : '')
+}
+
 // Free memory in GB, from the card itself when the app could read it; the engine's own figure is marked as such.
 function cardFree(inst: HealthInstance): string | null {
   const m = inst.memory
@@ -142,9 +152,9 @@ export function HealthBadge() {
           const state = cardState(inst)
           const free = inst.reachable ? cardFree(inst) : null
           return (
-            <div key={name} className="health-inst" title={`${inst.gpu} / ${inst.role} / ${inst.url}${inst.error ? ' / ' + inst.error : ''}`}>
+            <div key={name} className="health-inst" title={`${instanceMeta(inst)}${inst.error ? ' / ' + inst.error : ''}`}>
               <span className={'dot ' + (inst.enabled === false || !inst.reachable ? 'off' : 'ok')} />
-              {inst.gpu || name}: {state}
+              {instanceName(name, inst)}: {state.charAt(0).toLowerCase() + state.slice(1)}
               {free ? <span className="muted"> ({free})</span> : null}
             </div>
           )
@@ -159,9 +169,13 @@ export default function HealthPanel() {
   const { health, error, updated } = useHealth()
   return (
     <div className="panel">
+      <div className="system-columns">
+      <div className="system-col">
       {!error && <SetupCheck />}
-      {!error && <GpuCards />}
       {!error && <YourLibrary />}
+      </div>
+      <div className="system-col">
+      {!error && <GpuCards />}
       <h2>Checks</h2>
       {error && <div className="error">The engine did not answer: {error}</div>}
       {health && <div className="instances-grid">{
@@ -170,14 +184,11 @@ export default function HealthPanel() {
             <div className="row">
               <span className="name">
                 <span className={'dot ' + (inst.enabled === false || !inst.reachable ? 'off' : 'ok')} />
-                {inst.gpu || `Card ${name}`}
+                {instanceName(name, inst)}
               </span>
               <span className="meta">{cardState(inst)}</span>
             </div>
-            <div className="meta">
-              {inst.gpu} / {inst.role} / {inst.url}
-              {inst.comfyui_version ? ` / ComfyUI ${inst.comfyui_version}` : ''}
-            </div>
+            <div className="meta">{instanceMeta(inst)}</div>
             {inst.reachable && inst.memory?.source === 'card' && inst.memory.used_gb != null && inst.memory.total_gb != null ? (
               <div className="device">
                 {inst.memory.used_gb.toFixed(1)} of {inst.memory.total_gb.toFixed(1)} GB used on the card
@@ -214,13 +225,15 @@ export default function HealthPanel() {
         </div>
       )}
       {!health && !error && <div className="host">Loading...</div>}
+      </div>
+      </div>
     </div>
   )
 }
 
 export function HealthPage() {
   return (
-    <div className="page-narrow">
+    <div className="page-narrow page-system">
       <h1 className="page-title">System</h1>
       <HealthPanel />
     </div>
