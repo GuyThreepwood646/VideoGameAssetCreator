@@ -61,7 +61,9 @@ def blender_cmd(settings: Settings, script: str, args: list[Any]) -> list[str]:
         log.warning("blender: %s", note["message"])
         if not note["usable"]:
             raise ToolError(note["message"])
-    return [str(settings.blender_exe), "-b", "--python", str(script_path), "--", *[str(a) for a in args]]
+    # --python-exit-code 1: a Python error in the script exits 1 (Blender exits 0 by default), so run_process raises
+    # ToolError with the output's tail instead of the caller finding missing files (F14).
+    return [str(settings.blender_exe), "-b", "--python-exit-code", "1", "--python", str(script_path), "--", *[str(a) for a in args]]
 
 
 LONG_PATH_LIMIT = 260  # Windows MAX_PATH: a path this many characters or longer cannot be opened by Blender's Python
@@ -90,10 +92,28 @@ def check_blender_paths(args: list[Any]) -> None:
                         "(Library folder).")
 
 
+def traceback_tail(text: str, lines: int = 3) -> str:
+    """The last lines of the last Python traceback in Blender's output, joined with " | ", or "" when there is none."""
+    rows = text.splitlines()
+    starts = [i for i, ln in enumerate(rows) if ln.startswith("Traceback")]
+    if not starts:
+        return ""
+    tb = [ln.strip() for ln in rows[starts[-1]:] if ln.strip() and not ln.startswith(("Blender ", "Blender quit"))]
+    return " | ".join(tb[-lines:])
+
+
 def run_blender(settings: Settings, script: str, args: list[Any], log_path: Path | None = None, timeout: float | None = 3600,
                 on_start: Callable[[subprocess.Popen], None] | None = None) -> str:
     check_blender_paths(args)
-    return run_process(blender_cmd(settings, script, args), log_path=log_path, timeout=timeout, on_start=on_start)
+    try:
+        return run_process(blender_cmd(settings, script, args), log_path=log_path, timeout=timeout, on_start=on_start)
+    except ToolError as e:
+        # The reason first: callers keep the start of the message (300 to 500 characters), and Blender's output tail
+        # starts with import lines; the traceback is at its end.
+        tb = traceback_tail(str(e))
+        if tb:
+            raise ToolError(f"{script} stopped on an error: {tb}\n{e}") from None
+        raise
 
 
 def unity_cmd(settings: Settings, method: str, args: dict[str, Any], flags: list[str], log_path: Path,
