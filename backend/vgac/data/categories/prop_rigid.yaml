@@ -14,7 +14,7 @@ topology: triangle
 # The step 1 wording below asks for a level, square-on front (vgac/picture_view.py).
 picture_view: front
 # Z-Image Turbo ignores view words at the end of the prompt (step1-view trial 2026-11-22: 0 of 8 square-on); put
-# first, before the description, they gave 8 of 8 (vgac/stages/concept.py, view_lead).
+# first, before the description, 7 of 8 (blind reviewer; vgac/stages/concept.py, view_lead).
 view_lead: "Straight-on front view, flat front elevation at eye level, camera directly in front, symmetrical, only the front face visible:"
 input_view_default: front
 motion: none

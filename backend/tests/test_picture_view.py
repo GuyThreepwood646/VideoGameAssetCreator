@@ -51,33 +51,43 @@ def test_the_persons_own_pictures_are_never_assumed():
         assert picture_view.assumed({"source": source, "picture_view": "front"}) is None, source
 
 
-def test_every_painted_category_asks_for_a_level_square_on_front():
-    # Step 2 turns its views from the step 1 picture as if it were the front (golden set 2026-11-22), so step 1 asks every
-    # category with a picture for a level, square-on front, and says so with picture_view.
-    for c in reference.categories():
-        if c["id"] == "material":
-            continue
+# Categories whose square-on wording was tested (step1-view trial, 2026-11-22: crate, cottage, dog, wheelbarrow) or already
+# came out square-on (humanoid, foliage on the golden set). Untested categories keep today's wording until a trial passes
+# (per-category routes): they record no picture_view and get no view words first.
+TESTED_FRONT = ("prop_rigid", "environment", "quadruped", "vehicle")
+LEVEL_ALREADY = ("humanoid", "foliage")
+
+
+def test_tested_categories_ask_for_a_level_square_on_front():
+    # Step 2 turns its views from the step 1 picture as if it were the front (golden set 2026-11-22).
+    for cid in TESTED_FRONT + LEVEL_ALREADY:
+        c = reference.category(cid)
         block = c["pose_block"].lower()
-        assert c.get("picture_view") == "front", c["id"]
-        assert not any(w in block for w in ("three-quarter", "slightly above", "from above", "high angle")), c["id"]
-        assert "front" in block and ("eye level" in block or "facing the camera directly" in block), c["id"]
+        assert c.get("picture_view") == "front", cid
+        assert not any(w in block for w in ("three-quarter", "slightly above", "from above", "high angle")), cid
+        assert "front" in block and ("eye level" in block or "facing the camera directly" in block), cid
 
 
-LEVEL_ALREADY = ("humanoid", "foliage")  # these already came out square-on with their wording last (golden set)
+def test_untested_categories_keep_todays_wording_and_record_no_view():
+    for c in reference.categories():
+        if c["id"] in TESTED_FRONT + LEVEL_ALREADY + ("material",):
+            continue
+        assert not c.get("view_lead") and c.get("picture_view") is None, c["id"]
+        assert concept.prompt_and_view(_sc(c["id"]), {})[1] is None, c["id"]
 
 
 def test_the_view_words_come_first_in_the_step_1_prompt():
     # Z-Image Turbo ignored square-on wording at the end of the prompt (step1-view trial 2026-11-22: 0 of 8 square-on) and
-    # followed it at the start (8 of 8), so every painted category but these two leads with its view words.
-    for c in reference.categories():
-        if c["id"] in ("material",) + LEVEL_ALREADY:
-            continue
-        lead = c.get("view_lead") or ""
-        assert lead.startswith("Straight-on front view") and "eye level" in lead, c["id"]
-        prompt, view = concept.prompt_and_view(_sc(c["id"]), {})
-        assert prompt.startswith(lead + " a sturdy knight"), c["id"]
-        assert view == "front", c["id"]
-        assert prompt.count(lead) == 1, c["id"]
+    # followed it at the start (7 of 8 by a blind reviewer), so the tested categories lead with their view words.
+    for cid in TESTED_FRONT:
+        lead = reference.category(cid).get("view_lead") or ""
+        assert lead.startswith("Straight-on front view") and "eye level" in lead, cid
+        prompt, view = concept.prompt_and_view(_sc(cid), {})
+        assert prompt.startswith(lead + " a sturdy knight"), cid
+        assert view == "front", cid
+        assert prompt.count(lead) == 1, cid
+    for cid in LEVEL_ALREADY:
+        assert not reference.category(cid).get("view_lead"), cid
 
 
 def test_no_view_lead_without_the_category_wording(monkeypatch):

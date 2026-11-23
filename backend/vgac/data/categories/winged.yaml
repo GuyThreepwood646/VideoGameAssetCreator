@@ -12,11 +12,6 @@ size_label: "How wide are the wings?"
 size_hint: "In metres, wing tip to wing tip. A hawk is about 1.2 m; a horse-sized dragon about 8 m."
 parts_default: []
 topology: quad
-# The step 1 wording below asks for a level, square-on front (vgac/picture_view.py).
-picture_view: front
-# Z-Image Turbo ignores view words at the end of the prompt (step1-view trial 2026-11-22: 0 of 8 square-on); put
-# first, before the description, they gave 8 of 8 (vgac/stages/concept.py, view_lead).
-view_lead: "Straight-on front view at eye level, camera directly in front of the creature, the creature facing the camera head-on, symmetrical:"
 input_view_default: quarter
 # Hair-friendly pictures (vgac/hairpic.py): the look's fur sentence only when the description names fur or a mane.
 hair: fur_if_named
@@ -26,10 +21,10 @@ lod_ratios: [0.5, 0.25, 0.1]
 views: [front, left, back, right, quarter]
 pose_block: >-
   The creature stands on the ground in a neutral pose with both wings spread wide and flat to the
-  sides so the whole wing shape is visible, head level and facing the camera, seen straight from the
-  front at eye level, square-on, whole body visible with margin around it, centred in frame. Plain
-  flat light grey background. Soft even studio lighting from the front with no hard shadows. No text,
-  no logos, no background scenery, no motion blur, no cropping.
+  sides so the whole wing shape is visible, head level and facing forward, seen from a three-quarter
+  front angle, whole body visible with margin around it, centred in frame. Plain flat light grey
+  background. Soft even studio lighting from the front with no hard shadows. No text, no logos,
+  no background scenery, no motion blur, no cropping.
 budgets:
   mobile_low: {triangles: 6000, texture: 1024}
   pc_mid: {triangles: 24000, texture: 2048}

@@ -9,24 +9,19 @@ size_axis: longest
 size_word: across
 size_label: "How big is it?"
 size_hint: "In metres, along its longest side. A chest is about 0.9 m wide; a door about 2.1 m tall."
-parts_default: [lid]
+parts_default: []  # the moving part is named from the item (declared_parts.item_defaults)
 topology: triangle
-# The step 1 wording below asks for a level, square-on front (vgac/picture_view.py).
-picture_view: front
-# Z-Image Turbo ignores view words at the end of the prompt (step1-view trial 2026-11-22: 0 of 8 square-on); put
-# first, before the description, they gave 8 of 8 (vgac/stages/concept.py, view_lead).
-view_lead: "Straight-on front view, flat front elevation at eye level, camera directly in front, symmetrical, only the front face visible:"
 input_view_default: front
 motion: none
 clips: []
 lod_ratios: [0.5, 0.25]
 views: [front, left, back, right, quarter]
 pose_block: >-
-  The object sits on a plain flat light grey surface against a plain flat light grey background with
-  every moving part closed and in its rest position, seen straight from the front at eye level,
-  square-on, with its front facing the camera, whole object visible with margin around it, centred in
-  frame. Soft even studio lighting with no hard shadows. No text, no logos, no other objects, no
-  scenery, no motion blur, no cropping.
+  The object sits on a plain flat light grey surface against a plain flat light grey background
+  with every moving part closed and in its rest position, seen from a three-quarter front angle
+  slightly above, whole object visible with margin around it, centred in frame. Soft even studio
+  lighting with no hard shadows. No text, no logos, no other objects, no scenery, no motion blur,
+  no cropping.
 budgets:
   mobile_low: {triangles: 1500, texture: 512}
   pc_mid: {triangles: 6000, texture: 2048}

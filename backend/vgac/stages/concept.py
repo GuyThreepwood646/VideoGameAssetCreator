@@ -113,7 +113,7 @@ def prompt_and_view(sc: StageContext, params: dict[str, Any]) -> tuple[str, str 
     held = items.concept_prompt_parts(sc.asset)
     base = (params.get("prompt_override") or "").strip() or ((held or {}).get("prompt") or sc.asset.prompt).strip()
     # The category's view words go first: Z-Image Turbo ignores view words at the end of the prompt (step1-view trial,
-    # 2026-11-22: 0 of 8 pictures square-on with them last, 8 of 8 with them first). Only with the category's own wording.
+    # 2026-11-22: 0 of 8 pictures square-on with them last, 7 of 8 with them first, by a blind reviewer). Only with the category's own wording.
     lead = (sc.category.get("view_lead") or "").strip()
     uses_category = params.get("readiness_block", True) and not (held or {}).get("pose_block") and sc.category.get("pose_block")
     if lead and uses_category and not base.startswith(lead):
