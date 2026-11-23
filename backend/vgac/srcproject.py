@@ -2832,11 +2832,14 @@ MODES = ("detail", "full", "off")
 DEFAULT_MODE = "full"
 
 
-AUTO_CATEGORIES = ("humanoid",)
+# Buildings joined after a blind review of the shop and cottage (bakeoff/paint-default, 2026-11-23): the shop judged better
+# than the bake (its sign comes back), the cottage held only for the mended-fill patch of a remesh-off build. Rigid props
+# stay off: the crate gains dark smears where the original painting's slats do not line up with the model's.
+AUTO_CATEGORIES = ("humanoid", "environment")
 
 
 def on(params: dict[str, Any], category: str | None = None, look: dict[str, Any] | None = None) -> bool:
-    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character.
+    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character or a building.
     `look` is no longer read; it stays so the callers need not change."""
     if params.get(PARAM) is not None:
         return bool(params.get(PARAM))

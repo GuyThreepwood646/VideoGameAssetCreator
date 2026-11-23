@@ -180,3 +180,13 @@ def test_a_box_alike_after_a_half_turn_paints_on_the_half_nearer_the_facing(head
     v = r["metrics"]["srcproject_views"]["picture"]
     assert "refused" not in v, v.get("refused")
     assert srcproject._angdiff(v["yaw"], want) <= 10.0, (v["yaw"], v["pose_search"].get("half_turn"))
+
+
+def test_picture_paint_runs_by_itself_for_characters_and_buildings_only() -> None:
+    # Buildings passed the blind review (shop); rigid props did not (crate smears); articulated props wait for a card run.
+    assert srcproject.on({}, "humanoid") and srcproject.on({}, "environment")
+    for c in ("prop_rigid", "prop_articulated", "foliage", "vehicle", "quadruped", None):
+        assert not srcproject.on({}, c), c
+    # The version's own choice wins either way.
+    assert not srcproject.on({srcproject.PARAM: False}, "environment")
+    assert srcproject.on({srcproject.PARAM: True}, "prop_rigid")

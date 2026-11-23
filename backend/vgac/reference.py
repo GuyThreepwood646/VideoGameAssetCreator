@@ -167,7 +167,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         # The picture painted into the base colour (vgac/srcproject.py). Empty: by itself for a character on a smooth
         # look. On: any model. Off: never.
         _param("source_project", "boolean", None, categories=SURFACE_CATEGORIES, label="Paint the picture onto the model",
-               description="Puts your picture's own colours and detail on the side it shows. When empty: on for characters"),
+               description="Puts your picture's own colours and detail on the side it shows. When empty: on for characters and buildings"),
         # The face detail pass (stages/face_detail.py): humanoids only; skipped by itself for flat looks.
         _param("face_detail", "boolean", True, categories=["humanoid"], label="Match the face to the picture",
                description="Paints the face from the picture so the eyes and mouth are sharp; skipped when there is no face to paint"),
