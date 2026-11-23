@@ -913,8 +913,11 @@ def plateau_up(s: float) -> float:
     return min(rise, 1.0 - x ** PLATEAU_DROP_EXP)
 
 
+LATE_EASE_K = 3.05  # biped walk swing: forward ease of this many stride-lengths times s^2 (1 - s)^2 (zero at both ends)
+
+
 def foot_path(u: float, duty: float, stride: float, lift: float, run: bool = False, quick_strike: bool = False,
-              plateau: bool = False) -> tuple:
+              plateau: bool = False, late_ease: bool = False) -> tuple:
     """(forward, up, pitch_deg) of one foot relative to its rest place at cycle fraction u.
 
     While planted (the first `duty` of the cycle) the foot moves backward at constant speed from +stride/2 to
@@ -925,7 +928,11 @@ def foot_path(u: float, duty: float, stride: float, lift: float, run: bool = Fal
     the stance on an ease-out curve, so the toes drop mostly in the first frame after the heel lands. With the default
     (STRIKE_DEG, a smoothstep over 0.2 of the stance) the toes of a long foot stay several cm up and nearly still for
     two to three frames after heel strike.
-    plateau: the walk's swing height follows plateau_up instead of sin(pi s)^1.2."""
+    plateau: the walk's swing height follows plateau_up instead of sin(pi s)^1.2.
+    late_ease: a biped walk's swing adds LATE_EASE_K * stride * s^2 (1 - s)^2 to the forward path. The term is zero with its
+    slope at both ends, so the landing spot and the zero world speed at contact are unchanged; it moves forward speed
+    out of the last quarter of the swing, so the foot is no longer still travelling forward when it meets the floor
+    (a 1-frame stop read as a skid). Quadrupeds keep the path without it."""
     u = wrap(u)
     duty = min(0.95, max(0.05, duty))
     push = 22.0 if run else 18.0
@@ -944,6 +951,8 @@ def foot_path(u: float, duty: float, stride: float, lift: float, run: bool = Fal
     m = -stride * (1.0 - duty) / duty
     s2, s3 = s * s, s * s * s
     fwd = -stride * 0.5 * (2 * s3 - 3 * s2 + 1) + m * (s3 - 2 * s2 + s) + stride * 0.5 * (3 * s2 - 2 * s3) + m * (s3 - s2)
+    if late_ease:
+        fwd += LATE_EASE_K * stride * s2 * (1.0 - s) ** 2
     if run:
         up = lift * math.sin(math.pi * s) ** 1.5 * (1.0 - 0.35 * s)
         fwd -= stride * 0.3 * math.sin(math.pi * s) ** 2 * (1.0 - s) ** 2  # the heel rises behind before swinging through

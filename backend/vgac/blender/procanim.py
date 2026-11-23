@@ -1475,7 +1475,8 @@ def _walk_like(P, t, run):
             # A biped walk lands with a smaller, quicker heel roll, so the toes do not hang in the air after heel strike,
             # and swings on a plateau, so the foot is clear of the floor through the swing and drops just before landing.
             bw = biped and not run
-            fwd_, up_, pitch = gait.foot_path(uu, duty, S_, lift, run=run and biped, quick_strike=bw, plateau=bw)
+            fwd_, up_, pitch = gait.foot_path(uu, duty, S_, lift, run=run and biped, quick_strike=bw, plateau=bw,
+                                              late_ease=biped and not run)  # walk only: run landed harder by 2 to 20 percent with the ease (RESULTS.md)
             if not biped:
                 pitch *= 0.6
             toe_flat = 1.0 if uu < duty else 1.0 - gait.smoothstep((uu - duty) / (1.0 - duty) / 0.3)
