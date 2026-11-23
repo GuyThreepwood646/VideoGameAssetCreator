@@ -761,6 +761,11 @@ const CHECK_TEXT: Record<string, CheckText> = {
   wings_found: (_v, _l, ok) => (ok ? 'Both wings were found, so it can fly and glide.' : 'We could not find the wings in the skeleton, so it walks but cannot fly.'),
   hitbox_cover: (v, _l, ok, _ctx, vars) => {
     const cover = str(vars.cover) || pct(v)
+    // Both faults on one skeleton (backend rig.hitbox_checks, vars.both): one sentence with both halves.
+    if (!ok && vars.both) {
+      const times = str(vars.times) || num(vars.times)?.toFixed(1) || ''
+      return `The hit boxes are the wrong size in places: they cover only ${cover} of the body, so some hits would pass through, and some boxes stick out ${times} times the body's size, so other hits would land in thin air.`
+    }
     return ok ? `${str(vars.n) || 'The'} hit boxes cover ${cover} of the body and follow the skeleton.` : `The hit boxes cover only ${cover} of the body, so some hits would pass through.`
   },
   hitbox_overreach: (v, _l, ok, _ctx, vars) => (ok ? 'The hit boxes stay close to the body.' : `The hit boxes stick out well past the body (${str(vars.times) || num(v)?.toFixed(1) || v} times its size), so hits would land in thin air.`),
@@ -1155,11 +1160,15 @@ export function checkFixNote(check: Check): string | null {
   return check.fix_note?.trim() || null
 }
 
+export const BOTH_HITBOX_FIX_LABEL = 'Fit the hit boxes again'
+
 // Where the app can fix a failing check (the backend's check.fix wins). Passing checks have no fix.
 export function checkFix(check: Check): FixAction | null {
   if (checkPassed(check)) return null
   const id = check.id ?? check.name
-  const label = check.fix?.label || check.fix_label || FIX_LABELS[id] || DEFAULT_FIX_LABEL
+  // The one re-fit for both hit-box faults on one skeleton (vars.both), when the backend's own label is not there.
+  const bothHitboxes = id === 'hitbox_cover' && check.vars?.both === true
+  const label = check.fix?.label || check.fix_label || (bothHitboxes ? BOTH_HITBOX_FIX_LABEL : FIX_LABELS[id]) || DEFAULT_FIX_LABEL
   const f = check.fix
   if (f && f.ui) {
     const tool = FIX_TOOLS[f.ui]
@@ -1179,6 +1188,7 @@ export function checkFix(check: Check): FixAction | null {
   // The two facing tests disagreeing (facing_tests): turn to the turn the clean-up decided on, which the check carries.
   const turn = quarterTurn(num(check.vars?.fix_yaw))
   if (id === 'facing_tests' && turn !== null) return { stage: 'prep', params: { face_yaw: turn }, label }
+  if (bothHitboxes) return { stage: 'rig', params: { hitbox_fit: 'normal' }, label }
   if (id === 'hitbox_cover') return { stage: 'rig', params: { hitbox_fit: 'loose' }, label }
   if (id === 'hitbox_overreach') return { stage: 'rig', params: { hitbox_fit: 'snug' }, label }
   if (id === 'hitbox_fit' || id === 'clips' || id === 'legs_moved') return { stage: 'rig', params: {}, label }
