@@ -645,6 +645,14 @@ def _feet_gap(cutout: Path) -> float | None:
         return None
 
 
+def _arm_angle(cutout: Path) -> float | None:
+    """The larger upper-arm angle of a redraw's cut-out (buildpose.redraw_arm_angle), None when it cannot be read."""
+    try:
+        return buildpose.redraw_arm_angle(buildpose.measure(cutout))
+    except Exception:  # noqa: BLE001  (an unread arm only means no reason to try again for it)
+        return None
+
+
 def _pose_choice_changed(sc: StageContext, params: dict[str, Any]) -> bool:
     """True when the pose LoRA choice differs from the one the parent's pose picture was drawn with (a kept picture
     must not be reported as drawn with a LoRA it did not use)."""
@@ -708,10 +716,13 @@ async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Pat
         else:
             g = {"ok": True, "reasons": [], "not_compared": ["the whole redraw (your picture's cut-out was not found)"], "measures": {}}
         gap = await asyncio.to_thread(_feet_gap, made["cutout"])
-        tries.append({**made, "seed": seed, "guard": g, "gap": gap})
-        # Another try while the character was not kept, or was kept with the feet so close that the 3D model may join the thighs;
+        arm = await asyncio.to_thread(_arm_angle, made["cutout"])
+        tries.append({**made, "seed": seed, "guard": g, "gap": gap, "arm": arm})
+        # Another try while the character was not kept, or was kept with the arms raised nearly to a T-pose or the feet so close
+        # that the 3D model may join the thighs;
         # the try kept at the end is the best of them, not just the last.
-        pick = buildpose.choose_try([{"guard_ok": t["guard"]["ok"], "gap": t["gap"]} for t in tries], POSE_GUARD_RETRIES - n)
+        pick = buildpose.choose_try([{"guard_ok": t["guard"]["ok"], "gap": t["gap"], "arm": t["arm"]} for t in tries],
+                                    POSE_GUARD_RETRIES - n)
         if not pick["another"]:
             break
     kept = tries[pick["keep"]] if pick["keep"] is not None else tries[-1]
@@ -719,6 +730,7 @@ async def _pose_ready_picture(sc: StageContext, params: dict[str, Any], src: Pat
     sc.set_metrics(pose_guard={"tries": len(tries), "ok": kept["guard"]["ok"], "reasons": kept["guard"]["reasons"],
                                "not_compared": kept["guard"]["not_compared"], "seeds": [t["seed"] for t in tries],
                                "measures": [t["guard"].get("measures") for t in tries], "gaps": [t["gap"] for t in tries],
+                               "arms": [t["arm"] for t in tries],
                                "kept_try": tries.index(kept) + 1, "why": pick["why"]})
     if not kept["guard"]["ok"]:
         sc.register("pose_refused_picture", kept["picture"])

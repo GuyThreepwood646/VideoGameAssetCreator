@@ -28,6 +28,7 @@ def _png(path: Path, size=(64, 64)) -> Path:
 def _feet_far_apart(monkeypatch):
     """The drawn stand-ins are not figures; their feet are taken as far enough apart, so no second try is wanted."""
     monkeypatch.setattr(turnaround, "_feet_gap", lambda _p: 0.3)
+    monkeypatch.setattr(turnaround, "_arm_angle", lambda _p: 45.0)
 
 
 class _SC:

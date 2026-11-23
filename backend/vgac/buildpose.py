@@ -698,6 +698,9 @@ A_POSE = ("both arms straight and held out from the body at about 45 degrees, ha
 # The feet's gap the redraw is asked for, over the height; the "may join" limit is ANKLE_MAY. A quarter of the height was asked
 # before and the kept redraw of the boy came out at 0.222, under the limit; a third gives room.
 POSE_READY = "Redraw the character ready for 3D in a wide A pose: " + A_POSE
+# The pose redraw asks for arms at about 45 degrees; a try with an upper arm raised more than this from the body's line
+# is redrawn (choose_try). The golden Knight's redraw came out at 70 and 73 degrees and every view copied it.
+ARM_REDRAW_MAX = 60.0
 # The no-added-clothing sentence of all three redraws (the pose redraw, the hand redraw, the whole-figure redraw). It
 # names no garment on purpose: a sentence that says "no socks" can add socks. It speaks of what covers a body part.
 # Chosen on the WP-09 card test: the first wording ("as covered, or as bare") added fingerless gloves to the caped hero in the
@@ -918,17 +921,32 @@ def redraw_guard_check(check_id: str, what: str, g: dict[str, Any], retried: boo
 # --- which try of the pose redraw to keep ---------------------------------------------------------------------------
 
 
+def redraw_arm_angle(m: dict[str, Any]) -> float | None:
+    """The larger of the two upper-arm angles in measure()'s result (degrees from the body's line), None when neither
+    arm was read."""
+    arms = (m or {}).get("arms") or {}
+    angles = [float(a["angle"]) for a in arms.values() if isinstance(a, dict) and a.get("angle") is not None]
+    return max(angles) if angles else None
+
+
 def choose_try(tries: list[dict[str, Any]], retries_left: int) -> dict[str, Any]:
-    """Which try of the pose redraw to keep, and whether another is wanted. Each try is {"guard_ok": bool, "gap": float | None}
-    (the character guard's ok, and the feet's gap over the height from measure(redraw)["legs"]["gap"], None when it could
-    not be read). Returns {"keep": index of the try to keep or None, "another": bool, "why": plain words}.
-    Keep order: a try the guard passed beats one it refused, then the larger gap (an unread gap counts as the smallest;
-    the earlier try wins a tie). Another try is wanted while retries are left and either none passed the guard or the kept
-    gap is under ANKLE_MAY (the redraw would still join the thighs); an unread gap on a passing try asks for nothing more."""
-    def key(i: int) -> tuple[int, float, int]:
+    """Which try of the pose redraw to keep, and whether another is wanted. Each try is {"guard_ok": bool, "gap": float |
+    None, "arm": float | None} (the character guard's ok; the feet's gap over the height from measure(redraw)["legs"]["gap"];
+    the larger upper-arm angle, redraw_arm_angle; None when not read). Returns {"keep": index of the try to keep or None,
+    "another": bool, "why": plain words}.
+    Keep order: a try the guard passed beats one it refused, then arms at most ARM_REDRAW_MAX beat arms raised higher, then
+    the larger gap (an unread gap counts as the smallest; the earlier try wins a tie). Another try is wanted while retries
+    are left and either none passed the guard, or the kept try's arms are over ARM_REDRAW_MAX (asked for about 45 degrees,
+    the Knight's redraw came out at 70 and 73, close to a T-pose), or its gap is under ANKLE_MAY (the redraw would still
+    join the thighs); an unread arm or gap on a passing try asks for nothing more."""
+    def arms_ok(t: dict[str, Any]) -> bool:
+        a = t.get("arm")
+        return a is None or float(a) <= ARM_REDRAW_MAX
+
+    def key(i: int) -> tuple[int, int, float, int]:
         t = tries[i]
         g = t.get("gap")
-        return (1 if t.get("guard_ok") else 0, float(g) if g is not None else -1.0, -i)
+        return (1 if t.get("guard_ok") else 0, 1 if arms_ok(t) else 0, float(g) if g is not None else -1.0, -i)
 
     best = max(range(len(tries)), key=key) if tries else None
     passed = best is not None and bool(tries[best].get("guard_ok"))
@@ -936,6 +954,10 @@ def choose_try(tries: list[dict[str, Any]], retries_left: int) -> dict[str, Any]
     gap = tries[best].get("gap") if passed else None
     if not passed:
         return {"keep": None, "another": retries_left > 0, "why": "no try kept the character"}
+    if not arms_ok(tries[best]):
+        return {"keep": keep, "another": retries_left > 0,
+                "why": f"the arms are raised {float(tries[best]['arm']):.0f} degrees from the body, over {ARM_REDRAW_MAX:.0f}: "
+                       "nearly a T-pose, where about 45 was asked"}
     if gap is not None and gap < ANKLE_MAY:
         return {"keep": keep, "another": retries_left > 0,
                 "why": f"the feet are {gap:.3f} of the height apart, under {ANKLE_MAY}: the thighs may still join"}

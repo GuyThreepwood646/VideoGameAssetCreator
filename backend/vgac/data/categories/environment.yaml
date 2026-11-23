@@ -18,6 +18,11 @@ grid_m: 1
 pivot: corner
 parts_default: []
 topology: triangle
+# The step 1 wording below asks for a level, square-on front (vgac/picture_view.py).
+picture_view: front
+# Placed first in the step 1 prompt, ahead of the description: the painter follows view words there and not at
+# the end (vgac/stages/concept.py).
+view_lead: "Straight-on front view, flat front elevation at eye level, camera directly in front, symmetrical, only the front wall visible:"
 input_view_default: quarter
 motion: none
 clips: []
@@ -25,10 +30,9 @@ lod_ratios: [0.5, 0.25]
 views: [front, left, back, right, quarter]
 pose_block: >-
   The structure stands alone on a plain flat light grey ground against a plain flat light grey
-  background, seen from a three-quarter front angle slightly above so its front, one side and top
-  are visible, whole piece visible with margin around it, centred in frame. Soft even studio
-  lighting with no hard shadows. No text, no logos, no people, no surrounding scenery, no motion
-  blur, no cropping.
+  background, seen straight from the front at eye level, square-on, with its front facing the camera,
+  whole piece visible with margin around it, centred in frame. Soft even studio lighting with no hard
+  shadows. No text, no logos, no people, no surrounding scenery, no motion blur, no cropping.
 # WP-44 (standard detail pairs, bakeoff/wp44): with the rebuild off, all five pieces (cottage, arch, doorway, fence, sign)
 # came out shattered (21 to 28 percent open edges). With the rebuild on they are whole and the doorway stays open.
 remesh_default: true
