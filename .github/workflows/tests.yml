@@ -43,6 +43,10 @@ jobs:
       - name: Install the Python packages
         run: python -m pip install -r requirements.txt
       - name: Run the tests
+        # The checkout path is too deep for a test library under bakeoff/t, so test libraries go in the runner's
+        # short temporary folder (tests/conftest.py, VGAC_TEST_LIBRARY_ROOT).
+        env:
+          VGAC_TEST_LIBRARY_ROOT: ${{ runner.temp }}\vgac-t
         run: python -m pytest -q -rs tests -p no:cacheprovider --junitxml=pytest-report.xml
       # Skips are for things a runner legitimately lacks (Blender, the animation packs, the stored test pictures,
       # this machine's own settings file): 28 skip on a clean checkout, plus up to 4 more that only a runner shows.
