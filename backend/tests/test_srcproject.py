@@ -506,3 +506,24 @@ def test_the_picture_is_expected_at_the_turn_of_the_view_the_model_was_built_fro
     assert priors["picture"] == srcproject.INTENDED_TURN["quarter"]
     srcproject.paint(model(), soft_base(), picture(), source=picture(), size=256, mode="off", built_from="front")
     assert priors["picture"] == 0.0
+
+
+def test_with_the_facing_decided_the_drawn_front_view_is_fitted_at_the_front_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With the facing decided, the drawn front view is asked for the front turn only."""
+    asked: dict[str, list[float]] = {}
+    real = srcproject.fit_view
+
+    def spy(mesh, tex, pic, alpha, name, yaws, *a, **k):  # noqa: ANN001
+        asked.setdefault(name, [float(y) for y in yaws])
+        return real(mesh, tex, pic, alpha, name, yaws, *a, **k)
+
+    monkeypatch.setattr(srcproject, "fit_view", spy)
+    mesh = model()
+    r = srcproject.paint(mesh, soft_base(), picture(), front_view=picture(), size=256, mode="off", front_known=True,
+                         head_yaw=0.0)
+    assert asked["front"] == [0.0]
+    front = r["metrics"]["srcproject_views"]["front"]
+    assert abs(srcproject._signed(front["yaw"])) <= 5.0
+    asked.clear()
+    srcproject.paint(mesh, soft_base(), picture(), front_view=picture(), size=256, mode="off")
+    assert asked["front"] == [float(y) for y in srcproject.FRONT_YAWS]   # facing not decided: searched as before
