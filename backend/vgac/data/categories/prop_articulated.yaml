@@ -9,7 +9,7 @@ size_axis: longest
 size_word: across
 size_label: "How big is it?"
 size_hint: "In metres, along its longest side. A chest is about 0.9 m wide; a door about 2.1 m tall."
-parts_default: []  # the moving part is named from the item (declared_parts.item_defaults)
+parts_default: [lid]
 topology: triangle
 input_view_default: front
 motion: none
