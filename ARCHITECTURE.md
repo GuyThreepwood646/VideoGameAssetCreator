@@ -82,6 +82,7 @@ Face and hair passes skip (reason recorded) for non-humanoids, flat looks, when 
 | Looks (styles, "presets" in the UI) | `backend/vgac/data/styles.yaml` |
 | Platforms (size tiers: triangle and texture budgets) | `data/platforms.yaml` |
 | Categories (rig engine, size axis, pose block, clips, LODs, budgets) | `data/categories/*.yaml` |
+| Real size of a named object (step 1 size; F18) | `data/object_sizes.yaml`, read by `reference.object_size()` and `stages/prep.py resolve_size()`: object categories only, after a size written in the text and before the category default |
 | Recipe for look x category x platform | `reference.recipe()`; each step records what it used in `metrics.recipe`; optional per-look fields (`RECIPE_OPTIONAL`: `mesh.triangle_cap`, `mesh.bake_texture`, `surface.face_layout`, `colour_per_face`, `face_keeps_texture`) appear only when a look sets them |
 | Models and licences; add-ons | `data/models.yaml`; `data/addons.yaml` |
 | Item words; hair library; credits | `data/items.yaml`; `data/hairlib/`, `hairstyles.py`; `data/credits.yaml` |
