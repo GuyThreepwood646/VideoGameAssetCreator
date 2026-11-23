@@ -163,3 +163,31 @@ def test_default_heel_strike_is_unchanged(run, duty):
     assert gait.foot_path(0.0, duty, 0.6, 0.1, run)[2] == pytest.approx(12.0)
     assert gait.foot_path(0.1 * duty, duty, 0.6, 0.1, run)[2] == pytest.approx(12.0 * (1.0 - gait.smoothstep(0.5)))
 
+
+
+# ---- swing clearance ---------------------------------------------------------------------------------------------------
+
+def test_walk_lift_has_a_floor_from_the_height():
+    height = 1.8
+    assert gait.walk_lift(0.5, height) == pytest.approx(gait.WALK_LIFT_MIN_SHARE * height)  # short legs
+    assert gait.walk_lift(2.0, height) == pytest.approx(gait.WALK_LIFT_LEG * 2.0)  # long legs keep their own lift
+    assert gait.walk_lift(0.5) == pytest.approx(gait.WALK_LIFT_LEG * 0.5)  # no height: the leg rule alone
+
+
+def test_plateau_swing_stays_up_and_drops_late():
+    duty, stride, lift = 0.6, 0.6, 0.1
+    up = lambda s: gait.foot_path(duty + s * (1 - duty), duty, stride, lift, quick_strike=True, plateau=True)[1]
+    assert up(0.0) == pytest.approx(0.0, abs=1e-9)
+    assert up(1.0 - 1e-9) == pytest.approx(0.0, abs=1e-6)
+    assert min(up(0.2 + 0.6 * k / 20) for k in range(21)) >= 0.74 * lift  # the middle 60 % of the swing is clear (0.75 at its ends)
+    assert up(0.85) >= 0.5 * lift  # still half up at 85 % of the swing (sin(pi s)^1.2: 0.39)
+    # forward path unchanged: lands at the stance speed
+    h = 1e-5
+    f = lambda u: gait.foot_path(u, duty, stride, lift, quick_strike=True, plateau=True)[0]
+    assert (f(1.0 - 1e-9) - f(1.0 - h)) / h == pytest.approx((f(0.3 * duty + h) - f(0.3 * duty)) / h, rel=0.02)
+
+
+def test_default_swing_height_is_unchanged():
+    duty, lift = 0.6, 0.1
+    s = 0.85
+    assert gait.foot_path(duty + s * (1 - duty), duty, 0.6, lift)[1] == pytest.approx(lift * math.sin(math.pi * s) ** 1.2)

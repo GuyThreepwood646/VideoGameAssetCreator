@@ -887,9 +887,29 @@ def ground_target(root, end, ground_z, reach, outward=None, min_out=0.0):
 STRIKE_DEG = 12.0  # toes-up pitch at heel strike (default roll)
 QUICK_STRIKE_DEG = 6.0  # toes-up pitch at heel strike of the quick roll
 QUICK_STRIKE_SHARE = 0.15  # share of the stance the quick roll takes to bring the foot flat (default roll: 0.2)
+WALK_LIFT_LEG = 0.11  # walk swing lift: this share of the leg length ...
+WALK_LIFT_MIN_SHARE = 0.075  # ... and for a biped at least this share of the height, so short legs still lift clear
+PLATEAU_RISE = 0.35  # plateau swing height: rises over this first share of the swing ...
+PLATEAU_FALL = 0.6  # ... holds, and comes down from this share on, steeper at the end than at the start
 
 
-def foot_path(u: float, duty: float, stride: float, lift: float, run: bool = False, quick_strike: bool = False) -> tuple:
+def walk_lift(leg_len: float, height: float | None = None) -> float:
+    """Swing lift of a walk: WALK_LIFT_LEG of the leg length; with height (bipeds) at least WALK_LIFT_MIN_SHARE of it."""
+    lift = WALK_LIFT_LEG * leg_len
+    return max(lift, WALK_LIFT_MIN_SHARE * height) if height else lift
+
+
+def plateau_up(s: float) -> float:
+    """Swing height share at swing fraction s: a quarter sine up to 1 by PLATEAU_RISE, flat, then 1 - x^2 down to 0 over
+    the rest (x from 0 at PLATEAU_FALL to 1 at landing). The foot stays clear through the middle of the swing and drops
+    in the last frames instead of coming down as slowly as it rose; 0 and 1 at the ends, continuous slope at the joins."""
+    rise = math.sin(0.5 * math.pi * min(1.0, s / PLATEAU_RISE))
+    x = max(0.0, (s - PLATEAU_FALL) / (1.0 - PLATEAU_FALL))
+    return min(rise, 1.0 - x * x)
+
+
+def foot_path(u: float, duty: float, stride: float, lift: float, run: bool = False, quick_strike: bool = False,
+              plateau: bool = False) -> tuple:
     """(forward, up, pitch_deg) of one foot relative to its rest place at cycle fraction u.
 
     While planted (the first `duty` of the cycle) the foot moves backward at constant speed from +stride/2 to
@@ -899,7 +919,8 @@ def foot_path(u: float, duty: float, stride: float, lift: float, run: bool = Fal
     quick_strike: the heel lands with the toes QUICK_STRIKE_DEG up and the foot rolls flat over QUICK_STRIKE_SHARE of
     the stance on an ease-out curve, so the toes drop mostly in the first frame after the heel lands. With the default
     (STRIKE_DEG, a smoothstep over 0.2 of the stance) the toes of a long foot stay several cm up and nearly still for
-    two to three frames after heel strike."""
+    two to three frames after heel strike.
+    plateau: the walk's swing height follows plateau_up instead of sin(pi s)^1.2."""
     u = wrap(u)
     duty = min(0.95, max(0.05, duty))
     push = 22.0 if run else 18.0
@@ -921,6 +942,8 @@ def foot_path(u: float, duty: float, stride: float, lift: float, run: bool = Fal
     if run:
         up = lift * math.sin(math.pi * s) ** 1.5 * (1.0 - 0.35 * s)
         fwd -= stride * 0.3 * math.sin(math.pi * s) ** 2 * (1.0 - s) ** 2  # the heel rises behind before swinging through
+    elif plateau:
+        up = lift * plateau_up(s)
     else:
         up = lift * math.sin(math.pi * s) ** 1.2
     pitch = -push * (1.0 - smoothstep(s / 0.4)) + strike * smoothstep((s - 0.6) / 0.4)
