@@ -82,7 +82,19 @@ class StageContext:
         self.db.add(self.version)
         self.db.commit()
 
+    def _fresh(self) -> None:
+        """Read the version's file list and metrics as they are stored now before changing them. Another job (the
+        early picture sharpening during the 3D build) writes to the same row through its own session; saving this
+        context's older copy of the whole list would drop what it added (WP-82). Nothing is lost here: every change
+        made through this context is saved at once, so there is nothing unsaved to discard."""
+        try:
+            if not self.db.is_modified(self.version, include_collections=False):
+                self.db.refresh(self.version, ["files_json", "metrics_json"])
+        except Exception:  # noqa: BLE001  (a row that is not stored yet: keep the copy in hand)
+            pass
+
     def register(self, key: str, path: Path | str) -> str:
+        self._fresh()
         rel = library.register_file(self.version, key, path, self.settings)
         self.save()
         return rel
@@ -95,6 +107,7 @@ class StageContext:
         bus.publish_threadsafe({"type": "version", "version": version_to_dict(self.version)})
 
     def set_metrics(self, **values: Any) -> None:
+        self._fresh()
         library.update_metrics(self.version, **values)
         self.save()
 
