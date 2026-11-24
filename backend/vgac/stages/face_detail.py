@@ -69,6 +69,7 @@ EYE_PAINTED_MIN = 0.5  # the eye box's mean paint weight
 EYE_MATCH_MIN = 0.6  # the render's eye against the picture's (face.feature_match in the box)
 EYE_SHARP_MIN = 0.4  # the render's sharpness in the eye box over the picture's
 EYE_COVER_STEP_M = 0.002  # hair over an eye is a flap in front of the face: a depth step (per render pixel) this big in the eye's box
+EYE_FLAP_GROW = 1.6  # face.eye_boxes growth within which a depth step counts as a flap in front of the eye (the eye box itself)
 EYE_HAIR_COVER = 0.3  # an unpainted eye whose box is at least this much the model's hair is under the hair
 # Side views (the turnaround's pictures): which picture, from where. The quarter view's side is found by its outline.
 # quarter2 is the three-quarter view from the other side: it takes the side the first one did not.
@@ -506,9 +507,9 @@ def eye_state(e: dict[str, Any]) -> str | None:
     painted = float(e.get("painted") or 0.0)
     if painted < EYE_PAINTED_MIN:
         # the hair mask is colour only: a shadowed cheek or brow of a dark face counts as hair (the live M1-clothed, 0.7 of an
-        # eye box that has no hair over it). Covered means a flap in front of the eye: a step in depth in its box (0.2 to 0.6 mm per
-        # pixel on the false alarms, 3 to 19 on real flaps). Measured runs before the step was recorded keep the old verdict.
-        covered = float(e.get("hair") or 0.0) >= EYE_HAIR_COVER and (e.get("step") is None or float(e["step"]) >= EYE_COVER_STEP_M)
+        # eye box that has no hair over it). The paint step releases that false hair in the eye boxes unless a flap stands in
+        # front of the eye (release_eye_hair), so the hair share left in an unpainted eye box is the real thing.
+        covered = float(e.get("hair") or 0.0) >= EYE_HAIR_COVER
         return "eye_under_hair" if covered else "eye_missing"
     if e.get("match") is not None and float(e["match"]) < EYE_MATCH_MIN:
         return "eye_missing"
@@ -971,7 +972,8 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     painted_fitted = face.apply_alignment(crop_img, a)  # the eye colour is measured against the painting itself
     seg = face.hair_and_skin(view["image"], fitted, info, view["mask"])
     seg["old_hair"], released = release_flat_hair(seg["old_hair"], view, info)
-    paint = region & ~face.dilate_mask(seg["old_hair"], 2)
+    seg["old_hair"], eye_free = release_eye_hair(seg["old_hair"], view, info, face.landmarks(fitted, info))
+    paint = (region | eye_free) & ~face.dilate_mask(seg["old_hair"], 2)
     # (grey background, but never inside the eyes-nose-mouth area: a dark grey pupil or brow is close to the grey
     # background's colour, and the silver-haired mage's close-up had both filled as background, in boxes)
     pic_hair = pic_hair_without_eyes(seg["pic_hair"], fitted, info, region.shape)
@@ -1012,6 +1014,13 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
         boxes = [bx for bx in (res.get("bbox"), more.get("bbox")) if bx]
         bbox = (min(b_[0] for b_ in boxes), min(b_[1] for b_ in boxes), max(b_[2] for b_ in boxes), max(b_[3] for b_ in boxes)) if boxes else None
         res = {**res, "texture": more["texture"], "texel_weight": tw, "changed": int((tw > 0.5).sum()), "bbox": bbox}
+    if eye_free.any():
+        # The 3D softening fades paint wherever the surface next to it is unpainted (a hair lock beside the eye), which left a
+        # freed eye as the old smear. The freed eye boxes are painted again without it, as the side pictures' eye cover is.
+        eye_w = weight * np.clip(face.blur(eye_free.astype(np.float64), 0.02 * float(info["width_px"])), 0.0, 1.0)
+        again = face.project_back(mesh, res["texture"], cam, toned, eye_w, facing=facing, strength=strength)
+        res = {**res, "texture": again["texture"], "texel_weight": np.maximum(res["texel_weight"], again["texel_weight"]),
+               "changed": int((np.maximum(res["texel_weight"], again["texel_weight"]) > 0.5).sum())}
     spread, spread_n = face.spread_tone(mesh, tex, res["texture"], res["texel_weight"], info["skin"])
     uvm = imaging.load_uv_mesh(glb)
     coverage = imaging.rasterise_uv(uvm, T)["labels"] > 0
@@ -1039,7 +1048,7 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
         "feature_match_after": face.feature_match(after["image"], toned, region),
         "fit_match": match_fit,
         "alignment": {k: a.get(k) for k in ("how", "sx", "sy", "tx", "ty", "score", "residual_px")},
-        "texels_painted": res["changed"], "hair_kept_px": int((region & seg["old_hair"]).sum()), "hair_filled_px": int(bad.sum()), "tone_spread_texels": spread_n,
+        "texels_painted": res["changed"], "hair_kept_px": int((region & seg["old_hair"]).sum()), "hair_filled_px": int(bad.sum()), "eye_free_px": int((eye_free & ~region).sum()), "tone_spread_texels": spread_n,
         "face_texels_after": int(face.face_texels(mesh, cam, region, T)["face_width_texels"]),
         "eyes_moved": eyes_moved(view["image"], after["image"], info),
         "eyes": eye_measures(toned, after["image"], weight, seg["old_hair"], lm_fit, info,
@@ -1063,6 +1072,31 @@ def pic_hair_without_eyes(pic_hair: np.ndarray, fitted: np.ndarray, info: dict[s
     if lm and lm.get("how") == "mediapipe":
         return pic_hair & ~face.eye_boxes(shape, lm["eyes"], float(info["width_px"]), grow=EYE_NOT_HAIR_GROW)
     return pic_hair
+
+
+def release_eye_hair(old_hair: np.ndarray, view: dict[str, Any], info: dict[str, Any],
+                     lm: dict[str, Any] | None) -> tuple[np.ndarray, np.ndarray]:
+    """The model's hair mask with the eye boxes cleared of colour-only hair. The eyes are the ones MediaPipe finds in the
+    picture (anything else proves nothing: unchanged); an eye box keeps its hair only where a real flap stands in front of
+    the eye, a depth step of EYE_COVER_STEP_M per render pixel inside the eye's own box (a lock beside the eye is not in front of it). A smooth hair-coloured
+    surface (a hair-textured brow or a low lock lying on the face) is released, so the picture's eye is painted. The skin
+    region is colour only too and leaves such an eye out, so the free boxes also count as paintable. An eye box with no hair
+    in it and fully inside the region is left alone. Outside the eye boxes nothing changes. -> (the mask, the free eye boxes on the model)."""
+    free = np.zeros(old_hair.shape, dtype=bool)
+    if not lm or lm.get("how") != "mediapipe":
+        return old_hair, free
+    w = float(info["width_px"])
+    out = old_hair
+    for x, y in lm["eyes"]:
+        box = face.eye_boxes(old_hair.shape, [(x, y)], w, grow=EYE_NOT_HAIR_GROW)  # the eye, lids and brow
+        step = depth_step(view["raster"]["z"], view["mask"], face.eye_boxes(old_hair.shape, [(x, y)], w, grow=EYE_FLAP_GROW))
+        if step is not None and step >= EYE_COVER_STEP_M:
+            continue
+        if not (out & box).any() and info["region"][box].all():
+            continue  # nothing was holding this eye back: unchanged
+        out = out & ~box
+        free |= box & view["mask"]
+    return out, free
 
 
 def release_flat_hair(old_hair: np.ndarray, view: dict[str, Any], info: dict[str, Any]) -> tuple[np.ndarray, int]:
