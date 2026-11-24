@@ -15,6 +15,12 @@ The corrected base colour is written to base_color.png AND into the GLB's own ba
 re-bakes from the GLB (a correction in the PNG alone never reached a shipped model).
 
 lightness_plan() and apply() are pure; match_base_colour() does the file work.
+
+Roof lift (buildings only, PL-15): a building's roof often bakes far darker than the picture's roof, which one global
+shift cannot fix without moving the walls. After the global shift, roof_lift_plan() finds the up-facing UV islands from
+the mesh normals, measures the picture's roof (the picture's pixels under the model's own roof pixels at the build view,
+mapped by the two silhouettes' bounding boxes) and lifts the islands that are clearly darker than it by one capped L*
+shift, on those islands' up-facing texels only. Other routes, and a roof that already matches, are untouched.
 """
 from __future__ import annotations
 
@@ -33,6 +39,12 @@ L_SIZE = 512          # render size for the lightness stage
 L_MASK_MIN_PX = 1500  # each side's mask, after the border is left out, at L_SIZE
 L_SEARCH = (-30, -15, 0, 15, 30)  # turns tried around the view (and its mirror)
 DRIFT_MAX = 4.0       # build view against step-1 picture, mean L* over each cut-out: past this the lightness stage is skipped
+ROOF_ROUTE = "buildings"  # the only route the roof lift runs for
+ROOF_UP_MIN = 0.35        # an island whose UV-area-weighted face normal points up by at least this much is a roof
+ROOF_TEXEL_UP = 0.2       # inside a roof island only texels of faces that point up by at least this much are lifted
+ROOF_MARGIN = 8.0         # an island is lifted only when its mean L* is this far below the picture's roof
+ROOF_CAP = 25.0           # the most the roof lift moves, in L* units
+ROOF_MIN_PX = 200         # roof pixels in the render, and picture pixels under them, needed to trust the measure
 # The turn the build view's picture shows, in face.Camera yaw (as bakeoff/scorecard/sc_measure.INTENDED).
 VIEW_TURN = {"concept": 0.0, "front": 0.0, "quarter": 45.0, "quarter2": -45.0, "left": 90.0, "right": -90.0, "back": 180.0}
 
@@ -168,8 +180,94 @@ def lightness_plan(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray
             "capped": abs(gap) > cap, "reason": "applied"}
 
 
+def roof_islands(uvmesh: dict[str, np.ndarray]) -> list[int]:
+    """Islands that face up: the UV-area-weighted mean of their faces' up component is at least ROOF_UP_MIN."""
+    uv, f = uvmesh["uv"], uvmesh["faces"]
+    a, b, c = uv[f[:, 0]], uv[f[:, 1]], uv[f[:, 2]]
+    area = np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1])) / 2
+    isl = uvmesh["island"]
+    out = []
+    for i in np.unique(isl):
+        m = isl == i
+        w = area[m].sum()
+        if w > 0 and float((uvmesh["up"][m] * area[m]).sum() / w) >= ROOF_UP_MIN:
+            out.append(int(i))
+    return out
+
+
+def roof_lift_plan(mesh: dict[str, np.ndarray], uvmesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray,
+                   pic_mask: np.ndarray, view: str | None = None, yaw: float | None = None,
+                   cap: float = ROOF_CAP) -> dict[str, Any]:
+    """The roof lift: which islands to lift and by how much (L*). `tex` is the base colour after the global shift.
+    The model's roof pixels are found in a flat render at `yaw` (default: the build view's turn); each pixel's place in
+    the model's silhouette bounding box is carried to the picture's cut-out bounding box, and the picture's mean L*
+    there is the target. Islands whose own mean L* is at least ROOF_MARGIN below the target are lifted by the gap
+    between the target and the roof pixels' mean, capped. -> {mode: none|roof_lift, shift, islands, target_L, roof_L,
+    island_L, reason}."""
+    roofs = roof_islands(uvmesh)
+    if not roofs:
+        return {"mode": "none", "reason": "no_roof_island"}
+    ys, xs = np.nonzero(pic_mask)
+    if len(ys) < 100:
+        return {"mode": "none", "reason": "no_cutout"}
+    yaw = VIEW_TURN.get(view or "front", 0.0) if yaw is None else yaw
+    extent = float(max(np.ptp(xs), np.ptp(ys)) + 1) * L_SIZE / max(pic.shape[:2])
+    cam = texfidelity._frame_camera(mesh, yaw, extent, L_SIZE)
+    r = face.render_view(mesh, tex, cam, background=0.0)
+    face_roof = np.isin(uvmesh["island"], roofs) & (uvmesh["up"] >= ROOF_TEXEL_UP)
+    rm = r["mask"]
+    roof_px = rm & face_roof[np.maximum(r["raster"]["tri"], 0)]
+    if roof_px.sum() < ROOF_MIN_PX:
+        return {"mode": "none", "reason": "roof_not_visible"}
+    ry, rx = np.nonzero(rm)
+    py0, py1, px0, px1 = ys.min(), ys.max(), xs.min(), xs.max()
+    qy, qx = np.nonzero(roof_px)
+    u = (qx - rx.min() + 0.5) / max(np.ptp(rx) + 1, 1)
+    v = (qy - ry.min() + 0.5) / max(np.ptp(ry) + 1, 1)
+    sx = np.clip(np.round(px0 + u * (px1 - px0 + 1) - 0.5).astype(int), 0, pic.shape[1] - 1)
+    sy = np.clip(np.round(py0 + v * (py1 - py0 + 1) - 0.5).astype(int), 0, pic.shape[0] - 1)
+    inside = pic_mask[sy, sx]
+    if inside.sum() < ROOF_MIN_PX:
+        return {"mode": "none", "reason": "picture_roof_not_found"}
+    target = float(face.to_lab(pic[sy[inside], sx[inside]])[:, 0].mean())
+    rlab = face.to_lab(r["image"])[..., 0]
+    roof_l = float(rlab[roof_px].mean())
+    # each roof island's own mean over its up-facing texels
+    ras = imaging.rasterise_uv(uvmesh, tex.shape[0])
+    tl = face.to_lab(tex)[..., 0]
+    island_l: dict[int, float] = {}
+    for i in roofs:
+        m = (ras["labels"] == i + 1) & (ras["up"] >= ROOF_TEXEL_UP)
+        if m.sum() > 0:
+            island_l[i] = float(tl[m].mean())
+    lift = [i for i, l in island_l.items() if l < target - ROOF_MARGIN]
+    gap = target - roof_l
+    out = {"target_L": round(target, 2), "roof_L": round(roof_l, 2), "gap": round(gap, 2),
+           "island_L": {str(i): round(l, 2) for i, l in island_l.items()}, "yaw": yaw}
+    if not lift or gap < ROOF_MARGIN:
+        return {**out, "mode": "none", "reason": "roof_matches", "islands": []}
+    shift = float(np.clip(gap, 0.0, cap))
+    return {**out, "mode": "roof_lift", "shift": shift, "islands": lift, "capped": gap > cap, "reason": "applied"}
+
+
+def apply_roof_lift(tex: np.ndarray, uvmesh: dict[str, np.ndarray], plan: dict[str, Any] | None) -> np.ndarray:
+    """Add the plan's L* shift to the up-facing texels of its islands (and the gutter grown out of them)."""
+    if not plan or plan.get("mode") != "roof_lift" or not plan.get("islands"):
+        return tex
+    size = tex.shape[0]
+    ras = imaging.rasterise_uv(uvmesh, size)
+    covered = ras["labels"] > 0
+    sel = np.isin(ras["labels"], [i + 1 for i in plan["islands"]]) & (ras["up"] >= ROOF_TEXEL_UP)
+    # a gutter texel the clean-up grew out of a lifted texel takes its move too, so no dark rim shows at the seams
+    grown = imaging.dilate(sel[..., None].astype(np.uint8), covered, imaging.dilation_px(size))[..., 0].astype(bool)
+    sel = sel | (grown & ~covered)
+    out = np.array(tex, dtype=np.float64)
+    out[sel] = from_lab(shifted_lab(face.to_lab(out[sel]), float(plan["shift"])))
+    return out
+
+
 def match_base_colour(glb: Path | str, picture: Path | str, base_png: Path | str, view: str | None = None,
-                      step1: Path | str | None = None) -> dict[str, Any]:
+                      step1: Path | str | None = None, route: str | None = None) -> dict[str, Any]:
     """Measure the model's lightness against its picture at the build view `view`'s turn and, when it is off, shift
     base_png and the GLB's own base colour image by the same move. Nothing is moved when the build view's tone drifted
     from the step-1 picture `step1` by more than DRIFT_MAX. -> metrics {applied, lightness: {...}, reason}."""
@@ -189,9 +287,16 @@ def match_base_colour(glb: Path | str, picture: Path | str, base_png: Path | str
         lp["drift"] = drift
     rec["lightness"] = lp
     rec["reason"] = lp.get("reason")
-    if lp.get("mode") != "l_shift":
+    out = apply(tex, lp) if lp.get("mode") == "l_shift" else tex
+    if route == ROOF_ROUTE:  # buildings only: any other route is the global shift alone, exactly as before
+        uvmesh = imaging.load_uv_mesh(glb)
+        if uvmesh is not None and lp.get("iou", 0.0) >= L_IOU_MIN:
+            rp = roof_lift_plan(mesh, uvmesh, out, pic, pic_mask, view, yaw=lp.get("yaw"))
+            rec["roof_lift"] = rp
+            out = apply_roof_lift(out, uvmesh, rp)
+    if lp.get("mode") != "l_shift" and rec.get("roof_lift", {}).get("mode") != "roof_lift":
         return rec
-    Image.fromarray(face.to_uint8(apply(tex, lp))).save(base_png)
+    Image.fromarray(face.to_uint8(out)).save(base_png)
     imaging.glb_replace_images(glb, base_color=base_png)
     rec["applied"] = True
     return rec
