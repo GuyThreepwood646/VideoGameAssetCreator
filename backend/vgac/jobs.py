@@ -13,8 +13,8 @@ nothing, in which case the job waits on the preferred card with a "Waiting for .
 moves queued jobs (and, when a card is turned off, its running job) to where route() sends them.
 
 Default card and sharing (prefs.json default_instance, share_when_busy; Health page, "Graphics cards"): with a default
-card, every new job whose step that card can run goes there first, instead of the step's usual card (rig stays on b,
-the only card that can rig). With sharing on, a card with nothing to do takes the oldest waiting job from a card that
+card, every new job whose step that card can run goes there first, instead of the step's usual card (a rig that
+skips rigging goes to the host and needs no card). With sharing on, a card with nothing to do takes the oldest waiting job from a card that
 is busy, when it can run that step and is allowed to (JobQueue.take_shared). A job is never split across cards, and a
 running job never moves for sharing.
 
@@ -162,28 +162,38 @@ def effective_capabilities(instance: str, settings: Settings | None = None, allo
 
 
 def route(stage: str, category: str, settings: Settings | None = None, disabled: Any = (),
-          allowed_kinds: dict[str, Any] | None = None, default: str | None = None) -> str | None:
+          allowed_kinds: dict[str, Any] | None = None, default: str | None = None,
+          params: dict[str, Any] | None = None) -> str | None:
     """Where a job for `stage` (or "judge") goes while the cards in `disabled` are turned off and each card may do
     only its `allowed_kinds`: the preferred instance unless it is off or not allowed that kind of work, else the
     first card that is on, allowed, and can run it (instance_capabilities), else None (nothing can take it now).
-    Host stages always run on the host. `default`: the person's default card, tried first for every step it can run.
+    Host stages always run on the host, and so does a rig step that will skip rigging (rig.rig_skips, from `params`):
+    it needs no card. `default`: the person's default card, tried first for every step it can run.
     """
+    from .stages.rig import rig_skips  # late: the stage module loads the graph and image code
+
     settings = settings or get_settings()
     preferred = preferred_instance(stage, category, settings)
-    if preferred == HOST:
+    if preferred == HOST or (stage == "rig" and rig_skips(category, params)):
         return HOST
     off = set(disabled or ())
     need = capability_for(stage, category)
     if (default and default in settings.instances and default not in off and need in capabilities(default, settings)
             and kind_allowed(default, need, allowed_kinds)):
         return default
-    if preferred not in off and kind_allowed(preferred, need, allowed_kinds):
+    if preferred not in off and kind_allowed(preferred, need, allowed_kinds) and need in capabilities(preferred, settings):
         return preferred
     for name in settings.instances:
         if (name != preferred and name not in off and kind_allowed(name, need, allowed_kinds)
                 and need in capabilities(name, settings)):
             return name
     return None
+
+
+def configured_card_can(capability: str, settings: Settings | None = None) -> bool:
+    """Whether any configured graphics card can run `capability` (instance_capabilities), whether it is on or off."""
+    settings = settings or get_settings()
+    return any(capability in capabilities(n, settings) for n in settings.instances)
 
 
 def kind_capability(kind: str) -> tuple[str, str]:
@@ -1139,13 +1149,14 @@ class JobQueue:
     def instances(self) -> list[str]:
         return list(self.settings.instances) + [HOST]
 
-    def place(self, stage: str, category: str) -> tuple[str, str | None]:
+    def place(self, stage: str, category: str, params: dict[str, Any] | None = None) -> tuple[str, str | None]:
         """Where a new job for `stage` (or "judge") goes now: (instance, None) from route(), or, when no card that is
-        on can run it, (the preferred instance, the waiting message): the job waits there until that card is back."""
+        on can run it, (the preferred instance, the waiting message): the job waits there until that card is back.
+        `params`: the step's params (a rig step that will skip rigging goes to the host, see route())."""
         from . import firstrun
 
         off = self.unavailable() | firstrun.unusable_cards(self.settings, self.supervisor)
-        target = route(stage, category, self.settings, off, self.allowed_kinds, self.default_instance)
+        target = route(stage, category, self.settings, off, self.allowed_kinds, self.default_instance, params)
         if target is not None:
             return target, None
         preferred = preferred_instance(stage, category, self.settings)
@@ -1339,7 +1350,7 @@ class JobQueue:
                     job = db.get(Job, v.job_id) if v.job_id else None
                     if job is None or job.status != "cancelled" or parse_kind(job.kind)[1] == "judge":
                         continue
-                    instance, message = self.place(v.stage, a.category)
+                    instance, message = self.place(v.stage, a.category, (job.payload or {}).get("params"))
                     # The same settings includes the random seeds the stopped run had already picked (the step's own,
                     # and the face detail pass's two picture jobs in the clean-up step).
                     payload = dict(job.payload or {})
