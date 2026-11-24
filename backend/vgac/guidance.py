@@ -1467,6 +1467,14 @@ def _pattern_guide(name: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
     if m:
         return ({"severity": "warn", "ok": "Detail level {level} (LOD{level}) keeps {value:pct} of the triangles.",
                  "fail": "Detail level {level} (LOD{level}) keeps {value:pct} of the triangles; {limit:pct} expected."}, {"level": m.group(1)})
+    m = re.match(r"^lod_outline_kept_LOD(\d+)$", name)
+    if m:
+        return ({"severity": "warn",
+                 "ok": "Detail level {level} (LOD{level}) has the same outline as the full model (the least alike view still overlaps {value:pct}).",
+                 "fail": ("Detail level {level} (LOD{level}) has lost part of its outline. Seen from the {view} view it overlaps only {value:pct} "
+                          "of the full model's outline (it should be at least {limit:pct}), and the biggest patch lost or filled in is "
+                          "{region:pct} of the outline (it should stay under {region_limit:pct}). A thin part or a hole may have been "
+                          "squeezed away in this level.")}, {"level": m.group(1)})
     if name.startswith("texture_"):
         tmap = {"map": _map_name(name)}
         if name.endswith("_pow2"):

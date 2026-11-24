@@ -81,6 +81,8 @@ for _i in ("outline_kept",):
 PATTERNS: list[tuple[str, str]] = [
     # LODs are what people see at a distance, so never advice (UX-01).
     (r"^lod\d+_ratio$", "look"),
+    # The outline of a detail level against the full model (step 6): worth a look, never advice (UX-01).
+    (r"^lod_outline_kept_LOD\d+$", "look"),
     # The platform's texture size limit costs memory; a map that is not a power of two or not square is made so by the app.
     (r"^texture_[a-z0-9_]+_budget$", "look"),
     (r"^texture_[a-z0-9_]+_(pow2|square)$", "advice"),

@@ -49,9 +49,11 @@ IOU_FIT_MIN = 0.80    # below this the render and the picture do not line up wel
 # Camera heights (degrees looking down) tried when the level camera does not fit: most step 1 pictures look down on the
 # subject a little.
 FIT_TILTS = (15.0, 30.0)
-# Wider cameras tried only when those still do not fit: steeper tilts for pictures drawn from nearly overhead, and an 85
-# and a 50 mm lens on the best of them. Shorter lenses are left out: _frame_camera would put the eye inside the model.
-WIDE_TILTS = (45.0, 60.0, 75.0, 90.0)
+# Wider cameras tried only when those still do not fit: steeper tilts for pictures drawn from nearly overhead, on the
+# grid turn nearest the best turn so far and on the turn opposite it (45 degree grid, so a 15 degree side step does not
+# move the opposite turn off the grid), and an 85 and a 50 mm lens on the best of them. 35 and 24 mm (with the eye kept
+# outside the model) found no fit that 85 and 50 mm miss, so they are not searched.
+WIDE_TILTS = (60.0, 75.0, 90.0)
 WIDE_LENSES = (85.0, 50.0)
 # A fit only a wider camera reaches counts only when the model's inner edges agree with the picture's (posesearch's edge
 # term at that pose): seen from above, the outline of one boxy subject fits the picture of another, while their inner
@@ -212,7 +214,7 @@ def _frame_camera(mesh: dict[str, np.ndarray], yaw: float, pic_extent_px: float,
                   lens: float | None = None) -> face.Camera:
     """A camera whose render has the figure about as many pixels across as the picture does, so the picture is hardly
     resampled and sharpness compares at one scale. lens None is orthographic; a focal length (mm) a pinhole camera
-    standing back by the distance that frames the scale (85 and 50 mm only: shorter puts the eye inside the model)."""
+    standing back by the distance that frames the scale (the eye is kept outside the model: at least 1.2 times its radius from the centre)."""
     v = mesh["verts"]
     lo, hi = v.min(0), v.max(0)
     centre = (lo + hi) / 2
@@ -222,6 +224,11 @@ def _frame_camera(mesh: dict[str, np.ndarray], yaw: float, pic_extent_px: float,
     scale = cam0.scale * ext / max(pic_extent_px, 1.0)
     # never let the figure leave the frame
     scale = max(scale, cam0.scale * ext / (size * 0.96))
+    if lens is not None:
+        # a pinhole stands back at scale * lens / 36 (face.Camera.distance): at least 1.2 times the model's radius from
+        # its centre, so the eye is never inside the model (a short lens at a figure-filling scale put it inside)
+        radius = float(np.linalg.norm(hi - lo)) / 2.0
+        scale = max(scale, (1.2 * radius) * 36.0 / float(lens))
     return face.Camera(target=centre, yaw_deg=yaw, scale=scale, size=size, tilt_deg=tilt, lens_mm=lens)
 
 
@@ -319,11 +326,6 @@ def score(glb: Path | str, picture: Path | str | np.ndarray | Image.Image, base_
     def best_iou() -> float:
         return max(r["silhouette_iou"] for r in tried.values())
 
-    def two_tops(rows: list[dict[str, Any]]) -> list[tuple[float, float, float | None]]:
-        rows = sorted(rows, key=lambda r: -r["silhouette_iou"])
-        out = [rows[0]] + [r for r in rows[1:] if _yaw_apart(r["yaw"], rows[0]["yaw"]) >= 45][:1]
-        return [(r["yaw"], r["tilt"], r["lens"]) for r in out]
-
     if yaw != "auto":
         run(float(yaw))
     else:
@@ -348,18 +350,20 @@ def score(glb: Path | str, picture: Path | str | np.ndarray | Image.Image, base_
                 for dy in (-15, 15):
                     run(b["yaw"] + dy, b["tilt"])
         if best_iou() < IOU_FIT_MIN:
-            # still no fit: a picture drawn from nearly overhead or with a near camera. Steeper tilts on the two best
-            # turns so far and the turns opposite them (from overhead the front and back views differ mainly in which end
-            # is at the top, and the level search does not tell them apart), then the two lenses on the two best of
-            # those, then 15 degree steps around the best.
-            tops = two_tops(list(tried.values()))
+            # still no fit: a picture drawn from nearly overhead or with a near camera. Steeper tilts on the 45 degree grid
+            # turn nearest the best turn so far and on the turn opposite it (from overhead the front and back views differ
+            # mainly in which end is at the top, and the level search does not tell them apart), then the two lenses on the
+            # best steep pose, then 15 degree steps around the best.
+            best_so_far = max(tried.values(), key=lambda r: r["silhouette_iou"])["yaw"]
+            anchor = round(best_so_far / 45.0) * 45.0 % 360
             for t in WIDE_TILTS:
-                for y, _, _ in tops:
+                for y in (anchor, (anchor + 180) % 360):
                     run(y, t)
-                    run(y + 180, t)
-            for y, t, _ in two_tops(list(tried.values())):
+            steep = [r for r in tried.values() if float(r.get("tilt") or 0.0) >= WIDE_TILTS[0] and r.get("lens") is None]
+            if steep:
+                s_best = max(steep, key=lambda r: r["silhouette_iou"])
                 for lens in WIDE_LENSES:
-                    run(y, t, lens)
+                    run(s_best["yaw"], s_best["tilt"], lens)
             b = max(tried.values(), key=lambda r: r["silhouette_iou"])
             if _is_wide(b):
                 for dy in (-15, 15):

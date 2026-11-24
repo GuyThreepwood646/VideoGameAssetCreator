@@ -101,6 +101,16 @@ def path_len(names):
 _req = (motion_arg or "auto").strip().lower()
 serpent_req = gait.MOTION_ALIASES.get(_req, _req) == "serpent"
 none_req = gait.MOTION_ALIASES.get(_req, _req) == "none"
+# Automatic serpent: a rig whose only leaf ends one long bone chain has no limbs. Without this rule it reads as one leg
+# with motion unknown, since serpent motion is only chosen by an explicit request. With the motion automatic and one
+# leaf, it is read as --motion serpent instead. Thresholds: at least 8 bones on the chain, and a root-to-tip path of at
+# least 2.5 rig heights. Two or more leaves never reach this rule, so no rig with limbs changes.
+auto_serpent = False
+if _req == "auto" and len(leaves) == 1 and not serpent_req:
+    _chain = chain_to_root(leaves[0])
+    _path = sum((head[a.name] - head[b.name]).length for a, b in zip(_chain, _chain[1:]))
+    auto_serpent = len(_chain) >= 8 and _path >= 2.5 * height
+serpent_req = serpent_req or auto_serpent
 
 # ---- legs ----------------------------------------------------------------------------------------------------
 # Leg chains: leaves whose head sits in the bottom 20 percent of the height, reduced to the lowest leaf per limb
@@ -326,10 +336,11 @@ if not serpent_req:
             wing_info.append({"side": "left" if side else "right", "left": side, "leaf": leaf, "bones": chain, "reach": reach})
             if flat is not None:
                 wing_info[-1]["flat"] = round(flat, 3)
-# Wings come in pairs. On a two-legged body a lone candidate is an arm that reaches out sideways (WP-17 follow-up: the
+# Wings come in pairs: a lone sideways chain is not a wing on any body. On a two-legged body a lone candidate is an
+# arm that reaches out sideways (WP-17 follow-up: the
 # boy's right arm, rest 102 degrees, was taken as a wing, so the wing moves folded that arm alone and it crossed the
 # body). Dropped here, before the wing bones are used to find the spine and arms.
-if gait.kind_for_legs(len(leg_info)) == "biped" and len(wing_info) < 2:
+if len(wing_info) < 2:
     wing_info = []
 wing_bone_set = {n for w in wing_info for n in w["bones"]}
 wings_found = len(wing_info) >= 2
@@ -388,8 +399,8 @@ if not serpent_req:
             arm_info.append({"side": "left" if side else "right", "left": side, "leaf": best[2], "bones": best[1]})
 
 # ---- motion and clips ----------------------------------------------------------------------------------------
-motion = gait.resolve_motion(motion_arg, len(leg_info))
-legacy = motion_arg is None or _req == "library"
+motion = "serpent" if auto_serpent else gait.resolve_motion(motion_arg, len(leg_info))
+legacy = (motion_arg is None or _req == "library") and not auto_serpent
 clips, unknown_clips = gait.resolve_clips(motion if motion != "unknown" else "biped", clips_arg, legacy=legacy)
 if motion == "none":
     clips = []

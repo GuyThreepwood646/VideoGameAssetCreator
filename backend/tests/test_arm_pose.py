@@ -257,4 +257,4 @@ def test_the_neutral_pose_setting_is_off_by_default_and_humanoid_only():
 def test_a_lone_wing_candidate_on_a_biped_is_not_a_wing():
     """The boy's right arm (rest 102 degrees) was taken as the only wing, so its wing moves folded that arm alone."""
     src = (ROOT / "backend" / "vgac" / "blender" / "procanim.py").read_text(encoding="utf-8")
-    assert 'if gait.kind_for_legs(len(leg_info)) == "biped" and len(wing_info) < 2:' in src
+    assert "if len(wing_info) < 2:" in src  # the lone-candidate drop now applies to every body (rule L), biped included
