@@ -1733,6 +1733,12 @@ def param_help(name: str) -> dict[str, Any]:
     return PARAM_HELP.get(name, {"simple": False, "help": {"meaning": name.replace("_", " "), "why": "", "technical": name}})
 
 
+# --- Rigging with no card: a rig that needs a card fails at once when no card that is on can rig (pipeline.submit) ---
+
+NO_RIG_CARD = ("No graphics card that is turned on can rig, so the rig step cannot start. Turn on a graphics card, "
+               "then start the step again.")
+
+
 # --- Your own LoRAs: a LoRA is used where it is, in one of the person's LoRA folders (user_addons.py, lora_folders.py) -----------
 
 

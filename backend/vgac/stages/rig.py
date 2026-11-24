@@ -34,7 +34,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from .. import declared_parts, grip_guard, guidance, headtris, imaging, library, limbjoins, quality, steptime
+from .. import declared_parts, grip_guard, guidance, headtris, imaging, library, limbjoins, quality, reference, steptime
 from ..comfy import ComfyClient, ComfyError
 from ..moves import move_label
 from ..graphs.skintoken import TEMPLATES, rig_graph
@@ -126,6 +126,24 @@ def resolve_template(sc: StageContext, params: dict[str, Any]) -> str | None:
     if engine == "skintoken":
         return TEMPLATES["generic"]
     return None
+
+
+def rig_skips(category_id: str, params: dict[str, Any] | None) -> bool:
+    """True when the rig step skips rigging (the material category, template "none", or a category whose rig_engine
+    is none), so it needs no graphics card. The same rule as _rig and resolve_template, read from the category id and
+    the step's params alone, so the queue can send such a step to the host (jobs.route)."""
+    if category_id == "material":
+        return True
+    t = (params or {}).get("template") or "auto"
+    if t == "none":
+        return True
+    if t in TEMPLATES:
+        return False
+    try:
+        engine = reference.category(category_id).get("rig_engine", "none")
+    except KeyError:
+        return False  # an unknown category keeps the card route, as before
+    return engine not in ("skintoken_mixamo", "skintoken")
 
 
 def overlay_bones(info_dir: Path) -> Path | None:
