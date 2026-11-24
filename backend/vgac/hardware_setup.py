@@ -50,7 +50,7 @@ CARD_TOLERANCE_GB = 0.5
 # backend/config.yaml and config.py, so the owner's machine proposes what it already has.
 TWO_STAGES = {"concept": "b", "turnaround": "b", "mesh": "a", "prep": "host", "rig": "b", "export": "host"}
 TWO_MATERIAL = {"concept": "b", "turnaround": "b", "mesh": "b", "prep": "host", "rig": "host", "export": "host"}
-TWO_CAPS = {"a": ["concept", "turnaround", "mesh", "material", "judge"],
+TWO_CAPS = {"a": ["concept", "turnaround", "mesh", "rig", "material", "judge"],
             "b": ["concept", "turnaround", "mesh", "rig", "judge", "material"]}
 ONE_STAGES = {"concept": "a", "turnaround": "a", "mesh": "a", "prep": "host", "rig": "a", "export": "host"}
 ONE_MATERIAL = {"concept": "a", "turnaround": "a", "mesh": "a", "prep": "host", "rig": "host", "export": "host"}

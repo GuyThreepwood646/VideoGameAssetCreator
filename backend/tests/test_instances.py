@@ -311,7 +311,8 @@ def test_failed_start_reroutes_or_parks_with_reason(client, world):
     assert [r["instance"] for r in world["ran"]] == ["a"]
     g = _gpu(client, "b")
     assert g["state"] == "failed" and "did not answer within 0.3 seconds" in g["last_error"]
-    # Rigging only runs on b: a new rig job waits there with the reason; nothing fails.
+    # Card a may not rig in this test, so a new rig job has nowhere else to go: it waits on b with the reason.
+    q.allowed_kinds = {"a": ["pictures", "model", "review"]}
     target, message = q.place("rig", "humanoid")
     assert target == "b"
     assert message.startswith(f"Could not start the graphics engine on {GPU}: it did not answer within")
