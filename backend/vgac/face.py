@@ -60,9 +60,11 @@ class Head:
     height: float  # the model's full height
 
 
-def find_head(verts: np.ndarray, head_share: float = 0.13) -> Head | None:
-    """The head of a standing figure: the top `head_share` of its height. Its middle in x and z is the median of the
-    vertices up there, its width the 5th to 95th percentile spread. None when there is nothing up there."""
+HEAD_WIDTH_CAP_M = 0.35  # a head is about 0.2 m across; a top band spread wider than this holds a raised arm or a prop
+HEAD_SHARES_NARROWER = (0.11, 0.09, 0.07, 0.05)  # the narrower bands tried, in turn, when the top band is over the cap
+
+
+def _head_band(verts: np.ndarray, head_share: float) -> Head | None:
     y = verts[:, 1]
     top, bottom = float(y.max()), float(y.min())
     h = top - bottom
@@ -76,6 +78,27 @@ def find_head(verts: np.ndarray, head_share: float = 0.13) -> Head | None:
     cz = float(np.median(sel[:, 2]))
     cy = top - 0.5 * head_share * h
     return Head(centre=np.array([cx, cy, cz]), width=float(x1 - x0), top=top, height=h)
+
+
+def find_head(verts: np.ndarray, head_share: float = 0.13) -> Head | None:
+    """The head of a standing figure: the top `head_share` of its height. Its middle in x and z is the median of the
+    vertices up there, its width the 5th to 95th percentile spread. None when there is nothing up there.
+
+    Neck cap: when that band is wider than HEAD_WIDTH_CAP_M (a raised arm, a pitchfork, a shoulder), the
+    narrower bands in HEAD_SHARES_NARROWER are tried in turn and the first one within the cap is the head. When none is
+    within it, the head is the one above, as before."""
+    head = _head_band(verts, head_share)
+    if head is None or head.width <= HEAD_WIDTH_CAP_M:
+        return head
+    for share in HEAD_SHARES_NARROWER:
+        if share >= head_share:
+            continue
+        narrow = _head_band(verts, share)
+        if narrow is not None and narrow.width <= HEAD_WIDTH_CAP_M:
+            # an arm pulls the top band's middle sideways, and keeping its height moves the nose off the face, so the
+            # narrower band supplies the whole middle
+            return narrow
+    return head
 
 
 # --- camera ---------------------------------------------------------------------------------------------------
