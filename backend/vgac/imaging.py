@@ -387,10 +387,17 @@ def dilate(img: np.ndarray, mask: np.ndarray, px: int) -> np.ndarray:
         if filled.all():
             break
         new_filled = filled.copy()
+        h, w = filled.shape[:2]
         for dy, dx in _neighbours():
-            take = ~new_filled & _shift(filled, dy, dx, False)
-            if take.any():
-                out[take] = _shift(out, dy, dx)[take]
+            # out[y, x] = out[y - dy, x - dx] for the texels that take from this neighbour: only those are gathered
+            # (the sources are filled texels, which are never ones written in this step)
+            ys, yd = (slice(0, h - dy), slice(dy, h)) if dy >= 0 else (slice(-dy, h), slice(0, h + dy))
+            xs, xd = (slice(0, w - dx), slice(dx, w)) if dx >= 0 else (slice(-dx, w), slice(0, w + dx))
+            take = np.zeros_like(filled)
+            take[yd, xd] = ~new_filled[yd, xd] & filled[ys, xs]
+            ty, tx = np.nonzero(take)
+            if len(ty):
+                out[ty, tx] = out[ty - dy, tx - dx]
                 new_filled |= take
         filled = new_filled
     return out
