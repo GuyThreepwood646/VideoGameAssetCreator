@@ -102,10 +102,10 @@ def test_a_character_picture_keeps_its_expected_turn(scene, monkeypatch: pytest.
 
     def spy(mesh, tex, prepared, src, src_n, name, centre, scale, min_iou, atlas_job, log, hint=None, turns=None,  # noqa: ANN001
             tilts=None, lenses=None, prior=None, window=srcproject.PRIOR_DEG, keep=3, turn_limit=None, breadth=1,
-            half_turn_ref=None):
+            half_turn_ref=None, outline_cache=None):
         seen[(cat, name)] = (prior, sorted(turns) if turns else None, turn_limit, breadth, half_turn_ref)
         return real(mesh, tex, prepared, src, src_n, name, centre, scale, min_iou, atlas_job, log, hint, turns, tilts,
-                    lenses, prior, window, keep, turn_limit, breadth, half_turn_ref)
+                    lenses, prior, window, keep, turn_limit, breadth, half_turn_ref, outline_cache)
 
     monkeypatch.setattr(srcproject, "_pose_pick", spy)
     pic = drawn(mesh, tex, 40.0, 0.0)

@@ -235,12 +235,27 @@ def _creases(nrm: np.ndarray, m: np.ndarray) -> np.ndarray:
     return c
 
 
+def _outline_cached(cache: dict | None, mesh: dict, cam: face.Camera, centre: np.ndarray, pose: tuple, scale: float) -> np.ndarray:
+    """sp.outline(mesh, cam), kept in `cache` when one is given. The caller makes one cache for one model (srcproject.paint
+    makes one per call): every picture's coarse search scores the same grid of poses at the same size, and the outline
+    depends on the model and the camera alone. The masks are read-only."""
+    if cache is None:
+        return sp.outline(mesh, cam)
+    key = (cam.size, float(pose[0]), float(pose[1]), pose[2], float(scale), np.asarray(centre, dtype=np.float64).tobytes())
+    m = cache.get(key)
+    if m is None:
+        m = sp.outline(mesh, cam)
+        m.setflags(write=False)
+        cache[key] = m
+    return m
+
+
 def score_pose(mesh: dict, t: Target, centre: np.ndarray, scale: float, pose: tuple[float, float, float | None],
-               tex: np.ndarray | None = None) -> Pose:
+               tex: np.ndarray | None = None, cache: dict | None = None) -> Pose:
     """One pose scored against the picture: the outline alone without tex (or without the picture's colour), else all three."""
     cam = _camera(centre, pose, scale, t.n)
     if tex is None or t.lab is None:
-        m = sp.outline(mesh, cam)
+        m = _outline_cached(cache, mesh, cam, centre, pose, scale)
         fm = _frame(m)
         if fm is None or t.frame is None:
             return Pose(float(pose[0]), float(pose[1]), pose[2], 0.0, 0.0)
@@ -266,7 +281,7 @@ LENS_TOP = 12  # the best orthographic coarse poses that are also tried with eac
 
 def coarse(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, n: int = COARSE_N,
            lenses: list[float | None] | None = None, turns: list[float] | None = None,
-           tilts: list[float] | None = None, lens_top: int = LENS_TOP) -> list[Pose]:
+           tilts: list[float] | None = None, lens_top: int = LENS_TOP, cache: dict | None = None) -> list[Pose]:
     """The coarse poses scored on the outline (after alignment), best first. turns and tilts default to the full grid.
     With the default lens set, the whole turn and tilt grid is scored orthographic, and only its lens_top best are tried
     with each lens (a lens changes the outline far less than the turn and tilt do)."""
@@ -274,10 +289,10 @@ def coarse(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, n: i
     lens_set = LENSES if lenses is None else lenses
     grid = [(float(turn), float(tilt)) for tilt in (TILTS if tilts is None else tilts) for turn in (TURNS if turns is None else turns)]
     first = lens_set[0]
-    out = [score_pose(mesh, t, centre, scale, (tu, ti, first)) for tu, ti in grid]
+    out = [score_pose(mesh, t, centre, scale, (tu, ti, first), cache=cache) for tu, ti in grid]
     if len(lens_set) > 1:
         out.sort(key=lambda p: -p.score)
-        out += [score_pose(mesh, t, centre, scale, (p.turn, p.tilt, lens)) for p in out[:lens_top] for lens in lens_set[1:]]
+        out += [score_pose(mesh, t, centre, scale, (p.turn, p.tilt, lens), cache=cache) for p in out[:lens_top] for lens in lens_set[1:]]
     out.sort(key=lambda p: -p.score)
     return out
 
@@ -288,12 +303,12 @@ def _angdiff(a: float, b: float) -> float:
 
 def refine(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, start: Pose, n: int = REFINE_N,
            step: float = 2.0, span: float = 10.0, rgb: np.ndarray | None = None, tex: np.ndarray | None = None,
-           t: Target | None = None, turn_limit: tuple[float, float] | None = None) -> Pose:
+           t: Target | None = None, turn_limit: tuple[float, float] | None = None, cache: dict | None = None) -> Pose:
     """Local search around a pose: turn and tilt by a pattern search from span/2 down to `step` degrees, staying within
     `span` of the start, at size n, with every term the inputs allow. turn_limit (centre, half width): the turn also stays
     within half width of centre (the window the caller searched in)."""
     t = t or target(alpha, n, rgb if tex is not None else None)
-    best = score_pose(mesh, t, centre, scale, (start.turn, start.tilt, start.lens), tex)
+    best = score_pose(mesh, t, centre, scale, (start.turn, start.tilt, start.lens), tex, cache)
     stride = span / 2.0
     while stride >= step - 1e-9:
         moved = True
@@ -306,7 +321,7 @@ def refine(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, star
                     continue
                 if turn_limit is not None and abs(_angdiff(tu, turn_limit[0])) > turn_limit[1] + 1e-9:
                     continue
-                p = score_pose(mesh, t, centre, scale, (tu, ti, start.lens), tex)
+                p = score_pose(mesh, t, centre, scale, (tu, ti, start.lens), tex, cache)
                 if p.score > best.score + 1e-9:
                     best, moved = p, True
                     break
@@ -318,7 +333,7 @@ def search(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, keep
            turns: list[float] | None = None, tilts: list[float] | None = None, rgb: np.ndarray | None = None,
            tex: np.ndarray | None = None, timings: dict | None = None,
            lenses: list[float | None] | None = None, turn_limit: tuple[float, float] | None = None,
-           keep_full: int = KEEP_FULL, lens_top: int = LENS_TOP) -> list[Pose]:
+           keep_full: int = KEEP_FULL, lens_top: int = LENS_TOP, cache: dict | None = None) -> list[Pose]:
     """Coarse outline grid, the edge and colour terms on its best keep_full, then a local refinement of the `keep` best.
     Best first. turns and tilts restrict the coarse grid (paint's view searches use the turn the view is meant to be seen
     from, plus or minus 20 degrees). rgb is the picture and tex the model's built colour; without them only the outline
@@ -329,7 +344,7 @@ def search(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, keep
     import time
 
     t0 = time.time()
-    grid = coarse(mesh, alpha, centre, scale, turns=turns, tilts=tilts, lenses=lenses, lens_top=lens_top)
+    grid = coarse(mesh, alpha, centre, scale, turns=turns, tilts=tilts, lenses=lenses, lens_top=lens_top, cache=cache)
     t1 = time.time()
     full = tex is not None and rgb is not None
     if full:
@@ -338,7 +353,7 @@ def search(mesh: dict, alpha: np.ndarray, centre: np.ndarray, scale: float, keep
                       key=lambda p: -p.score)
     t2 = time.time()
     tr = target(alpha, REFINE_N, rgb if full else None)
-    refined = [refine(mesh, alpha, centre, scale, p, rgb=rgb, tex=tex if full else None, t=tr, turn_limit=turn_limit)
+    refined = [refine(mesh, alpha, centre, scale, p, rgb=rgb, tex=tex if full else None, t=tr, turn_limit=turn_limit, cache=cache)
                for p in grid[:keep]]
     refined.sort(key=lambda p: -p.score)
     if timings is not None:
