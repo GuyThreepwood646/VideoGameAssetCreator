@@ -14,4 +14,6 @@ numpy==2.5.4
 # vgac/facemarks.py); its model is runtime/models/face_landmarker.task (setup/downloads.json). Brings opencv-contrib-python.
 mediapipe==1.2.3
 pytest==9.2.0
+# Runs the test files in parallel workers (`-n 3 --dist loadfile`). MIT licence (pytest-dev/pytest-xdist, LICENSE file).
+pytest-xdist==3.8.0
 coacd>=1.0.14
