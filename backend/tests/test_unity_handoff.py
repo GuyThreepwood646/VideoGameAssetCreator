@@ -54,7 +54,6 @@ def test_project_open_detection(tmp_path):
 def _export_dir(d: Path, humanoid_files: bool = True) -> Path:
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{NAME}.fbx").write_bytes(b"fbx")
-    (d / f"{NAME}_unreal.fbx").write_bytes(b"unreal")
     for t in ("base_color.png", "normal.png", "ao.png", f"T_{NAME}_MetallicSmoothness.png", f"T_{NAME}_ORM.png"):
         (d / t).write_bytes(b"png")
     (d / "colliders.json").write_text('{"chosen": "box", "parts": []}')
@@ -142,7 +141,6 @@ def test_open_project_gets_a_request_not_a_batch_run(tmp_path, monkeypatch):
     for f in (f"{NAME}.fbx", "base_color.png", "normal.png", "ao.png", f"T_{NAME}_MetallicSmoothness.png", f"T_{NAME}_ORM.png",
               "colliders.json", "hitboxes.json", "anim_clips.json"):
         assert (folder / f).is_file(), f
-    assert not (folder / f"{NAME}_unreal.fbx").exists()  # only the importer's own FBX
     assert not list(folder.glob("*.tmp~"))
     # The importer script in the project is current (a newer one in an open Editor just recompiles).
     assert export.importer_version(proj / "Assets" / "Editor" / "VgacImport.cs") == export.importer_version(IMPORTER)

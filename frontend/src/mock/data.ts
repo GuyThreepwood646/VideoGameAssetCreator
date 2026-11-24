@@ -651,7 +651,7 @@ export function addBackendFinish(asset: Asset, version: Version) {
     { id: 'movement', text: 'Ready to move: in the Unity Animator, set the Speed value and the character stands still, walks and runs; the Attack, Get hit and Die triggers each play that move once.', state: 'ok', term: 'animator_controller' },
     { id: 'collision', text: 'Bumps into things: a standing capsule for moving and 11 hit boxes that follow the animation.', state: 'ok', term: 'hitboxes' },
     { id: 'shared_animations', text: 'Shared animations: 46 human moves work on this character.', state: 'ok', term: 'avatar' },
-    { id: 'files', text: 'Files: FBX (Unity, Unreal, Godot), GLB (web) and a ready Unity prefab.', state: 'ok', term: 'formats' },
+    { id: 'files', text: 'Files: FBX (Unity, Godot), GLB (web) and a ready Unity prefab.', state: 'ok', term: 'formats' },
   ]
   version.metrics.unity_howto = [
     'Open the project in Unity Hub with Add > Add project from disk; New project makes an empty one.',
@@ -966,7 +966,6 @@ export function fabricate(asset: Asset, version: Version) {
       m.collider_kinds = col.kinds
       m.collider_verts = 212
       const scenery = /^(prop_rigid|environment)$/.test(asset.category)
-      if (!RIGGED.test(asset.category)) f.fbx_unreal = putText(`${base}/${asset.name}_unreal.fbx`, 'mock fbx', 'application/octet-stream')
       m.unity_report = {
         ok: true,
         prefab: `Assets/VGAC/${asset.name}/${asset.name}.prefab`,

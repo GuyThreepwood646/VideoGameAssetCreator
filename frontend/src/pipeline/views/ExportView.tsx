@@ -10,7 +10,6 @@ type Lod = { level?: number; triangles?: number; screen_height?: number; ratio?:
 
 const FILE_NAMES: Record<string, string> = {
   fbx: 'FBX (most engines)',
-  fbx_unreal: 'Unreal FBX with collision shapes',
   glb: 'GLB (web, Blender)',
   glb_godot: 'GLB for Godot (with collision)',
   glb_lod1: 'detail level 1 (GLB)',
@@ -21,7 +20,7 @@ const FILE_NAMES: Record<string, string> = {
   base_color: 'colour texture',
   normal: 'bump texture',
   metallic_smoothness: 'metal and shine texture (Unity)',
-  orm: 'surface texture (Unreal, Godot, web)',
+  orm: 'surface texture (Godot, web)',
   ao: 'shadow texture',
   metallic: 'metal texture',
   roughness: 'roughness texture',
@@ -30,14 +29,14 @@ const FILE_NAMES: Record<string, string> = {
   manifest: 'manifest',
 }
 
-const DELIVERABLE_KEYS = ['fbx', 'fbx_unreal', 'glb', 'glb_godot', 'glb_lod1', 'glb_lod2', 'glb_lod3', 'prefab', 'unitypackage', 'manifest', 'base_color', 'normal', 'metallic_smoothness', 'orm', 'ao', 'metallic', 'roughness', 'sprite_atlas', 'sprite_sheet']
+const DELIVERABLE_KEYS = ['fbx', 'glb', 'glb_godot', 'glb_lod1', 'glb_lod2', 'glb_lod3', 'prefab', 'unitypackage', 'manifest', 'base_color', 'normal', 'metallic_smoothness', 'orm', 'ao', 'metallic', 'roughness', 'sprite_atlas', 'sprite_sheet']
 // Once the packed maps exist (3.1) the separate metal and roughness maps leave the download row; they stay in
 // Details, Files.
 const PACKED_REPLACES = new Set(['metallic', 'roughness'])
 
 // What each file is for, in three groups (UI-03): the model files first, then textures and 2D, then technical files.
 const FILE_GROUPS: Array<{ title: string; keys: string[] }> = [
-  { title: 'Model', keys: ['fbx', 'fbx_unreal', 'glb', 'glb_godot', 'glb_lod1', 'glb_lod2', 'glb_lod3', 'prefab', 'unitypackage'] },
+  { title: 'Model', keys: ['fbx', 'glb', 'glb_godot', 'glb_lod1', 'glb_lod2', 'glb_lod3', 'prefab', 'unitypackage'] },
   { title: 'Textures and 2D', keys: ['base_color', 'normal', 'metallic_smoothness', 'orm', 'ao', 'metallic', 'roughness', 'sprite_atlas', 'sprite_sheet'] },
   { title: 'Technical', keys: ['manifest'] },
 ]
@@ -88,7 +87,7 @@ export function ExportView({ version, hideReady = false, assetName = '', onChang
       {!hideReady && (
         <div className="ready-box">
           <div className="ready-title">Your asset is ready</div>
-          <div className="muted small">Download the files for your game engine. FBX works in Unity, Unreal and Godot; GLB works on the web and in Godot.</div>
+          <div className="muted small">Download the files for your game engine. FBX works in Unity and Godot; GLB works on the web and in Godot.</div>
           <Deliverables version={version} />
         </div>
       )}

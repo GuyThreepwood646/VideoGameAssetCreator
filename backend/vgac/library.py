@@ -60,7 +60,6 @@ NAMED_TEMPLATES = (  # paths under a version folder that carry the export name {
     "projects/{p}/assets/{a}/export/{v}/{n}.glb",
     "projects/{p}/assets/{a}/export/{v}/{n}.fbx",
     "projects/{p}/assets/{a}/export/{v}/{n}_godot.glb",
-    "projects/{p}/assets/{a}/export/{v}/{n}_unreal.fbx",  # blender/pack.py
     "projects/{p}/assets/{a}/export/{v}/lods/{n}_LOD0.glb",  # blender/pack.py
     "projects/{p}/assets/{a}/export/{v}/T_{n}_MetallicSmoothness.png",
     "projects/{p}/assets/{a}/export/{v}/T_{n}_ORM.png",

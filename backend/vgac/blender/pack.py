@@ -17,7 +17,7 @@ nothing below changes.
 Builds LOD meshes by decimation named <asset>_LOD0..n so Unity's importer creates the LODGroup automatically; the
 collision shapes (G16, G35): one convex hull, the parts the backend made with vgac/colliders.py (CoACD hulls or a
 primitive), or an exact-shape copy of LOD1, named <asset>_collider_00.._nn or <asset>_collider_mesh, each convex part
-at most 250 triangles; for unrigged assets with convex parts also <asset>_unreal.fbx (LOD0 plus UCX_<asset>_NN);
+at most 250 triangles;
 pushes every action into its own NLA strip so the FBX
 exporter emits one clip per action (Blender 5: strip.action_slot = action.slots[0]); exports FBX (armature and skin
 kept, Y-up, forward -Z, baked NLA strips, every LOD and the collider, no material: Unity builds its own) and the GLB
@@ -866,29 +866,6 @@ if "fbx" in formats:
             o.rotation_euler = (0.0, 0.0, 0.0)
         bpy.context.scene.frame_set(0)
     report["fbx"] = fbx
-    # Unreal (UCX_ convention): a separate FBX with LOD0 named after the asset and each convex part as
-    # UCX_<asset>_NN, which Unreal's FBX import turns into the static mesh's simple collision. Unrigged assets only;
-    # not verified in Unreal (no Unreal in the stack).
-    ucx = [o for o, kind in collider_objs if kind not in ("mesh", "part")]
-    if arm is None and ucx:
-        lod0_name = mesh.name
-        old = [(o, o.name) for o in ucx]
-        mesh.name = name
-        for i, o in enumerate(ucx):
-            o.name = f"UCX_{name}_{i:02d}"
-        bpy.ops.object.select_all(action="DESELECT")
-        for o in [mesh] + ucx:
-            o.select_set(True)
-        bpy.context.view_layer.objects.active = mesh
-        unreal = os.path.join(out_dir, name + "_unreal.fbx")
-        bpy.ops.export_scene.fbx(filepath=unreal, use_selection=True, apply_unit_scale=True, apply_scale_options="FBX_SCALE_ALL",
-                                 axis_forward="-Z", axis_up="Y", object_types={"MESH"}, use_mesh_modifiers=True,
-                                 mesh_smooth_type="FACE", use_tspace=True, bake_anim=False, path_mode="COPY")
-        report["fbx_unreal"] = unreal
-        report["unreal_collision"] = [o.name for o in ucx]
-        for o, nm in old:
-            o.name = nm
-        mesh.name = lod0_name
 
 
 def _image(path, colorspace):
