@@ -25,13 +25,14 @@ import subprocess
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import config, downloader, setup_settings
+from . import config, downloader, pack_update, setup_settings
 from .downloader import DownloadError
 
 log = logging.getLogger("vgac.comfy_find")
@@ -348,8 +349,24 @@ def pack_present(app_dir: Path, pack: dict[str, Any]) -> str:
 def packs_state(c: dict[str, Any]) -> list[dict[str, Any]]:
     app = (Path(c["folder"]) / c["main"]).parent
     return [{"id": p["id"], "name": p.get("name", p["id"]), "what": p.get("what", ""), "licence": p.get("licence", ""),
-             "present": bool(pack_present(app, p)), "folder": pack_present(app, p) or p.get("folder", "")}
+             "present": bool(pack_present(app, p)), "folder": pack_present(app, p) or p.get("folder", ""),
+             "outdated": bool(p.get("local") and _pack_outdated(app, p))}
             for p in pack_list()]
+
+
+def _pack_outdated(app: Path, p: dict[str, Any]) -> bool:
+    """A VGAC's own (local) pack in this ComfyUI that is an older version than the one shipped (pack_update.state)."""
+    folder = pack_present(app, p)
+    return bool(folder) and pack_update.state(app / "custom_nodes" / folder, downloader.project_dir() / str(p["local"])) == pack_update.OUTDATED
+
+
+def _replace_local_pack(app: Path, p: dict[str, Any]) -> None:
+    """Back up the old copy under the project's local folder, then bring it to the shipped version. Only the files the old
+    manifest named are removed; the person's other files stay."""
+    target = app / "custom_nodes" / pack_present(app, p)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    pack_update.replace(target, downloader.project_dir() / str(p["local"]), downloader.project_dir() / "local" / "pack-backups", stamp)
+    downloader.record(f"node pack {p.get('name', p['id'])}", target, "updated", 0)
 
 
 def pack_cache(pack: dict[str, Any]) -> Path:
@@ -455,12 +472,17 @@ def apply_packs(c: dict[str, Any], opener: Callable[[str, int], Any] | None = No
     added: list[str] = []
     for p in pack_list():
         if pack_present(app, p):
+            if p.get("local") and _pack_outdated(app, p):
+                _replace_local_pack(app, p)
+                added.append(str(p.get("name", p["id"])) + " (updated: restart ComfyUI)")
             continue
         target = app / "custom_nodes" / str(p.get("folder") or p["id"])
         if target.exists():
             continue
         if p.get("local"):
-            shutil.copytree(downloader.project_dir() / str(p["local"]), target, ignore=shutil.ignore_patterns("__pycache__"))
+            src = downloader.project_dir() / str(p["local"])
+            shutil.copytree(src, target, ignore=shutil.ignore_patterns("__pycache__"))
+            pack_update.write_manifest(target, src)
             z = None
         else:
             z = fetch_pack(p, opener)

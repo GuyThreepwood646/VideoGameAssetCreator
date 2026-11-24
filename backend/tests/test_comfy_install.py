@@ -1650,3 +1650,26 @@ def test_the_marker_is_replaced_not_half_written(box, monkeypatch):
         ci._write_marker(box["root"], dict(m, install_id="changed"))
     monkeypatch.setattr(os, "replace", real_replace)
     assert ci.read_marker(box["root"]) == m  # the old marker is whole
+
+
+def test_setup_replaces_an_old_vgac_nodes_with_a_backup_and_asks_for_a_restart(box):
+    # PL-81: an older copy of VGAC's own pack is backed up under VGAC's folder, its files are replaced, the person's own
+    # file in the folder is kept, and the job asks for a ComfyUI restart. A current copy is then left alone.
+    from vgac import guidance, pack_update
+
+    install(box)
+    root = box["root"]
+    target = root / "ComfyUI" / "custom_nodes" / "vgac-nodes"
+    (target / "__init__.py").write_text("# older\n", encoding="utf-8")
+    (target / "own_notes.txt").write_text("kept\n", encoding="utf-8")
+    (target / pack_update.MANIFEST).write_text(json.dumps({"version": "older", "files": ["__init__.py"]}), encoding="utf-8")
+    job = ci.Install()
+    ci.step_packs(job, box["ops"], ci.fence_for(box["ops"]))
+    assert (target / "__init__.py").read_text(encoding="utf-8") == "# ours\n"
+    assert (target / "own_notes.txt").read_text(encoding="utf-8") == "kept\n"
+    backups = list((root / "backups" / "packs").iterdir())
+    assert len(backups) == 1 and (backups[0] / "__init__.py").read_text(encoding="utf-8") == "# older\n"
+    assert job.warnings == [guidance.NODE_PACK["updated"]]
+    again = ci.Install()
+    ci.step_packs(again, box["ops"], ci.fence_for(box["ops"]))
+    assert again.warnings == [] and len(list((root / "backups" / "packs").iterdir())) == 1

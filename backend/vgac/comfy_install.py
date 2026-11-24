@@ -42,13 +42,14 @@ import time
 import uuid
 import zipfile
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import config, downloader, hardware_setup, lora_folders, setup_settings, skintoken_fix
+from . import config, downloader, guidance, hardware_setup, lora_folders, pack_update, setup_settings, skintoken_fix
 from . import state_lock as state_lock_mod
 from .state_lock import state_lock
 from .downloader import DownloadError, Spec, Stopped
@@ -788,12 +789,15 @@ def step_packs(job: Install, ops: Ops, fence: Fence) -> None:
         if target.is_dir() and any(target.iterdir()):
             if p["id"] == "skintoken":
                 _apply_skintoken_fix(job, target)   # a pack already here is checked and fixed in place (idempotent)
+            elif p.get("local") and pack_update.state(target, downloader.project_dir() / str(p["local"])) == pack_update.OUTDATED:
+                _update_local_pack(job, p, target, fence)
             continue
         job.text = f"Adding {p.get('name', p['id'])}"
         if p.get("local"):
             src = downloader.project_dir() / str(p["local"])
             g_rmtree(target, ops, fence)
             shutil.copytree(src, guard(target, fence), ignore=shutil.ignore_patterns("__pycache__"))
+            pack_update.write_manifest(target, src, lambda q: guard(q, fence))
             downloader.record(f"node pack {p.get('name', p['id'])}", target, "added", 0)   # the ledger says which folder is VGAC's
             continue
         z = guard(root / "downloads" / f"pack-{p['id']}.zip", fence)
@@ -809,6 +813,19 @@ def step_packs(job: Install, ops: Ops, fence: Fence) -> None:
         if p["id"] == "skintoken":
             _apply_skintoken_fix(job, target)
         downloader.record(f"node pack {p.get('name', p['id'])}", target, "added", 0)   # the ledger says which folder is VGAC's
+
+
+def _update_local_pack(job: Install, p: dict[str, Any], target: Path, fence: Fence) -> None:
+    """An older copy of VGAC's own pack: the old folder is backed up under VGAC's folder, then the pack's files are written
+    over it. Only the files the old manifest named (and the pack still has) are removed; the person's other files stay.
+    The job warns that ComfyUI must restart before the new nodes load."""
+    src = downloader.project_dir() / str(p["local"])
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backups = guard(install_root() / "backups" / "packs", fence)
+    job.text = f"Updating {p.get('name', p['id'])}"
+    pack_update.replace(guard(target, fence), src, backups, stamp, lambda q: guard(q, fence))
+    downloader.record(f"node pack {p.get('name', p['id'])}", target, "updated", 0)
+    job.warnings.append(guidance.NODE_PACK["updated"])
 
 
 def _apply_skintoken_fix(job: Install, target: Path) -> None:

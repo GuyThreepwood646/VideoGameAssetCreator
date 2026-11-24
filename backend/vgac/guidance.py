@@ -1750,3 +1750,13 @@ def addon_placement_note(mode: str, *, file_missing: bool = False) -> str:
                     "Removing it from the list does not delete anything.")
         return "Used where it is, in one of your LoRA folders. The app never copies or moves it, and removing it from the list never deletes your file."
     return ""
+
+
+# PL-81: the project's own node pack (vgac-nodes) in a ComfyUI. The System page row and the setup card read these.
+NODE_PACK = {
+    "current": "The node pack vgac-nodes is up to date.",
+    "label": "Node pack out of date",
+    "detail": ("Your copy of the vgac-nodes node pack is an older version than this app. The newer nodes the 3D step needs are missing."),
+    "fix": "Update the node pack from setup. The old files are backed up first, then restart ComfyUI.",
+    "updated": "vgac-nodes was updated. Restart ComfyUI so it loads the new nodes.",
+}
