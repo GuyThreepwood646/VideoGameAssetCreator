@@ -975,8 +975,8 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     # model (docs/TEXTURE-FIDELITY-PLAN.md lane B).
     "texture_sharp": {
         "severity": "warn",
-        "ok": "The model's colour texture is about as sharp as the picture ({value:x} of the picture's fine detail).",
-        "fail": "The model's colour texture is softer than the picture: it keeps {value:x} of the picture's fine detail, "
+        "ok": "The model's colour texture keeps the detail its size allows ({value:x} of that detail).",
+        "fail": "The model's colour texture is softer than its size allows: it keeps {value:x} of the detail it can hold, "
                 "it should keep at least {limit:x}.",
     },
     "texture_colour_matches_picture": {

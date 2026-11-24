@@ -10,7 +10,10 @@ left out, it reports:
 - delta_e: mean colour difference in Lab after a low-pass, so it measures tone and hue and not a pixel of
   misregistration (about 2 is barely visible, 10 is a clearly different colour);
 - sharpness_ratio: Laplacian variance of the render over that of the picture at the same scale (1 is as sharp as the
-  picture, 0.5 is clearly softer);
+  picture, 0.5 is clearly softer). A texture smaller than the picture cannot hold the picture's fine detail, so this
+  raw ratio is low for any texture of a small atlas (a 512 px atlas on a low-poly model tops out near 0.04);
+- density_sharpness_ratio: the same measure against the picture blurred to the texture's own texel size, capped at 1.
+  1 means the texture keeps all the detail its size can hold; the check uses this one;
 - real_detail_db: the base colour against itself shrunk to half and blown back up, inside the UV islands (lower means
   more real detail in the atlas; moved here from bakeoff/repaint_trial.py);
 - view_sharpness: face.sharpness on 8 orthographic renders around the model (moved here from
@@ -277,11 +280,40 @@ def compare(render: np.ndarray, render_mask: np.ndarray, pic: np.ndarray, pic_ma
     return out
 
 
+def texels_per_metre(mesh: dict[str, np.ndarray], tex: np.ndarray) -> float:
+    """Texels per metre of model surface: the atlas's covered texels over the model's surface area, square-rooted (the
+    texel side of an evenly spread atlas)."""
+    v, f = mesh["verts"], mesh["faces"]
+    tri = v[f]
+    area = float(0.5 * np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1).sum())
+    return float((uv_cover(mesh, tex.shape[0]).sum() / max(area, 1e-12)) ** 0.5)
+
+
+def density_sharpness(render: np.ndarray, render_mask: np.ndarray, pic: np.ndarray, pic_mask: np.ndarray,
+                      px_per_metre: float, texel_m: float, border: int = BORDER_PX) -> float | None:
+    """The render's Laplacian variance over that of the picture blurred to the texture's texel size (a box filter one texel
+    wide, then back up), inside the overlap of both silhouettes; capped at 1. A texture that keeps every detail its size
+    allows scores 1; a copy blurred further than the texels scores less. Sharper than the texel grid is not softness,
+    so it is not rewarded beyond 1. None when there is no overlap or the reference has no detail."""
+    overlap = face.erode(render_mask & pic_mask, border)
+    if overlap.sum() < 200:
+        return None
+    k = max(1.0, px_per_metre / max(texel_m, 1e-12))
+    size = pic.shape[0]
+    small = max(8, int(round(size / k)))
+    box = Image.fromarray(face.to_uint8(pic)).resize((small, small), Image.BOX)
+    ref = np.asarray(box.resize((size, size), Image.BICUBIC), dtype=np.float64) / 255.0
+    vref = laplacian_variance(ref, overlap)
+    if vref <= 1e-12:
+        return None
+    return round(min(1.0, laplacian_variance(render, overlap) / vref), 3)
+
+
 # --- the score ----------------------------------------------------------------------------------------------
 
 
 def _front_candidate(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, pic_mask: np.ndarray, yaw: float, size: int,
-                     want_images: bool, tilt: float = 0.0, lens: float | None = None) -> dict[str, Any]:
+                     want_images: bool, tilt: float = 0.0, lens: float | None = None, texel_m: float | None = None) -> dict[str, Any]:
     ys, xs = np.nonzero(pic_mask)
     extent = float(max(np.ptp(xs), np.ptp(ys)) + 1) * size / max(pic.shape[:2])
     cam = _frame_camera(mesh, yaw, extent, size, tilt, lens)
@@ -295,6 +327,8 @@ def _front_candidate(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarr
     # Both sides at 8 bits, as a texture or a picture on disk is: float rendering would show less quantisation noise than the picture.
     r["image"] = face.to_uint8(r["image"]).astype(np.float64) / 255.0
     m = compare(r["image"], r["mask"], warped, wmask)
+    if texel_m:
+        m["density_sharpness_ratio"] = density_sharpness(r["image"], r["mask"], warped, wmask, size / cam.scale, texel_m)
     res = {"yaw": yaw, "tilt": tilt, "lens": lens, "silhouette_iou": round(fit["iou"], 4), "fit_scale": round(fit["scale"], 3), "fit_shift_px": [round(fit["tx"], 1), round(fit["ty"], 1)], **m}
     if want_images:
         res["_images"] = {"render": r["image"], "picture": warped, "render_mask": r["mask"], "picture_mask": wmask}
@@ -316,11 +350,12 @@ def score(glb: Path | str, picture: Path | str | np.ndarray | Image.Image, base_
     if pic_mask.sum() < 100:
         return {"error": "the picture has no cut-out to compare against"}
     tried: dict[tuple[float, float, float | None], dict[str, Any]] = {}
+    texel_m = texels_per_metre(mesh, tex)
 
     def run(y: float, t: float = 0.0, lens: float | None = None) -> dict[str, Any]:
         k = (float(y) % 360, float(t), lens)
         if k not in tried:
-            tried[k] = _front_candidate(mesh, tex, pic, pic_mask, k[0], size, keep_images, k[1], lens)
+            tried[k] = _front_candidate(mesh, tex, pic, pic_mask, k[0], size, keep_images, k[1], lens, texel_m)
         return tried[k]
 
     def best_iou() -> float:
@@ -521,10 +556,14 @@ def fidelity_checks(result: dict[str, Any]) -> list[dict[str, Any]]:
                    + ", so any difference would be the fit's fault, not the texture's")
         return [quality.not_measured(i, what, why) for i, what in names]
     out: list[dict[str, Any]] = []
-    ratio = result.get("sharpness_ratio")
-    if ratio is not None:
+    ratio = result.get("density_sharpness_ratio")
+    if "density_sharpness_ratio" not in result:
+        # measured before the texture's texel size was taken into account: not judged, never judged on the raw ratio
+        out.append(quality.not_measured(names[0][0], names[0][1], "this build was measured before the texture's size was counted; build the 3D model again"))
+    elif ratio is not None:
         out.append(quality.check("texture_sharp", ratio >= SHARP_RATIO_MIN, ratio, SHARP_RATIO_MIN,
-                                 vars={"ssim": result.get("ssim"), "iou": result.get("silhouette_iou")}))
+                                 vars={"ssim": result.get("ssim"), "iou": result.get("silhouette_iou"),
+                                       "raw_sharpness_ratio": result.get("sharpness_ratio")}))
     else:
         out.append(quality.not_measured(names[0][0], names[0][1], "the picture and the model had no overlap to compare"))
     de = result.get("delta_e")
@@ -545,7 +584,8 @@ def texture_checks_for(glb: Path | str, picture: Path | str | np.ndarray | Image
         return []
 
 
-STAGE_KEYS = ("yaw", "tilt", "lens", "edge_term", "wide_fit_refused", "silhouette_iou", "fit_ok", "ssim", "delta_e", "delta_l", "delta_chroma", "sharpness_ratio")
+STAGE_KEYS = ("yaw", "tilt", "lens", "edge_term", "wide_fit_refused", "silhouette_iou", "fit_ok", "ssim", "delta_e", "delta_l", "delta_chroma", "sharpness_ratio",
+              "density_sharpness_ratio")
 
 
 def measure_for_stage(glb: Path | str, picture: Path | str, base_color: Path | str | None = None) -> dict[str, Any]:

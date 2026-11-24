@@ -73,8 +73,8 @@ NOTES: dict[str, tuple[str, str]] = {
     # step 3 (3D model)
     "silhouette_iou": ("by_hand", "Building the model again repeats this. Try another 3D builder under Fine tune in the Build the 3D model step, "
                                   "or go back to the first step and redraw the character in a simpler pose."),
-    "texture_sharp": ("by_hand", "Make the picture bigger with Upscale it in the first step, then build the 3D model again; "
-                                 "Fine tune in the 3D model step has slower, more detailed texture options."),
+    "texture_sharp": ("by_hand", "Build the 3D model again with a larger texture size under Fine tune in the 3D model step, "
+                                 "or make the picture bigger with Upscale it in the first step."),
     "texture_colour_matches_picture": ("by_hand", "Build the 3D model again for a new try; if the colours still drift, turn on Paint the picture onto the model "
                                                   "under Fine tune in the Clean up for the game step."),
     "seam_error": ("by_hand", "Build the 3D model again with a larger texture size or more space around the pieces, under Fine tune in the 3D model step."),
