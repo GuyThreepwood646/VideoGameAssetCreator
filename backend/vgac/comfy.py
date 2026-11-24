@@ -21,6 +21,9 @@ from typing import Any, Callable
 
 import httpx
 
+from . import comfy_inputs
+from .config import get_settings
+
 
 # A busy engine can stop answering HTTP for minutes while it loads a large model (the 20 GB drawing model took 187 s
 # to load cold on the 10 GB card in the realistic test of 2026-11-13, and two side-view jobs died with a ReadTimeout
@@ -147,11 +150,14 @@ class ComfyClient:
     calls), so the once-a-second /history polls reuse a connection. Each request passes its own timeout."""
 
     def __init__(self, base_url: str, name: str = "", timeout: float = 30.0, input_dir: Path | str | None = None,
-                 output_dir: Path | str | None = None) -> None:
+                 output_dir: Path | str | None = None, data_dir: Path | str | None = None) -> None:
         self.base_url = base_url.rstrip("/")
         self.name = name
         self.timeout = timeout
         self.input_dir = Path(input_dir) if input_dir else None
+        # This backend's own data folder, where the record of the staged input files is kept (comfy_inputs). None
+        # means the settings' library folder.
+        self.data_dir = Path(data_dir) if data_dir else None
         self.output_dir = Path(output_dir) if output_dir else None
         self._http: httpx.AsyncClient | None = None
         self._http_loop: asyncio.AbstractEventLoop | None = None
@@ -495,7 +501,8 @@ class ComfyClient:
         """Make a local file available to LoadImage / VGACLoadTrimesh and return the name they expect.
 
         Copies into the shared input directory when configured (works for any file type, as the
-        bakeoff did), otherwise uploads through /upload/image (images only).
+        bakeoff did), otherwise uploads through /upload/image (images only). Every copy is recorded in this backend's
+        own record, so the clean-up (comfy_inputs.sweep) removes only what this backend staged.
         """
         src_p = Path(src)
         name = name or ("vgac_" + src_p.name)
@@ -503,6 +510,8 @@ class ComfyClient:
             self.input_dir.mkdir(parents=True, exist_ok=True)
             dest = self.input_dir / name
             await asyncio.to_thread(shutil.copy, src_p, dest)
+            data_dir = self.data_dir if self.data_dir is not None else get_settings().library_path
+            await asyncio.to_thread(comfy_inputs.remember, data_dir, name)
             return name
         info = await self.upload_image(src_p)
         sub = info.get("subfolder") or ""
