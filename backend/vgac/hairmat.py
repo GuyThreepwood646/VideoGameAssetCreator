@@ -594,8 +594,6 @@ def readme_lines(name: str, hair_tex: int, flow_file: str, files: dict[str, str]
         "width, green along its height (up, as in OpenGL normal maps), each stored as 0.5 + 0.5 times the direction; blue is 1.",
         "Unity: the importer builds the hair material for you (the VGAC/Hair shader with a stretched highlight on the built-in render "
         "pipeline; URP and HDRP get their own Lit shader with the hair textures).",
-        "Unreal: open the hair material, set its Shading Model to Hair, and connect the hair base colour. The FBX carries only the "
-        "material slot names, so this is done by hand. Not tried here.",
         "Godot: on the hair material (StandardMaterial3D), turn on Anisotropy and set Flowmap to the flow map. Godot does not read "
         "glTF anisotropy, so this is done by hand. Not tried here.",
         "Other GLB readers: the GLB's hair material carries KHR_materials_anisotropy (the app's own preview uses it); readers that "

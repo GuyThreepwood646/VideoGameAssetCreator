@@ -195,8 +195,8 @@ PARAM_HELP: dict[str, dict[str, Any]] = {
     "collider_max_parts": {"simple": False, "help": {"meaning": "The most separate collision shapes the asset may get.",
                                                      "why": "More shapes fit hollow things better; fewer keep physics cheap, which matters most on phones.",
                                                      "technical": "CoACD max_convex_hull; automatic is 8 for props, 16 for scenery, 6 for vehicles, half on Phone"}},
-    "formats": {"simple": True, "help": {"meaning": "Which file types to write.", "why": "FBX for Unity and Unreal, GLB for Godot and the web.", "technical": "Export formats"},
-                "options": {"fbx": "FBX (Unity, Unreal, Godot)", "glb": "GLB (web, Godot, Blender)"}},
+    "formats": {"simple": True, "help": {"meaning": "Which file types to write.", "why": "FBX for Unity, GLB for Godot and the web.", "technical": "Export formats"},
+                "options": {"fbx": "FBX (Unity, Godot)", "glb": "GLB (web, Godot, Blender)"}},
     "unity": {"simple": True, "help": {"meaning": "Also build and check a Unity prefab.", "why": "Confirms the asset works in an engine and gives you a ready prefab.", "technical": "Unity batch import"}},
     "clips_library": {"simple": True, "help": {"meaning": "Which free animation set to attach to a human-style skeleton.", "why": "Gives walk, run, jump and more without any animation work.", "technical": "CC0 clip library retargeted through Humanoid"},
                       "options": {"ual1": "Standard human moves (42 animations)", "ual2": "Extra human moves (second library)", "none": "Only its own walk and idle"}},
@@ -975,8 +975,8 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     # model (docs/TEXTURE-FIDELITY-PLAN.md lane B).
     "texture_sharp": {
         "severity": "warn",
-        "ok": "The model's colour texture is about as sharp as the picture ({value:x} of the picture's fine detail).",
-        "fail": "The model's colour texture is softer than the picture: it keeps {value:x} of the picture's fine detail, "
+        "ok": "The model's colour texture keeps the detail its size allows ({value:x} of that detail).",
+        "fail": "The model's colour texture is softer than its size allows: it keeps {value:x} of the detail it can hold, "
                 "it should keep at least {limit:x}.",
     },
     "texture_colour_matches_picture": {
@@ -1731,6 +1731,12 @@ def stage_guide(stage_id: str) -> dict[str, Any]:
 
 def param_help(name: str) -> dict[str, Any]:
     return PARAM_HELP.get(name, {"simple": False, "help": {"meaning": name.replace("_", " "), "why": "", "technical": name}})
+
+
+# --- Rigging with no card: a rig that needs a card fails at once when no card that is on can rig (pipeline.submit) ---
+
+NO_RIG_CARD = ("No graphics card that is turned on can rig, so the rig step cannot start. Turn on a graphics card, "
+               "then start the step again.")
 
 
 # --- Your own LoRAs: a LoRA is used where it is, in one of the person's LoRA folders (user_addons.py, lora_folders.py) -----------

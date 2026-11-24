@@ -85,9 +85,6 @@ FIT_HELP = ("Fit it for me plays the moves with the item on and tries small chan
             "that works and says what it changed. Items you have not moved are fitted every time the character is "
             "rebuilt; once you move one yourself, it is only fitted when you ask.")
 HAND_LIMIT = "The hand does not close around the handle: the characters have no finger bones, so the hand stays a mitten."
-UNREAL_NOTE = ("Unreal (not verified): import the character FBX, then add one skeletal-mesh socket per entry in "
-               "attachments.json on the bone it names, with the offset given, and attach the item's static mesh to it by "
-               "socket name. The FBX's Socket_* empties come in as extra bones, not sockets.")
 GODOT_NOTE = ("Godot (not verified): open the _equipped.glb, or add a BoneAttachment3D on the bone each entry names and "
               "put the item's .glb under it with the offset given. Godot's glTF importer may create the "
               "BoneAttachment3D nodes for the Socket_* nodes by itself.")
@@ -1047,7 +1044,7 @@ async def equip(sc: Any, name: str) -> dict[str, Any] | None:
            "count": len(entries), "items": entries, "skipped": skipped, "equipped_glb": f"{name}_equipped.glb" if entries else "",
            "engines": {"unity": {"verified": True, "note": f'The prefab "{name} (equipped)" has each item under its attachment point; '
                                                             f'the "{name}" prefab stays bare.'},
-                       "unreal": {"verified": False, "note": UNREAL_NOTE}, "godot": {"verified": False, "note": GODOT_NOTE}},
+                       "godot": {"verified": False, "note": GODOT_NOTE}},
            "known_limits": [HAND_LIMIT]}
     ap = Path(sc.dir) / "attachments.json"
     result: dict[str, Any] = {"count": len(entries), "skipped": skipped,

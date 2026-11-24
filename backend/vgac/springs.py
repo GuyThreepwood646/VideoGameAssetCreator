@@ -4,7 +4,7 @@ The rig step runs blender/springs.py on the animated GLB after the moves are mad
 that hang clear of the body, adds a chain of 2 to 4 bones to each, fades the skin weights onto them and bakes a small
 spring simulation into every clip. This module is the backend's side: whether it runs, the Blender arguments, the
 metrics, the check sentences' values, "What was taken as a hanging part" (the version file springs_found), and what
-the hand-off says about it (springs.json, the manifest block, README lines for Godot and Unreal).
+the hand-off says about it (springs.json, the manifest block, README lines for Godot).
 
 A one-mesh model allows only parts that hang clear of the body to move: a ponytail or a braid away from the neck, a
 cape hem, a tail, cloth ends. Hair resting on the shoulders is welded to them and a bob has nothing that hangs; the
@@ -295,13 +295,12 @@ def manifest_block(doc: dict[str, Any], unity_report: dict[str, Any] | None) -> 
                                                for c in chains],
             "bones": sum(len(c["bones"]) for c in chains), "baked_into_clips": True,
             "unity": {"script": "VgacSpringBones", "chains": u.get("springChains"), "warning": u.get("springWarning") or None} if u else None,
-            "godot": "by hand: SpringBoneSimulator3D (Godot 4.4 and later); see README.txt; not tried here",
-            "unreal": "by hand: AnimDynamics or Spring Controller nodes in the Animation Blueprint; see README.txt; not tried here"}
+            "godot": "by hand: SpringBoneSimulator3D (Godot 4.4 and later); see README.txt; not tried here"}
 
 
 def readme_lines(name: str, doc: dict[str, Any]) -> list[str]:
-    """README.txt lines for the spring bones: what is in the files and how to make the sway react to the game in Godot
-    and Unreal (not tried here)."""
+    """README.txt lines for the spring bones: what is in the files and how to make the sway react to the game in
+    Godot (not tried here)."""
     chains = (doc or {}).get("chains") or []
     if not chains:
         return []
@@ -325,10 +324,5 @@ def readme_lines(name: str, doc: dict[str, Any]) -> list[str]:
               "set to the last bone's length. Use Stiffness about 2, Drag about 0.4 and Gravity about 0.2 as a start, "
               "and add the hit boxes as SpringBoneCollision3D capsules (children of the simulator, attached to the bones "
               "named in springs.json). The node then overrides the baked sway on those bones.",
-              "",
-              "Unreal Engine (not tried here): in the character's Animation Blueprint add one AnimDynamics node per chain "
-              "(Chain on, Bound Bone the first bone, Chain End the last bone), or a Spring Controller per bone for a "
-              "simpler bounce, after the Locomotion pose. Add the hit boxes as Planar or sphere limits if a chain cuts "
-              "into the body. The baked sway plays without any of this.",
               ""]
     return lines

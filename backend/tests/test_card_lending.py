@@ -110,11 +110,12 @@ def test_with_sharing_on_work_waiting_elsewhere_goes_first(settings):
     q.share_when_busy = True
     lease, why = lend(q)
     assert lease is None and "work is waiting that" in why
-    # work a may not take (rigging) does not hold it back
+    # work a may not take (rigging, not allowed on a) does not hold it back
     with session_factory()() as db:
         for j in db.query(Job).all():
             j.kind = "rig.run"
         db.commit()
+    q.allowed_kinds = {"a": ["pictures", "model", "review"]}
     assert lend(q)[0] is not None
 
 

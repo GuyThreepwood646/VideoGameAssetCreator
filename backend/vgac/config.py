@@ -141,12 +141,12 @@ class Settings(BaseModel):
     # The instance that runs the local vision judge (POST /api/versions/{id}/judge mode=local).
     judge_instance: str = "b"
     # What each graphics card can run when the card a step prefers is turned off in the app (jobs.route). Names are
-    # stages plus "judge" (the local vision judge) and "material" (every GPU step of the material category). Rig is
-    # b only by default: an engine the backend did not start itself (ComfyUI Desktop) may lack SKINTOKEN_BLENDER_BIN,
-    # the only way the SkinToken node finds Blender. "host" (prep and export) is never a graphics card and always
-    # runs. An instance missing from this table can run the stages the tables above give it.
+    # stages plus "judge" (the local vision judge) and "material" (every GPU step of the material category). Both cards
+    # can rig: the SkinToken node finds Blender through SKINTOKEN_BLENDER_BIN, which setup sets for each ComfyUI it
+    # configures. An engine without that variable must not be listed for rig. "host" (prep and export) is never a
+    # graphics card and always runs. An instance missing from this table can run the stages the tables above give it.
     instance_capabilities: dict[str, list[str]] = Field(default_factory=lambda: {
-        "a": ["concept", "turnaround", "mesh", "material", "judge"],
+        "a": ["concept", "turnaround", "mesh", "rig", "material", "judge"],
         "b": ["concept", "turnaround", "mesh", "rig", "judge", "material"]})
     # Seconds a routine Blender step (rig repair, rig inspection, clip baking and rendering) may run.
     blender_timeout_seconds: float = Field(default=1800, ge=1)

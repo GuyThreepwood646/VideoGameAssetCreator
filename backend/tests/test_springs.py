@@ -333,7 +333,7 @@ def test_the_hand_off_readme_and_manifest():
     doc = sp.springs_doc([{"name": "Spring_Hair_01", "kind": "Hair", "parent": "mixamorig:Head", "bones": ["Spring_Hair_01_1"],
                            "joints": [(0, 0, 1), (0, 0, 0.8)], "radius": 0.02, "settings": dict(SET), "confidence": 0.9}], None, 1.7)
     lines = "\n".join(springs_mod.readme_lines("Knight", doc))
-    assert "SpringBoneSimulator3D" in lines and "AnimDynamics" in lines and lines.count("not tried here") == 2
+    assert "SpringBoneSimulator3D" in lines and "AnimDynamics" not in lines and lines.count("not tried here") == 1
     assert "Spring bones (small extra bones that sway on their own)" in lines
     block = springs_mod.manifest_block(doc, {"springChains": 1})
     assert block["bones"] == 1 and block["unity"]["chains"] == 1 and "not tried here" in block["godot"]

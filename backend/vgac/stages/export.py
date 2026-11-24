@@ -21,7 +21,7 @@ come in from the prep version; the hair packs T_<name>_Hair_MetallicSmoothness a
 pack.py gives the hair triangles the second material slot (FBX slots <name>_Body and <name>_Hair, two textured
 materials in every GLB); every GLB's hair material gets KHR_materials_anisotropy with the flow map; the Unity importer
 gets -vgacHair on and builds the second material; the manifest gets a hair_material block and README.txt the plain
-lines for Unreal and Godot. The check hair_material_shipped says whether the files carry it.
+lines for Godot. The check hair_material_shipped says whether the files carry it.
 
 Hair from the library (docs/HAIR-LIBRARY-PLAN.md section 6; library_hair: the clean-up step attached a hairstyle and the
 rig step bound it): the same hair maps come in with the canonical hair_mesh.npz instead of a layout, pack.py joins the
@@ -44,7 +44,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import colliders, guidance, hairmat, items, library, quality, reference, sockets, steptime
+from .. import colliders, guidance, hairmat, items, library, provenance, quality, reference, sockets, steptime
 from .. import springs as springs_mod
 from ..beauty import render_beauty, showcase_sky
 from ..db import _iso, utcnow
@@ -60,7 +60,7 @@ HITBOX_NOTE = ("Hit boxes are trigger colliders on the bones; Unity sends trigge
 # Channel layouts written to the manifest (G02).
 PACK_LAYOUTS = {
     "metallic_smoothness": "RGB metallic, A smoothness (1 - roughness); linear; Unity URP Lit and Standard _MetallicGlossMap",
-    "orm": "R occlusion, G roughness, B metallic; linear; glTF metallicRoughness and occlusion, Unreal and Godot ORM",
+    "orm": "R occlusion, G roughness, B metallic; linear; glTF metallicRoughness and occlusion, Godot ORM",
 }
 # Defaults for a missing input map, as 8-bit values: no metal, middling roughness, no extra shadowing.
 _PACK_DEFAULTS = {"metallic": 0, "roughness": 128, "ao": 255}
@@ -168,7 +168,7 @@ def _channel(path: Path | str | None, size: tuple[int, int]) -> np.ndarray | Non
 
 def pack_texture_maps(textures: dict[str, Path | str | None], out_dir: Path | str, name: str) -> dict[str, Path]:
     """Write T_<name>_MetallicSmoothness.png (RGB metallic, A 1 - roughness; Unity) and T_<name>_ORM.png (R occlusion,
-    G roughness, B metallic; glTF, Godot, Unreal) into `out_dir` at the size of the largest of the maps they are made
+    G roughness, B metallic; glTF, Godot) into `out_dir` at the size of the largest of the maps they are made
     of (not the base colour's: "High" face detail ships the base colour alone at 4096, and enlarging the data maps to
     match would only cost memory). A missing input takes the defaults above. The metal-and-shine pack needs a metallic or roughness map;
     the ORM pack any of ao, roughness and metallic. -> {"metallic_smoothness": path, "orm": path} for what was written.
@@ -795,8 +795,6 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
         sc.register("glb", sc.dir / f"{name}.glb")
     if (sc.dir / f"{name}_godot.glb").is_file():
         sc.register("glb_godot", sc.dir / f"{name}_godot.glb")
-    if (sc.dir / f"{name}_unreal.fbx").is_file():
-        sc.register("fbx_unreal", sc.dir / f"{name}_unreal.fbx")
     for level, p in sorted((report.get("glb_lods") or {}).items()):
         if Path(p).is_file():
             sc.register(f"glb_{level.lower()}", p)
@@ -1058,11 +1056,9 @@ def _collision_manifest(sc: StageContext, pack_report: dict[str, Any] | None, un
     parts = pr.get("collider_parts") or []
     out: dict[str, Any] = {"mode": sc.version.params.get("collider"), "shape": plan.get("chosen"), "count": len(parts),
                            "parts": parts, "triangles_max": pr.get("collider_triangles_max"), "vertices_total": pr.get("collider_verts"),
-                           "openings": plan.get("openings"), "unity": None, "godot": None, "unreal": None}
+                           "openings": plan.get("openings"), "unity": None, "godot": None}
     if parts:
         out["godot"] = f"{len(parts)} -convcolonly or -colonly mesh(es) in the _godot.glb"
-        if pr.get("unreal_collision"):
-            out["unreal"] = {"file": Path(pr.get("fbx_unreal", "")).name, "ucx": pr.get("unreal_collision"), "verified": False}
     if u:
         out["unity"] = {"count": u.get("colliderCount"), "kinds": u.get("colliderKinds"), "triangles_max": u.get("colliderTrianglesMax"),
                         "where": "Colliders child of the prefab root"}
@@ -1077,8 +1073,7 @@ def _lighting_manifest(sc: StageContext, unity_report: dict[str, Any] | None) ->
     if cat in LIGHTMAP_CATEGORIES:
         out["lightmap_uv"] = {"generated": bool(u.get("secondaryUV")) if u else None, "on_mesh": u.get("secondaryUVOnMesh"),
                               "by": "Unity ModelImporter.generateSecondaryUV (UV1)",
-                              "settings": u.get("secondaryUVSettings") or LIGHTMAP_SETTINGS, "static_flags": u.get("staticFlags"),
-                              "unreal": "Unreal generates lightmap UVs on import; none written for it"}
+                              "settings": u.get("secondaryUVSettings") or LIGHTMAP_SETTINGS, "static_flags": u.get("staticFlags")}
     if cat in CROSSFADE_CATEGORIES:
         out["lod_fade"] = {"mode": u.get("lodFadeMode") or "CrossFade", "transition_width": u.get("lodFadeWidth") or CROSSFADE_WIDTH,
                            "note": CROSSFADE_NOTE}
@@ -1105,7 +1100,7 @@ def _hair_manifest(sc: StageContext, unity_report: dict[str, Any] | None) -> dic
             "flow_map": files.get("hair_flow"), "glb_anisotropy": {"extension": "KHR_materials_anisotropy", "files": m.get("anisotropy_glbs"),
                                                                    "strength": hairmat.ANISOTROPY_STRENGTH},
             "unity": {"material": u.get("hairMaterial"), "shader": u.get("hairShader")} if u else None,
-            "readme": "README.txt", "unreal": "by hand: Shading Model Hair (README.txt); not verified",
+            "readme": "README.txt",
             "godot": "by hand: Anisotropy on, Flowmap set to the flow map (README.txt); not verified"}
 
 
@@ -1131,7 +1126,6 @@ def _library_hair_manifest(sc: Any, m: dict[str, Any], files: dict[str, str], u:
             "unity": {"material": u.get("hairMaterial"), "shader": u.get("hairShader"), "cutout": u.get("hairCutout"),
                       "two_sided": u.get("hairTwoSided")} if u else None,
             "readme": "README.txt",
-            "unreal": "by hand: Shading Model Hair, Blend Mode Masked for cut-out hair (README.txt); not verified",
             "godot": "by hand: Transparency Alpha Scissor for cut-out hair (README.txt); not verified"}
 
 
@@ -1144,8 +1138,8 @@ def library_readme_lines(hl: dict[str, Any] | None, m: dict[str, Any]) -> list[s
              f"licence {c.get('licence') or 'unknown'}{where}."]
     if m.get("alpha") == "cutout":
         lines.append("The hair is made of hair cards (flat strips with a see-through texture). Its material uses alpha cutout "
-                     "(pixels under half opacity are not drawn): in Unity the importer puts it on VGAC/HairCutout; in Unreal "
-                     "set Blend Mode to Masked; in Godot set Transparency to Alpha Scissor. Not tried in Unreal or Godot here.")
+                     "(pixels under half opacity are not drawn): in Unity the importer puts it on VGAC/HairCutout; in Godot set "
+                     "Transparency to Alpha Scissor. Not tried in Godot here.")
     if m.get("two_sided"):
         lines.append("The hair is drawn from both sides (two-sided).")
     return lines + [""]
@@ -1633,6 +1627,7 @@ async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     mp = sc.dir / "manifest.json"
     mp.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     sc.register("manifest", mp)
+    write_provenance(sc, name)
     await steptime.run(sc, "deliver", _deliver(sc, name, params))
     items.keep_if_equipping(sc)  # a rebuild with the items on is kept
     sc.progress(1.0, "export done")
@@ -1655,7 +1650,16 @@ def delivery_dir(export_root: Path, project_name: str, asset_name: str, project_
     return dest
 
 
-DELIVER_KEYS = ("fbx", "fbx_unreal", "glb", "glb_godot", "manifest", "sockets", "springs", "attachments", "glb_equipped", "grip", "base_color", "normal", "metallic", "roughness", "ao", "metallic_smoothness", "orm",
+def write_provenance(sc: StageContext, name: str) -> Path:
+    """provenance.json beside manifest.json: every model the asset's steps used, from the job records (PL-51)."""
+    doc = provenance.provenance_doc(manifest_provenance(sc)["models"], sc.asset.name, name)
+    path = sc.dir / provenance.PROVENANCE_FILE
+    path.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+    sc.register("provenance", path)
+    return path
+
+
+DELIVER_KEYS = ("fbx", "glb", "glb_godot", "manifest", "provenance", "sockets", "springs", "attachments", "glb_equipped", "grip", "base_color", "normal", "metallic", "roughness", "ao", "metallic_smoothness", "orm",
                 "hair_base_color", "hair_normal", "hair_roughness", "hair_ao", "hair_flow", "hair_metallic_smoothness", "hair_orm", "readme",
                 "height", "tile_preview", "sprite_atlas", "unity_strip", "zip")
 
