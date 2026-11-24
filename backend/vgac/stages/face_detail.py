@@ -147,8 +147,12 @@ LIKENESS_MIN = 0.93  # face.likeness: good close-ups of the knight 0.976 to 0.98
 # feature finder and are not counted). At 0.93 eleven of those 15 pass; at 0.90 thirteen do. The nearest wrong face
 # scored 0.81 (P1's close-up on the T-pose man's painting: two bearded men, by eye ambiguous); no other wrong face scored
 # above 0.67 on this set. 0.90 keeps a 0.09 margin to that pair. Untested on a LoRA-made realistic face (the WP-04
-# subject's pictures are not on disk). Painted and cartoon looks keep LIKENESS_MIN; guided close-ups keep their own bar.
+# subject's pictures are not on disk). The painted look has its own bar (LIKENESS_MIN_PAINTED); cartoon keeps LIKENESS_MIN;
+# guided close-ups keep their own bar.
 LIKENESS_MIN_PHOTO = 0.90
+# Painted look (style "painted") only, WP-62b: calibrated on 13 good painted close-ups (7 passed at 0.93) against 4 painted
+# plants (0.66 highest, a 0.19 margin) and 1 real different-face close-up at 0.78. Cartoon and the other looks keep LIKENESS_MIN.
+LIKENESS_MIN_PAINTED = 0.85
 CLOSEUP_SKIN_MAX = 8.0  # skin colour against the painting (Lab, lightness half); good close-ups 1.9 to 3.8
 # Under a photographic look the hair is judged tone by tone (face.tone_distance, facecloseup hair_tone_shift): the middle colour
 # read 12 to 18 on photographic close-ups whose hair was the same two tones (auburn and grey), over the limit of 10 that was set
@@ -580,7 +584,7 @@ def inspect(glb: Path, base_color: Path, cutout: Path, out_dir: Path) -> dict[st
 
 
 def closeup_guard(glb: Path, base_color: Path, crop: Path, closeup: Path, painted_head_px: float,
-                  photo: bool = False, guided: bool = False) -> dict[str, Any]:
+                  photo: bool = False, guided: bool = False, painted: bool = False) -> dict[str, Any]:
     """Is the close-up still the painted face? (vgac/facecloseup.py) Each of the painting's eyes and its mouth is
     looked for in the close-up by block matching at the painting's own resolution; one that sits a little off is moved
     back onto the painting's place by a local warp (the head's outline stays); then likeness at the painting's
@@ -600,8 +604,8 @@ def closeup_guard(glb: Path, base_color: Path, crop: Path, closeup: Path, painte
                             LANDMARK_RESIDUAL_MAX, ALIGN_MIN)
     fixed = facecloseup.save_registered(out, Path(closeup).with_name(Path(closeup).stem + "_fixed.png"))
     out["registered"] = str(fixed) if fixed else None
-    reason = closeup_verdict(out, photo, guided)
-    return {"ok": reason is None, "reason": reason, "likeness_bar": likeness_bar(photo, guided), **out}
+    reason = closeup_verdict(out, photo, guided, painted)
+    return {"ok": reason is None, "reason": reason, "likeness_bar": likeness_bar(photo, guided, painted), **out}
 
 
 def hair_too_far(m: dict[str, Any], photo: bool, guided: bool = False) -> bool:
@@ -611,15 +615,18 @@ def hair_too_far(m: dict[str, Any], photo: bool, guided: bool = False) -> bool:
     return m.get("hair_shift") is not None and float(m["hair_shift"]) > (CLOSEUP_HAIR_MAX_GUIDED if guided else CLOSEUP_HAIR_MAX)
 
 
-def likeness_bar(photo: bool, guided: bool) -> float:
+def likeness_bar(photo: bool, guided: bool, painted: bool = False) -> float:
     """The likeness a close-up must reach: its guided bar when guided, else the photographic bar for a photographic look,
-    else the painted bar (LIKENESS_MIN). Recorded with each close-up so a run shows which bar applied."""
+    else the painted look's bar (LIKENESS_MIN_PAINTED) when painted, else LIKENESS_MIN (cartoon and the other looks).
+    Recorded with each close-up so a run shows which bar applied."""
     if guided:
         return LIKENESS_MIN_GUIDED
-    return LIKENESS_MIN_PHOTO if photo else LIKENESS_MIN
+    if photo:
+        return LIKENESS_MIN_PHOTO
+    return LIKENESS_MIN_PAINTED if painted else LIKENESS_MIN
 
 
-def closeup_verdict(m: dict[str, Any], photo: bool = False, guided: bool = False) -> str | None:
+def closeup_verdict(m: dict[str, Any], photo: bool = False, guided: bool = False, painted: bool = False) -> str | None:
     """Why a close-up is not used (a CLOSEUP_REASONS key), from closeup_guard's measures, or None when it is the same
     face. Not measurable colours do not count against it; an unmeasurable fit to the model is left to the paint step's
     whole-face fit and its ALIGN_MIN, as for the painting (the second guard measures none: the close-up is painted
@@ -627,7 +634,7 @@ def closeup_verdict(m: dict[str, Any], photo: bool = False, guided: bool = False
     measure (a painted face turned photographic) does not apply."""
     if m.get("feature_move") is None:
         return "no_features"
-    if float(m.get("likeness") or 0.0) < likeness_bar(photo, guided):
+    if float(m.get("likeness") or 0.0) < likeness_bar(photo, guided, painted):
         return "likeness"
     if m.get("feature_score_min") is not None and float(m["feature_score_min"]) < facecloseup.FEATURE_MIN:
         return "features"
@@ -879,7 +886,7 @@ def frame_own(glb: Path, base_color: Path, crop: Path, own: Path, dest: Path) ->
             "coarse_score": first["score"], "alignment": {k: total.get(k) for k in ("sx", "sy", "tx", "ty")}}
 
 
-def own_verdict(guard: dict[str, Any], photo: bool = False) -> tuple[str | None, list[str]]:
+def own_verdict(guard: dict[str, Any], photo: bool = False, painted: bool = False) -> tuple[str | None, list[str]]:
     """For the person's own close-up: (the reason it cannot be used, or None; the notes on how it differs from the
     painting). Only a picture whose features would be painted in the wrong place is refused (OWN_HARD, or no corrected
     picture); likeness, style and colours become notes."""
@@ -892,7 +899,7 @@ def own_verdict(guard: dict[str, Any], photo: bool = False) -> tuple[str | None,
         return "moved", []
     notes: list[str] = []
     # every soft reason that applies, not only the first one closeup_verdict meets
-    if float(m.get("likeness") or 1.0) < likeness_bar(photo, False):
+    if float(m.get("likeness") or 1.0) < likeness_bar(photo, False, painted):
         notes.append("likeness")
     if m.get("feature_score_min") is not None and float(m["feature_score_min"]) < facecloseup.FEATURE_MIN:
         notes.append("features")
@@ -1557,7 +1564,7 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
                               reference=reference, margin=k, loras=face_loras)
             show_closeup(sc, out_dir / name, *live_caption(n + 1, len(plan), None, False))
             guard = await asyncio.to_thread(closeup_guard, glb, Path(base), crop, cu, found["painted_head_px"], photo,
-                                            reference is not None)
+                                            reference is not None, look == "painted")
             again = not parallel and not guard["ok"] and n + 1 < len(plan) and (reference is not None or retry_wanted(guard))
             show_closeup(sc, out_dir / name, *live_caption(n + 1, len(plan), guard, again))
             kind = "guided" if reference is not None else "photo" if prompt == CLOSEUP_PHOTO_PROMPT else "plain" if prompt == CLOSEUP_PROMPT else "look"
@@ -1658,9 +1665,10 @@ async def _run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
             if not framed["ok"]:
                 closeup.update(used=False, reason=framed.get("reason") or "not_found")
             else:
-                guard = await asyncio.to_thread(closeup_guard, glb, Path(base), crop, framed_path, found["painted_head_px"], photo)
+                guard = await asyncio.to_thread(closeup_guard, glb, Path(base), crop, framed_path, found["painted_head_px"], photo,
+                                                False, look == "painted")
                 closeup.update({k: v for k, v in guard.items() if k not in ("ok", "reason")})
-                hard, notes = own_verdict(guard, photo)
+                hard, notes = own_verdict(guard, photo, look == "painted")
                 closeup["used"] = hard is None
                 closeup["reason"] = hard
                 closeup["notes"] = [CLOSEUP_REASONS[n] for n in notes]
