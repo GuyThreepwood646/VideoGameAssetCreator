@@ -23,7 +23,7 @@ import { builtFromNumber,
   type Version,
 } from '../api'
 import { Info } from '../components/Info'
-import { firstStaleStage, isRemovable, isSetAside, isStopped, laterVersions, STAGES as STAGE_LIST } from '../api'
+import { firstStaleStage, isRemovable, isSetAside, isStopped, removeVersionQuestion, STAGES as STAGE_LIST } from '../api'
 import { ResumeButton } from '../components/ui'
 import { ChecksList, Disclosure, isCheckList, MetricChips, PlainChecks, StatusBadge, SubmitTextarea, timeAgo, type FixRequest } from '../components/ui'
 import { conceptCountDefault, conceptCountLabel, preferredConceptModel, rememberConceptCount } from '../guide'
@@ -341,20 +341,10 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
     if (!ok) return
     void act(async () => {
       if (active && list.some((v) => v.id === active.id)) setActiveId(null)
-      for (const v of list) await api.deleteVersion(v.id, true)
+      for (const v of list) await api.deleteVersion(v.id)
     })
   }
-  // The question for removing one version: what goes with it (later steps built on it, changes of it).
-  const removeQuestion = (v: Version) => {
-    const later = laterVersions(asset, v)
-    const keptLater = later.filter((x) => x.selected || asset.selected?.[x.stage as StageId] === x.id)
-    const what = v.status === 'error' ? 'It failed and made no result.' : 'Its pictures and files are deleted.'
-    const steps = [...new Set(later.map((x) => `"${stagePlain(x.stage as StageId, ref?.stages.find((s) => s.id === x.stage) ?? null)}"`))]
-    const alsoLine = later.length
-      ? ` ${later.length} version${later.length > 1 ? 's' : ''} made from it (in ${steps.join(', ')}) ${later.length > 1 ? 'are' : 'is'} deleted too${keptLater.length ? `, including ${keptLater.length > 1 ? 'versions' : 'a version'} you kept` : ''}.`
-      : ''
-    return `Delete version ${versions.indexOf(v) + 1}? ${what}${alsoLine} This cannot be undone.`
-  }
+  const removeQuestion = (v: Version) => removeVersionQuestion(versions.indexOf(v) + 1, v.status === 'error')
 
   const fix = (f: FixRequest) => {
     if (f.ui) {

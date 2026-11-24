@@ -667,7 +667,8 @@ async def _trellis_build(sc: StageContext, name: str, n: int, seed: int, target_
             view = "front" if views else (sc.version.params or {}).get("input_view")
             step1 = sc.lineage_file("cutout", ("concept",))  # the step-1 picture: no lightness move when step 2 drifted from it
             metrics["lightness_match"] = await asyncio.to_thread(colourmatch.match_base_colour, Path(glb), Path(match_to),
-                                                              Path(maps["base_color"]), view=view, step1=step1)
+                                                              Path(maps["base_color"]), view=view, step1=step1,
+                                                              route=meshgeom.route_of(sc.asset.category))
         except Exception as e:  # noqa: BLE001  (not matched: the base colour stays as built)
             metrics["lightness_match"] = {"applied": False, "reason": "error", "error": str(e)[:300]}
     match = None

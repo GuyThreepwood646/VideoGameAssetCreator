@@ -1083,8 +1083,7 @@ export const api = {
   select: (vid: string) => post<Version>(`/api/versions/${vid}/select`),
   reject: (vid: string) => post<Version>(`/api/versions/${vid}/reject`),
   // Removes a version that failed, was stopped or was rejected, with its files (409 for any other).
-  // withLater: the versions made from it (later steps built on it, changes of it) go too.
-  deleteVersion: (vid: string, withLater = false) => del<DeleteResult & { deleted_ids?: string[] }>(`/api/versions/${vid}${withLater ? '?with_later=true' : ''}`),
+  deleteVersion: (vid: string) => del<DeleteResult & { deleted_ids?: string[] }>(`/api/versions/${vid}`),
   versionZipUrl: (vid: string) => `/api/versions/${vid}/zip`,
   openVersionFolder: (vid: string, where: 'files' | 'unity' = 'files') => post<{ opened: boolean; folder: string; front?: boolean | null }>(`/api/versions/${vid}/open-folder${where === 'unity' ? '?where=unity' : ''}`),
   getVersion: (vid: string) => get<Version>(`/api/versions/${vid}`),
@@ -1286,11 +1285,18 @@ export function isSetAside(v: Version): boolean {
   return v.status === 'rejected' && v.error === 'stopped and set aside'
 }
 
-// A version the person may remove: not kept and not in the queue. What was made from it goes too (laterVersions).
+// A version the person may remove: not kept and not in the queue. Only that version goes; what was made from it stays.
+
 export function isRemovable(asset: AssetSummary, v: Version): boolean {
   if (v.status === 'queued' || v.status === 'running') return false
   if (v.selected || asset.selected?.[v.stage as StageId] === v.id) return false
   return !laterVersions(asset, v).some((x) => x.status === 'queued' || x.status === 'running')
+}
+
+// The question before removing one version. Only that version goes; versions made from it stay and keep working.
+export function removeVersionQuestion(position: number, failed: boolean): string {
+  const what = failed ? 'It failed and made no result.' : 'Its pictures and files are deleted.'
+  return `Delete version ${position}? ${what} Only this version is removed; versions made from it stay. This cannot be undone.`
 }
 
 // Every version made from v, at any step (later steps built on it, and changes of it), nearest first.
