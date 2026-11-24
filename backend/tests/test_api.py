@@ -602,29 +602,63 @@ def test_remove_a_failed_version(client, fake_execute):
         assert db.get(Job, bad["job"]["id"]) is None and db.get(Job, good["job"]["id"]) is not None
     assert client.get(f"/api/versions/{bad['version']['id']}").status_code == 404
 
-    # A rejected version that another was made from stays; once that one is gone it can go too.
+    # Removing a version never removes another: a change made from it stays, standing on its own parent.
     ref = client.post(f"/api/versions/{good['version']['id']}/refine", json={"instruction": "red cloak"}).json()
     wait_job(client, ref["job"]["id"])
     child = client.post(f"/api/versions/{ref['version']['id']}/refine", json={"instruction": "x", "params": {"fail": True}}).json()
     assert wait_job(client, child["job"]["id"])["status"] == "error"
     client.post(f"/api/versions/{ref['version']['id']}/reject")
-    assert client.delete(f"/api/versions/{ref['version']['id']}").status_code == 409
+    r = client.delete(f"/api/versions/{ref['version']['id']}")
+    assert r.status_code == 200 and r.json()["deleted_ids"] == [ref["version"]["id"]]
+    assert client.get(f"/api/versions/{child['version']['id']}").json()["parent_version_id"] == good["version"]["id"]
     assert client.delete(f"/api/versions/{child['version']['id']}").status_code == 200
-    assert client.delete(f"/api/versions/{ref['version']['id']}").status_code == 200
 
-    # With with_later the version goes together with what was made from it (here a finished change of it).
-    ref2 = client.post(f"/api/versions/{good['version']['id']}/refine", json={"instruction": "blue cloak"}).json()
-    wait_job(client, ref2["job"]["id"])
-    child2 = client.post(f"/api/versions/{ref2['version']['id']}/refine", json={"instruction": "hat"}).json()
-    wait_job(client, child2["job"]["id"])
-    assert client.delete(f"/api/versions/{ref2['version']['id']}").status_code == 409
-    r = client.delete(f"/api/versions/{ref2['version']['id']}?with_later=true")
-    assert r.status_code == 200 and set(r.json()["deleted_ids"]) == {ref2["version"]["id"], child2["version"]["id"]}
-    assert client.get(f"/api/versions/{child2['version']['id']}").status_code == 404
-    # The kept version is untouched and the step still runs.
+    # The kept version is untouched.
     kept = client.get(f"/api/versions/{good['version']['id']}").json()
     assert kept["status"] == "done" and kept["selected"] is True
 
+
+def test_removing_a_version_keeps_the_ones_made_from_it(client, fake_execute):
+    """Delete the middle of a chain: only it goes; the child's linked file is copied into the child's own folder, its
+    parent link moves up, and every file it lists still exists."""
+    from vgac import library
+    from vgac.db import Asset
+
+    p, a = _project_asset(client)
+    aid = a["id"]
+    root = client.post(f"/api/assets/{aid}/stages/concept/run", json={}).json()
+    wait_job(client, root["job"]["id"])
+    mid = client.post(f"/api/versions/{root['version']['id']}/refine", json={"instruction": "red cloak"}).json()
+    wait_job(client, mid["job"]["id"])
+    kid = client.post(f"/api/versions/{mid['version']['id']}/refine", json={"instruction": "hat"}).json()
+    wait_job(client, kid["job"]["id"])
+    mid_id, kid_id = mid["version"]["id"], kid["version"]["id"]
+    client.post(f"/api/versions/{mid_id}/reject")
+    with session_factory()() as db:
+        a_row = db.get(Asset, aid)
+        mid_dir = library.version_dir(a_row, db.get(Version, mid_id), create=False)
+        kid_row = db.get(Version, kid_id)
+        mid_file = next(mid_dir.iterdir())
+        assert mid_file.is_file()
+        files = kid_row.files
+        files["linked"] = library.rel_path(mid_file)  # a link into the middle version's folder, as clean-up and rig versions keep
+        kid_row.files = files
+        db.commit()
+
+    r = client.delete(f"/api/versions/{mid_id}")
+    assert r.status_code == 200 and r.json()["deleted_ids"] == [mid_id]
+    assert not mid_dir.exists()
+    kid_now = client.get(f"/api/versions/{kid_id}").json()
+    assert kid_now["parent_version_id"] == root["version"]["id"]
+    with session_factory()() as db:
+        kid_row = db.get(Version, kid_id)
+        own = library.version_dir(db.get(Asset, aid), kid_row, create=False).resolve()
+        assert kid_row.files["linked"]
+        assert library.abs_path(kid_row.files["linked"]).is_file()
+        assert library.abs_path(kid_row.files["linked"]).relative_to(own)
+        for rel in kid_row.files.values():
+            assert library.abs_path(rel).is_file()
+    assert client.get(f"/api/versions/{root['version']['id']}").status_code == 200
 
 
 def test_version_zip_and_open_folder(client, fake_execute, monkeypatch):

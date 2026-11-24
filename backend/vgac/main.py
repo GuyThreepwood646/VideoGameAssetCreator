@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -1118,41 +1119,77 @@ def reject_version(vid: str, db: Session = Depends(get_session)) -> dict[str, An
 
 
 @app.delete("/api/versions/{vid}")
-def delete_version(vid: str, with_later: bool = False, db: Session = Depends(get_session)) -> dict[str, Any]:
-    """Remove a version with its files and its job log lines. A finished kept version, or one still in the queue, stays
-    (409). A stopped or failed version goes even if an older row still marks it kept. When other versions were made
-    from it (a later step built on it, or a change of it), they go too only with with_later=true; without it the
-    answer is 409 and says how many."""
+def delete_version(vid: str, db: Session = Depends(get_session)) -> dict[str, Any]:
+    """Remove one version with its files and its job log lines, and nothing else. A finished kept version, or one
+    still in the queue, stays (409). A stopped or failed version goes even if an older row still marks it kept.
+    Versions made from it stay and stand on their own: a file of theirs that points into this version's folder is
+    copied into their own folder first, and their parent link moves up to this version's parent."""
     v = _version(db, vid)
     if v.selected and not (is_stopped(v) or v.status == "error"):
         raise HTTPException(409, "this version is kept; keep another version first, or reject it")
-    # The version and everything made from it, at any step, children before their parents.
-    tree: list[Version] = []
-    todo = [v]
-    while todo:
-        cur = todo.pop()
-        tree.append(cur)
-        todo.extend(db.scalars(select(Version).where(Version.parent_version_id == cur.id)).all())
-    later = tree[1:]
-    if later and not with_later:
-        raise HTTPException(409, f"{len(later)} other version(s) were made from this one; remove them too to go on")
-    ids = [x.id for x in tree]
-    if any(x.status in ("queued", "running") for x in tree):
-        raise HTTPException(409, "this version or one made from it is still in the queue; stop it first")
-    jobs = db.scalars(select(Job).where(Job.version_id.in_(ids))).all()
+    if v.status in ("queued", "running"):
+        raise HTTPException(409, "this version is still in the queue; stop it first")
+    jobs = db.scalars(select(Job).where(Job.version_id == v.id)).all()
     if any(j.status in ("queued", "running") for j in jobs):
-        raise HTTPException(409, "this version or one made from it still has work in the queue; stop it first")
+        raise HTTPException(409, "this version still has work in the queue; stop it first")
     a = _asset(db, v.asset_id)
-    folders = [library.version_dir(a, x, create=False) for x in tree]
+    others = db.scalars(select(Version).where(Version.asset_id == v.asset_id, Version.id != v.id)).all()
+    if any(x.status in ("queued", "running") and (x.parent_version_id == v.id or _links_into(x, a, v)) for x in others):
+        raise HTTPException(409, "a version made from this one is still in the queue; stop it first")
+    folder = library.version_dir(a, v, create=False)
+    for x in others:
+        _take_over_files(x, a, v, folder)
+        if x.parent_version_id == v.id:
+            x.parent_version_id = v.parent_version_id
     for j in jobs:
         db.delete(j)
-    for x in reversed(tree):
-        db.delete(x)
-        db.flush()
+    db.flush()
+    db.delete(v)
     db.commit()
-    for f in folders:
-        library.remove_tree(f)
-    return {"ok": True, "deleted": vid, "deleted_ids": ids}
+    library.remove_tree(folder)
+    return {"ok": True, "deleted": vid, "deleted_ids": [vid]}
+
+
+def _links_into(x: Version, a: Asset, gone: Version) -> bool:
+    """True when a file of version x lies inside the folder of version `gone`."""
+    folder = library.version_dir(a, gone, create=False).resolve()
+    for rel in x.files.values():
+        try:
+            library.abs_path(rel).relative_to(folder)
+            return True
+        except (ValueError, TypeError, OSError):
+            continue
+    return False
+
+
+def _take_over_files(x: Version, a: Asset, gone: Version, folder: Path) -> None:
+    """Copy each file of version x that lies inside `folder` (the folder of `gone`) into x's own folder and point x
+    at the copy, so removing `gone` cannot break x. A name already taken there gets a numbered one."""
+    folder = folder.resolve()
+    own: Path | None = None
+    files = dict(x.files)
+    changed = False
+    for key, rel in files.items():
+        try:
+            src = library.abs_path(rel)
+            sub = src.relative_to(folder)
+        except (ValueError, TypeError, OSError):
+            continue
+        if not src.is_file():
+            continue
+        if own is None:
+            own = library.version_dir(a, x)
+        dest = own / sub
+        n = 1
+        while dest.exists():
+            dest = own / sub.parent / f"{sub.stem}_from_{n}{sub.suffix}"
+            n += 1
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        files[key] = library.rel_path(dest)
+        changed = True
+    if changed:
+        x.files = files
 
 
 @app.get("/api/versions/{vid}")
