@@ -1540,6 +1540,7 @@ async def judge(sc: StageContext) -> None:
         checks += quality.lod_checks({**report, "lods": report["lods_body"]}, sc.version.params.get("lods"))
     else:
         checks += quality.lod_checks(report, sc.version.params.get("lods"))
+    checks += quality.lod_outline_checks(report, sc.asset.category)
     checks += collider_checks(report, _read_json(sc.file("colliders")), sc.asset.category, sc.version.params.get("collider"))
     checks += with_vars(quality.texture_checks({k: library.version_file(sc.version, k, sc.settings) for k in TEXTURE_KEYS}, tex_limit),
                         tex_vars, "_budget")

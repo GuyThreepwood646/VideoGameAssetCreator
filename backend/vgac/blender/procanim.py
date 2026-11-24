@@ -29,7 +29,7 @@ import gait  # noqa: E402  (pure maths next to this script)
 from mathutils import Matrix, Quaternion, Vector  # noqa: E402
 
 # ---- arguments -----------------------------------------------------------------------------------------------
-_VALUE_FLAGS = ("--motion", "--clips", "--size", "--speed", "--arm-pose", "--hand-pose", "--finger-curl")
+_VALUE_FLAGS = ("--motion", "--clips", "--size", "--speed", "--arm-pose", "--hand-pose", "--finger-curl", "--grip-scale", "--attack-curl")
 _raw = _common.after_double_dash()
 _pos = [a for i, a in enumerate(_raw) if not a.startswith("--") and (i == 0 or _raw[i - 1] not in _VALUE_FLAGS)]
 src, dst = os.path.abspath(_pos[0]), os.path.abspath(_pos[1])
@@ -42,6 +42,16 @@ ARM_POSE = gait.arm_pose_choice(_common.opt("--arm-pose", None))  # close, relax
 NEUTRAL_POSE = _common.flag("--neutral-pose")  # D9: add the one-frame neutral pose clip (humanoids only)
 HAND_POSE = gait.hand_pose_choice(_common.opt("--hand-pose", None))  # open, relaxed (default) or fist (WP-76)
 FINGER_CURL = gait.finger_curl_amount(_common.opt("--finger-curl", None))  # scales the hand shape (WP-76)
+# How far the attack grip closes, 0 to 1 (1 is the grip as designed). Only the attack grip is scaled, so the resting
+# curl in every clip stays as it is; the rig step lowers it on a rig whose attack hand tears past the stretch bar.
+GRIP_SCALE = float(_common.opt("--grip-scale", "1"))
+# The finger curl on the attack clip only, as a multiple of --finger-curl (1 is no change). Lets the attack strike
+# curl less than the rest of the clips; the rig step lowers it where the attack hand tears past the stretch bar.
+ATTACK_CURL = float(_common.opt("--attack-curl", "1"))
+if not 0.0 <= ATTACK_CURL <= 1.0:
+    raise SystemExit("attack-curl must be from 0 to 1")
+if not 0.0 <= GRIP_SCALE <= 1.0:
+    raise SystemExit("grip-scale must be from 0 to 1")
 
 _common.open_glb(src)
 arms = [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]
@@ -101,6 +111,16 @@ def path_len(names):
 _req = (motion_arg or "auto").strip().lower()
 serpent_req = gait.MOTION_ALIASES.get(_req, _req) == "serpent"
 none_req = gait.MOTION_ALIASES.get(_req, _req) == "none"
+# Automatic serpent: a rig whose only leaf ends one long bone chain has no limbs. Without this rule it reads as one leg
+# with motion unknown, since serpent motion is only chosen by an explicit request. With the motion automatic and one
+# leaf, it is read as --motion serpent instead. Thresholds: at least 8 bones on the chain, and a root-to-tip path of at
+# least 2.5 rig heights. Two or more leaves never reach this rule, so no rig with limbs changes.
+auto_serpent = False
+if _req == "auto" and len(leaves) == 1 and not serpent_req:
+    _chain = chain_to_root(leaves[0])
+    _path = sum((head[a.name] - head[b.name]).length for a, b in zip(_chain, _chain[1:]))
+    auto_serpent = len(_chain) >= 8 and _path >= 2.5 * height
+serpent_req = serpent_req or auto_serpent
 
 # ---- legs ----------------------------------------------------------------------------------------------------
 # Leg chains: leaves whose head sits in the bottom 20 percent of the height, reduced to the lowest leaf per limb
@@ -326,10 +346,11 @@ if not serpent_req:
             wing_info.append({"side": "left" if side else "right", "left": side, "leaf": leaf, "bones": chain, "reach": reach})
             if flat is not None:
                 wing_info[-1]["flat"] = round(flat, 3)
-# Wings come in pairs. On a two-legged body a lone candidate is an arm that reaches out sideways (WP-17 follow-up: the
+# Wings come in pairs: a lone sideways chain is not a wing on any body. On a two-legged body a lone candidate is an
+# arm that reaches out sideways (WP-17 follow-up: the
 # boy's right arm, rest 102 degrees, was taken as a wing, so the wing moves folded that arm alone and it crossed the
 # body). Dropped here, before the wing bones are used to find the spine and arms.
-if gait.kind_for_legs(len(leg_info)) == "biped" and len(wing_info) < 2:
+if len(wing_info) < 2:
     wing_info = []
 wing_bone_set = {n for w in wing_info for n in w["bones"]}
 wings_found = len(wing_info) >= 2
@@ -388,8 +409,8 @@ if not serpent_req:
             arm_info.append({"side": "left" if side else "right", "left": side, "leaf": best[2], "bones": best[1]})
 
 # ---- motion and clips ----------------------------------------------------------------------------------------
-motion = gait.resolve_motion(motion_arg, len(leg_info))
-legacy = motion_arg is None or _req == "library"
+motion = "serpent" if auto_serpent else gait.resolve_motion(motion_arg, len(leg_info))
+legacy = (motion_arg is None or _req == "library") and not auto_serpent
 clips, unknown_clips = gait.resolve_clips(motion if motion != "unknown" else "biped", clips_arg, legacy=legacy)
 if motion == "none":
     clips = []
@@ -933,11 +954,11 @@ def hands_curl(P, shape, amount, grip=0.0):
             P.r(bs[2], fa, t2)
 
 
-def hands_pose(P, grip=0.0):
-    """The resting hand (hand_pose setting, scaled by finger_curl), blended toward a closed grip by grip (0 to 1)."""
+def hands_pose(P, grip=0.0, curl_scale=1.0):
+    """The resting hand (hand_pose setting, scaled by finger_curl and curl_scale), blended toward a closed grip by grip (0 to 1)."""
     base = HAND_SHAPES[HAND_POSE]
     shape = tuple(b + (g - b) * grip for b, g in zip(base, GRIP_SHAPE))
-    hands_curl(P, shape, FINGER_CURL, grip)
+    hands_curl(P, shape, FINGER_CURL * curl_scale, grip)
 
 
 def wing_pose(P, w, flap_deg, sweep_deg=0.0, fold=0.0, lag_curve=None):
@@ -1475,7 +1496,8 @@ def _walk_like(P, t, run):
             # A biped walk lands with a smaller, quicker heel roll, so the toes do not hang in the air after heel strike,
             # and swings on a plateau, so the foot is clear of the floor through the swing and drops just before landing.
             bw = biped and not run
-            fwd_, up_, pitch = gait.foot_path(uu, duty, S_, lift, run=run and biped, quick_strike=bw, plateau=bw)
+            fwd_, up_, pitch = gait.foot_path(uu, duty, S_, lift, run=run and biped, quick_strike=bw, plateau=bw,
+                                              late_ease=biped and not run)  # walk only: run landed harder by 2 to 20 percent with the ease (RESULTS.md)
             if not biped:
                 pitch *= 0.6
             toe_flat = 1.0 if uu < duty else 1.0 - gait.smoothstep((uu - duty) / (1.0 - duty) / 0.3)
@@ -2465,8 +2487,8 @@ def _with_hands(fn, clip):
     """A clip's pose plus the resting hand (WP-76); attack closes the hand into a grip over its strike."""
     def run(P, t):
         fn(P, t)
-        grip = gait.envelope(t, [(0.0, 0), (0.35, 0.3), (0.5, 1), (0.62, 1), (1.0, 0)]) if clip == "attack" else 0.0
-        hands_pose(P, grip)
+        grip = gait.envelope(t, [(0.0, 0), (0.35, 0.3), (0.5, 1), (0.62, 1), (1.0, 0)]) * GRIP_SCALE if clip == "attack" else 0.0
+        hands_pose(P, grip, ATTACK_CURL if clip == "attack" else 1.0)
     return run
 
 

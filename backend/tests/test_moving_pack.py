@@ -74,7 +74,7 @@ bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", use_selection=True,
 MASTER_FILES = ["crate.fbx", "crate.glb", "crate_godot.glb", "crate_unreal.fbx", "lods/crate_LOD1.glb", "lods/crate_LOD2.glb", "report.json"]
 MASTER_FIELDS = ["asset", "bones", "boundary_edges", "clips", "collider_count", "collider_mode", "collider_parts",
                  "collider_triangles_max", "collider_triangles_total", "collider_verts", "dims_m", "fbx", "fbx_unreal", "glb",
-                 "glb_godot", "glb_lods", "hair_material", "lod_ratios", "lods", "non_manifold_edges", "normal_map", "shading",
+                 "glb_godot", "glb_lods", "hair_material", "lod_outline", "lod_ratios", "lods", "non_manifold_edges", "normal_map", "shading",
                  "sockets", "unreal_collision", "uv_transfer", "uvs"]
 MASTER_LODS = {"LOD0": 588, "LOD1": 294, "LOD2": 146}
 
