@@ -119,6 +119,22 @@ def test_the_verdict_knows_the_feature_scores():
     assert "features" in fd.CLOSEUP_REASONS
 
 
+def test_the_painted_look_accepts_a_close_up_at_0_88_and_still_refuses_a_different_face():
+    """WP-62b: a good painted close-up at 0.88 was refused at the painted bar of 0.93 and is accepted at 0.85. A different
+    face (a painted plant at 0.66, a real different-face close-up at 0.78) is still refused. Cartoon keeps 0.93. On master
+    likeness_bar takes no painted argument, so this test fails there."""
+    good = {"likeness": 0.88, "feature_move": 0.01, "feature_score_min": 0.95, "eye_colour_shift": 3.0}
+    different = {"likeness": 0.78, "feature_move": 0.01, "feature_score_min": 0.95, "eye_colour_shift": 3.0}
+    plant = {"likeness": 0.6635, "feature_move": 0.01, "feature_score_min": 0.95, "eye_colour_shift": 3.0}
+    assert fd.closeup_verdict(good) == "likeness"  # the bar for a non-painted look is unchanged
+    assert fd.closeup_verdict(good, painted=True) is None
+    assert fd.closeup_verdict(different, painted=True) == "likeness"
+    assert fd.closeup_verdict(plant, painted=True) == "likeness"
+    assert fd.likeness_bar(False, False, True) == fd.LIKENESS_MIN_PAINTED == 0.85
+    assert fd.likeness_bar(False, False) == fd.LIKENESS_MIN == 0.93
+    assert fd.likeness_bar(True, False, True) == fd.LIKENESS_MIN_PHOTO == 0.90
+
+
 def test_the_likeness_bar_depends_on_the_look():
     """A photographic look passes a close-up at 0.91 (bar 0.90); a painted look refuses it (bar 0.93); guided keeps 0.88."""
     close = {"likeness": 0.91, "feature_move": 0.01, "feature_score_min": 0.95, "eye_colour_shift": 3.0}
