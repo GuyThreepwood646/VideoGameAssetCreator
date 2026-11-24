@@ -14,7 +14,7 @@ UNITY_FINGER_BONES = {f"{s} {f} {j}" for s in ("Left", "Right") for f in ("Index
 
 
 def test_the_default_cap_is_the_rig_steps_cap():
-    assert fl.DEFAULT_CAP == rig.FINGER_CAP_DEFAULT == 40.0
+    assert fl.DEFAULT_CAP == rig.FINGER_CAP_DEFAULT == 20.0
 
 
 def test_twenty_four_finger_joints_get_a_symmetric_range_of_the_cap_and_the_thumb_is_left_alone():
@@ -34,10 +34,10 @@ def test_the_document_is_what_the_importer_reads():
 
 
 def test_the_cap_comes_from_the_rigs_setting():
-    assert fl.cap_from_params({}) == 40.0 and fl.cap_from_params(None) == 40.0  # an older rig without the setting: the default
+    assert fl.cap_from_params({}) == 20.0 and fl.cap_from_params(None) == 20.0  # an older rig without the setting: the default
     assert fl.cap_from_params({"finger_cap": 55}) == 55.0
     assert fl.cap_from_params({"finger_cap": 0}) is None and fl.cap_from_params({"finger_cap": None}) is None and fl.cap_from_params({"finger_cap": False}) is None
-    assert fl.cap_from_params({"finger_cap": "x"}) == 40.0
+    assert fl.cap_from_params({"finger_cap": "x"}) == 20.0
 
 
 def _sc(tmp_path, params):

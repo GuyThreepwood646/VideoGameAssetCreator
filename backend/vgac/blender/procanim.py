@@ -29,7 +29,7 @@ import gait  # noqa: E402  (pure maths next to this script)
 from mathutils import Matrix, Quaternion, Vector  # noqa: E402
 
 # ---- arguments -----------------------------------------------------------------------------------------------
-_VALUE_FLAGS = ("--motion", "--clips", "--size", "--speed", "--arm-pose", "--hand-pose", "--finger-curl")
+_VALUE_FLAGS = ("--motion", "--clips", "--size", "--speed", "--arm-pose", "--hand-pose", "--finger-curl", "--grip-scale", "--attack-curl")
 _raw = _common.after_double_dash()
 _pos = [a for i, a in enumerate(_raw) if not a.startswith("--") and (i == 0 or _raw[i - 1] not in _VALUE_FLAGS)]
 src, dst = os.path.abspath(_pos[0]), os.path.abspath(_pos[1])
@@ -42,6 +42,16 @@ ARM_POSE = gait.arm_pose_choice(_common.opt("--arm-pose", None))  # close, relax
 NEUTRAL_POSE = _common.flag("--neutral-pose")  # D9: add the one-frame neutral pose clip (humanoids only)
 HAND_POSE = gait.hand_pose_choice(_common.opt("--hand-pose", None))  # open, relaxed (default) or fist (WP-76)
 FINGER_CURL = gait.finger_curl_amount(_common.opt("--finger-curl", None))  # scales the hand shape (WP-76)
+# How far the attack grip closes, 0 to 1 (1 is the grip as designed). Only the attack grip is scaled, so the resting
+# curl in every clip stays as it is; the rig step lowers it on a rig whose attack hand tears past the stretch bar.
+GRIP_SCALE = float(_common.opt("--grip-scale", "1"))
+# The finger curl on the attack clip only, as a multiple of --finger-curl (1 is no change). Lets the attack strike
+# curl less than the rest of the clips; the rig step lowers it where the attack hand tears past the stretch bar.
+ATTACK_CURL = float(_common.opt("--attack-curl", "1"))
+if not 0.0 <= ATTACK_CURL <= 1.0:
+    raise SystemExit("attack-curl must be from 0 to 1")
+if not 0.0 <= GRIP_SCALE <= 1.0:
+    raise SystemExit("grip-scale must be from 0 to 1")
 
 _common.open_glb(src)
 arms = [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]
@@ -944,11 +954,11 @@ def hands_curl(P, shape, amount, grip=0.0):
             P.r(bs[2], fa, t2)
 
 
-def hands_pose(P, grip=0.0):
-    """The resting hand (hand_pose setting, scaled by finger_curl), blended toward a closed grip by grip (0 to 1)."""
+def hands_pose(P, grip=0.0, curl_scale=1.0):
+    """The resting hand (hand_pose setting, scaled by finger_curl and curl_scale), blended toward a closed grip by grip (0 to 1)."""
     base = HAND_SHAPES[HAND_POSE]
     shape = tuple(b + (g - b) * grip for b, g in zip(base, GRIP_SHAPE))
-    hands_curl(P, shape, FINGER_CURL, grip)
+    hands_curl(P, shape, FINGER_CURL * curl_scale, grip)
 
 
 def wing_pose(P, w, flap_deg, sweep_deg=0.0, fold=0.0, lag_curve=None):
@@ -2477,8 +2487,8 @@ def _with_hands(fn, clip):
     """A clip's pose plus the resting hand (WP-76); attack closes the hand into a grip over its strike."""
     def run(P, t):
         fn(P, t)
-        grip = gait.envelope(t, [(0.0, 0), (0.35, 0.3), (0.5, 1), (0.62, 1), (1.0, 0)]) if clip == "attack" else 0.0
-        hands_pose(P, grip)
+        grip = gait.envelope(t, [(0.0, 0), (0.35, 0.3), (0.5, 1), (0.62, 1), (1.0, 0)]) * GRIP_SCALE if clip == "attack" else 0.0
+        hands_pose(P, grip, ATTACK_CURL if clip == "attack" else 1.0)
     return run
 
 

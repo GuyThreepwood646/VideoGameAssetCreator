@@ -91,3 +91,20 @@ def test_planted_finger_weights_on_the_forearm_move_only_hands_and_arms(tmp_path
     assert planted["hands"] == 4 and planted["arms"] == 2
     for region in ("hips", "legs", "torso"):
         assert clean.get(region, 0) == planted.get(region, 0)
+
+
+def test_stretch_on_a_forearm_edge_shows_in_arms_and_not_hands():
+    # Reverse of the finger case: edge 0 is forearm to forearm, edge 1 is finger to finger (both hands), and the
+    # stretch goes only on the forearm edge. Region names come from the bone-name rule, not typed in by hand.
+    fore = ss.region_of_bone("mixamorig:LeftForeArm")
+    finger = ss.region_of_bone("mixamorig:LeftHandIndex1")
+    assert (fore, finger) == ("arms", "hands")
+    rest = np.array([[0.0, 0, 0], [1.0, 0, 0], [5.0, 0, 0], [6.0, 0, 0]])
+    edges = np.array([[0, 1], [2, 3]])
+    regions = [ss.edge_region(fore, fore), ss.edge_region(finger, finger)]
+    stretched = rest.copy()
+    stretched[1] = [1.5, 0, 0]  # moves only the forearm edge (edge 0) to 1.5 times its rest length
+    stats = ss.edge_stats(rest, [stretched], edges, regions)
+    assert stats["arms"]["over_share"] == 1.0
+    assert "hands" in stats and stats["hands"]["over_share"] == 0.0
+    assert stats["hands"]["max_ratio"] == 1.0
