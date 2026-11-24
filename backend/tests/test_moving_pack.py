@@ -71,11 +71,11 @@ bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", use_selection=True,
 '''
 
 # master's pack.py on the plain box (2026-11-20).
-MASTER_FILES = ["crate.fbx", "crate.glb", "crate_godot.glb", "crate_unreal.fbx", "lods/crate_LOD1.glb", "lods/crate_LOD2.glb", "report.json"]
+MASTER_FILES = ["crate.fbx", "crate.glb", "crate_godot.glb", "lods/crate_LOD1.glb", "lods/crate_LOD2.glb", "report.json"]
 MASTER_FIELDS = ["asset", "bones", "boundary_edges", "clips", "collider_count", "collider_mode", "collider_parts",
-                 "collider_triangles_max", "collider_triangles_total", "collider_verts", "dims_m", "fbx", "fbx_unreal", "glb",
+                 "collider_triangles_max", "collider_triangles_total", "collider_verts", "dims_m", "fbx", "glb",
                  "glb_godot", "glb_lods", "hair_material", "lod_outline", "lod_ratios", "lods", "non_manifold_edges", "normal_map", "shading",
-                 "sockets", "unreal_collision", "uv_transfer", "uvs"]
+                 "sockets", "uv_transfer", "uvs"]
 MASTER_LODS = {"LOD0": 588, "LOD1": 294, "LOD2": 146}
 
 
@@ -127,7 +127,6 @@ def test_a_piece_under_a_pivot_stays_its_own_object_with_its_clip(tmp_path):
     assert rep["lods"] == MASTER_LODS  # the body's own levels are as without the lid
     names = {c["name"]: c["kind"] for c in rep["collider_parts"]}
     assert names.get("crate_lid_1_collider") == "part"
-    assert rep["unreal_collision"] == ["UCX_crate_00"]  # a moving hull is not static collision
     doc = _gltf(out / "crate.glb")
     nodes = {n["name"]: n for n in doc["nodes"]}
     assert {"lid_1_Pivot", "lid_1", "crate_lid_1", "crate"} <= set(nodes)

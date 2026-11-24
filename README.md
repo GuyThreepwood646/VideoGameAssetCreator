@@ -27,7 +27,7 @@ What you get for each asset:
 
 | | |
 |---|---|
-| **3D files** | FBX (Unity, Unreal, Godot), GLB (web, Blender) and a ready Unity prefab |
+| **3D files** | FBX (Unity, Godot), GLB (web, Blender) and a ready Unity prefab |
 | **Textures** | Colour, bumps, shadowing, metal and shine maps |
 | **Game parts** | Real-world size, lower-detail copies for distance (LODs), a collision shape |
 | **Movement** | A skeleton, idle and walk moves, plus a library of 46 shared human moves for humanoids |
