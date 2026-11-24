@@ -189,6 +189,26 @@ BACK_MIN_TURN = 120.0
 # --- image helpers ----------------------------------------------------------------------------------------------
 
 
+def _sample(img: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """face.sample (bilinear, centres at +0.5, clamped) with the same arithmetic, the four taps read with one flat gather
+    each."""
+    h, w = img.shape[:2]
+    fx = np.clip(x - 0.5, 0, w - 1)
+    fy = np.clip(y - 0.5, 0, h - 1)
+    x0 = np.floor(fx).astype(int)
+    y0 = np.floor(fy).astype(int)
+    x1 = np.minimum(x0 + 1, w - 1)
+    y1 = np.minimum(y0 + 1, h - 1)
+    ax = (fx - x0)[..., None]
+    ay = (fy - y0)[..., None]
+    flat = img.reshape(h * w, -1)
+    shp = (*x0.shape, flat.shape[1])
+    r0, r1 = y0 * w, y1 * w
+    top = flat.take(r0 + x0, axis=0).reshape(shp) * (1 - ax) + flat.take(r0 + x1, axis=0).reshape(shp) * ax
+    bot = flat.take(r1 + x0, axis=0).reshape(shp) * (1 - ax) + flat.take(r1 + x1, axis=0).reshape(shp) * ax
+    return top * (1 - ay) + bot * ay
+
+
 def catmull(img: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """Bicubic (Catmull-Rom) sample of img (H,W,c) at pixel coordinates (centres at +0.5), edges clamped."""
     h, w = img.shape[:2]
@@ -201,14 +221,24 @@ def catmull(img: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         return [(-t3 + 2 * t2 - t) / 2, (3 * t3 - 5 * t2 + 2) / 2, (-3 * t3 + 4 * t2 + t) / 2, (t3 - t2) / 2]
 
     wx, wy = wts(tx), wts(ty)
-    out: Any = 0.0
+    # the same sums in the same order as one fancy index per tap, with one flat gather per tap and the sums made in place
+    flat = img.reshape(h * w, -1)
+    cols = [np.clip(x0 + i - 1, 0, w - 1) for i in range(4)]
+    out: Any = None
     for j in range(4):
-        yy = np.clip(y0 + j - 1, 0, h - 1)
-        row: Any = 0.0
+        base = np.clip(y0 + j - 1, 0, h - 1) * w
+        row: Any = None
         for i in range(4):
-            xx = np.clip(x0 + i - 1, 0, w - 1)
-            row = row + wx[i] * img[yy, xx]
-        out = out + wy[j] * row
+            term = np.multiply(wx[i], flat.take(base + cols[i], axis=0).reshape(*x0.shape, -1))
+            if row is None:
+                row = term
+            else:
+                row += term
+        row *= wy[j]
+        if out is None:
+            out = row
+        else:
+            out += row
     return out
 
 
@@ -353,7 +383,7 @@ def render_colour(ras: Raster, tex: np.ndarray, bg: float = BG) -> np.ndarray:
     T = tex.shape[0]
     img = np.full(ras.mask.shape + (3,), bg)
     uv = ras.uv[ras.mask] * T
-    img[ras.mask] = face.sample(tex, uv[:, 0], uv[:, 1])
+    img[ras.mask] = _sample(tex, uv[:, 0], uv[:, 1])
     return img
 
 
@@ -427,7 +457,7 @@ def sim_matrix(s: float, rot: float, tx: float, ty: float, n: int) -> np.ndarray
 
 def warp_mask(pic: np.ndarray, M: np.ndarray, n: int) -> np.ndarray:
     q = M @ _grid(n)
-    return face.sample(pic[..., None], q[0].reshape(n, n), q[1].reshape(n, n))[..., 0]
+    return _sample(pic[..., None], q[0].reshape(n, n), q[1].reshape(n, n))[..., 0]
 
 
 def iou(a: np.ndarray, b: np.ndarray) -> float:
@@ -456,7 +486,7 @@ def iou_warped(pm: np.ndarray, support: tuple[int, int, int, int] | None, M: np.
     ys, xs = np.mgrid[dy0:dy1, dx0:dx1] + 0.5
     qx = M[0, 0] * xs + M[0, 1] * ys + M[0, 2]
     qy = M[1, 0] * xs + M[1, 1] * ys + M[1, 2]
-    a = face.sample(pm[..., None], qx, qy)[..., 0] > 0.5
+    a = _sample(pm[..., None], qx, qy)[..., 0] > 0.5
     inter = int((a & rm[dy0:dy1, dx0:dx1]).sum())
     return float(inter) / float(max(int(a.sum()) + rsum - inter, 1))
 
@@ -531,12 +561,35 @@ def _avg(a: np.ndarray) -> np.ndarray:
     return (p[:-2, 1:-1] + p[2:, 1:-1] + p[1:-1, :-2] + p[1:-1, 2:]) / 4.0
 
 
+def _avg_buf(a: np.ndarray, p: np.ndarray) -> np.ndarray:
+    """_avg with a caller-owned padded buffer p (h+2, w+2): the same sums in the same order, no pad call."""
+    p[1:-1, 1:-1] = a
+    p[0, 1:-1] = a[0]
+    p[-1, 1:-1] = a[-1]
+    p[:, 0] = p[:, 1]
+    p[:, -1] = p[:, -2]
+    return (p[:-2, 1:-1] + p[2:, 1:-1] + p[1:-1, :-2] + p[1:-1, 2:]) / 4.0
+
+
 def _hs_update(gx, gy, it, ubar, vbar, a2):  # noqa: ANN001
     sxx, sxy, syy = (gx * gx).sum(-1), (gx * gy).sum(-1), (gy * gy).sum(-1)
     b1 = a2 * ubar - (gx * it).sum(-1)
     b2 = a2 * vbar - (gy * it).sum(-1)
     det = (sxx + a2) * (syy + a2) - sxy * sxy
     return ((syy + a2) * b1 - sxy * b2) / det, ((sxx + a2) * b2 - sxy * b1) / det
+
+
+def _hs_terms(gx, gy, it, a2):  # noqa: ANN001
+    """What _hs_update computes from the gradients alone: the same arrays, made once for all the iterations."""
+    sxx, sxy, syy = (gx * gx).sum(-1), (gx * gy).sum(-1), (gy * gy).sum(-1)
+    return sxx + a2, syy + a2, sxy, (gx * it).sum(-1), (gy * it).sum(-1), (sxx + a2) * (syy + a2) - sxy * sxy
+
+
+def _hs_step(terms, ubar, vbar, a2):  # noqa: ANN001
+    sxxa, syya, sxy, gxit, gyit, det = terms
+    b1 = a2 * ubar - gxit
+    b2 = a2 * vbar - gyit
+    return (syya * b1 - sxy * b2) / det, (sxxa * b2 - sxy * b1) / det
 
 
 def structure_channels(img: np.ndarray, mask: np.ndarray, s: float) -> np.ndarray:
@@ -568,14 +621,16 @@ def hs_flow(ref: np.ndarray, mov: np.ndarray, region: np.ndarray, max_px: float,
         Y, X = np.mgrid[0:h, 0:w] + 0.5
         a2 = alpha ** 2
         for _outer in range(3):
-            mw = face.sample(m, X + u[..., 0], Y + u[..., 1])
+            mw = _sample(m, X + u[..., 0], Y + u[..., 1])
             gx, gy = np.zeros_like(mw), np.zeros_like(mw)
             for c in range(mw.shape[2]):
                 gx[..., c], gy[..., c] = _grad(mw[..., c])
             it = mw - r
             du, dv = np.zeros((h, w)), np.zeros((h, w))
+            terms = _hs_terms(gx, gy, it, a2)
+            pbuf = np.empty((h + 2, w + 2))
             for _ in range(iters):
-                du, dv = _hs_update(gx, gy, it, _avg(du), _avg(dv), a2)
+                du, dv = _hs_step(terms, _avg_buf(du, pbuf), _avg_buf(dv, pbuf), a2)
             u = u + np.stack([du, dv], -1) * reg[..., None]
             lim = max_px * (w / W)
             u = np.clip(u, -lim, lim)
@@ -715,7 +770,7 @@ def fit_view(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, alph
     ys, xs = np.mgrid[0:size, 0:size] + 0.5
     qx, qy = M[0, 0] * xs + M[0, 1] * ys + M[0, 2], M[1, 0] * xs + M[1, 1] * ys + M[1, 2]
     a_aff = catmull(pic, qx, qy)
-    al_aff = face.sample(alpha[..., None], qx, qy)[..., 0]
+    al_aff = _sample(alpha[..., None], qx, qy)[..., 0]
     rm = v.raster.mask
     v.render = render_colour(v.raster, tex)
     fn = min(FLOW_N, size)
@@ -747,7 +802,7 @@ def fit_view(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, alph
         v.info.update(feature_match_affine=fm0, feature_match_flow=fm1, flow_fold_scale=round(fold, 3))
         if fm1 >= fm0 - 0.005:
             flow_used, a_use = True, a_flow
-            al_use = face.sample(alpha[..., None], qx2, qy2)[..., 0]
+            al_use = _sample(alpha[..., None], qx2, qy2)[..., 0]
     v.info["flow_used"] = flow_used
     v.pic_aligned, v.pic_affine, v.alpha_img = a_use, a_aff, al_use
     v.valid = rm & (al_use > 0.5)
@@ -929,10 +984,10 @@ def project_view(atlas: Atlas, v: View, size: int | None = None, pitch_m: float 
     tol = 2.5 * (cam.scale / size) / np.maximum(np.abs(cosv), 0.15)
     inb = (sp[:, 0] >= 0) & (sp[:, 0] < size) & (sp[:, 1] >= 0) & (sp[:, 1] < size)
     visible = inb & (sd <= v.raster.z[yi, xi] + tol) & (v.raster.fcos[yi, xi] > 0.05)
-    f0 = face.sample(v.feather0[..., None], sp[:, 0], sp[:, 1])[:, 0]
-    f1 = face.sample(v.feather[..., None], sp[:, 0], sp[:, 1])[:, 0]
-    ga = face.sample(v.gate_ag[..., None].astype(np.float64), sp[:, 0], sp[:, 1])[:, 0]
-    gf = face.sample(v.gate_fs[..., None].astype(np.float64), sp[:, 0], sp[:, 1])[:, 0]
+    f0 = _sample(v.feather0[..., None], sp[:, 0], sp[:, 1])[:, 0]
+    f1 = _sample(v.feather[..., None], sp[:, 0], sp[:, 1])[:, 0]
+    ga = _sample(v.gate_ag[..., None].astype(np.float64), sp[:, 0], sp[:, 1])[:, 0]
+    gf = _sample(v.gate_fs[..., None].astype(np.float64), sp[:, 0], sp[:, 1])[:, 0]
     foot = v.pic_px_m / np.maximum(cosv, 0.05) / pitch_m
     st = 1.0 - face.smoothstep(STRETCH[0], STRETCH[1], foot) if GATES.get("stretch") else np.ones_like(foot)
     fd = np.clip(f1 / np.maximum(f0, 1e-6), 0.0, 1.0)
@@ -941,7 +996,7 @@ def project_view(atlas: Atlas, v: View, size: int | None = None, pitch_m: float 
         base = base * face.smoothstep(HEAD_FACING[0], HEAD_FACING[1], cosv)
     zi = getattr(v, "zone_img", None)  # the head view: the head above the neck only
     if zi is not None:
-        base = base * face.sample(zi[..., None], sp[:, 0], sp[:, 1])[:, 0]
+        base = base * _sample(zi[..., None], sp[:, 0], sp[:, 1])[:, 0]
     zt = getattr(atlas, "zone", None)
     fz = (1.0 - zt["face"]) if (zt is not None and v.name in OFF_FACE_VIEWS) else np.ones_like(base)
     w = base * fd * st * ga * gf * fz
@@ -960,7 +1015,7 @@ def project_view(atlas: Atlas, v: View, size: int | None = None, pitch_m: float 
         # as the neck fade does, and not on the cheeks, where a head view's weight is low but its placement is right.
         cover = f0 * visible * fd * st * face.smoothstep(HEAD_FACING[0], HEAD_FACING[1], cosv)
         if zi is not None:
-            cover = cover * face.sample(zi[..., None], sp[:, 0], sp[:, 1])[:, 0]
+            cover = cover * _sample(zi[..., None], sp[:, 0], sp[:, 1])[:, 0]
         ck = np.flatnonzero(cover > 1e-3)
         out["cover_sel"], out["cover"] = ck, np.clip(cover[ck], 0.0, 1.0)
     return out
@@ -1046,6 +1101,28 @@ def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndar
     return num / np.maximum(den, 1e-12)[:, None], face.smoothstep(ALPHA_RAMP[0], ALPHA_RAMP[1], wmax), dom
 
 
+def _trilinear_all(grid: np.ndarray, f: np.ndarray) -> np.ndarray:
+    """face._trilinear of every channel of grid (X, Y, Z, c) at once: the corner indices and weights are made once and
+    each channel gets the same arithmetic as its own call. Returns (n, c)."""
+    dims = np.array(grid.shape[:3])
+    f = np.clip(f, 0, dims - 1)
+    i0 = np.floor(f).astype(int)
+    i1 = np.minimum(i0 + 1, dims - 1)
+    t = f - i0
+    ny, nz = int(dims[1]), int(dims[2])
+    flat = grid.reshape(-1, grid.shape[3])
+    out: Any = 0.0
+    for dx in (0, 1):
+        for dy in (0, 1):
+            for dz in (0, 1):
+                ix = i1[:, 0] if dx else i0[:, 0]
+                iy = i1[:, 1] if dy else i0[:, 1]
+                iz = i1[:, 2] if dz else i0[:, 2]
+                wgt = (t[:, 0] if dx else 1 - t[:, 0]) * (t[:, 1] if dy else 1 - t[:, 1]) * (t[:, 2] if dz else 1 - t[:, 2])
+                out = out + flat.take((ix * ny + iy) * nz + iz, axis=0) * wgt[:, None]
+    return out
+
+
 def surface_correction(atlas: Atlas, delta: np.ndarray, alpha: np.ndarray, cell: float = 0.012, passes: int = 3,
                        r: int = 2) -> tuple[np.ndarray, np.ndarray]:
     """A smooth, surface-following version of delta (the colour offset of the painted texels), carried to every texel and
@@ -1066,8 +1143,8 @@ def surface_correction(atlas: Atlas, delta: np.ndarray, alpha: np.ndarray, cell:
     g = sd / np.maximum(sa, 1e-9)[..., None]
     frac = sa / np.maximum(sn, 1e-9)
     fc = f - 0.5
-    corr = np.stack([face._trilinear(g[..., c], fc) for c in range(3)], -1)
-    return corr, np.clip(face.smoothstep(0.03, 0.4, face._trilinear(frac, fc)), 0, 1)
+    both = _trilinear_all(np.concatenate([g, frac[..., None]], -1), fc)
+    return both[:, :3], np.clip(face.smoothstep(0.03, 0.4, both[:, 3]), 0, 1)
 
 
 def skin_tone(atlas: Atlas, kept: np.ndarray, paint: np.ndarray, alpha: np.ndarray, zt: dict[str, np.ndarray]) -> np.ndarray:
@@ -1112,8 +1189,9 @@ def _smooth_mean(atlas: Atlas, vals: np.ndarray, wt: np.ndarray, cell: float, pa
         sv = [face._box3(x, 1) for x in sv]
         sw = face._box3(sw, 1)
     fc = f - 0.5
-    w = face._trilinear(sw, fc)
-    mean = np.stack([face._trilinear(x, fc) for x in sv], -1) / np.maximum(w, 1e-12)[:, None]
+    tri = _trilinear_all(np.stack([*sv, sw], -1), fc)
+    w = tri[:, 3]
+    mean = tri[:, :3] / np.maximum(w, 1e-12)[:, None]
     return mean, w
 
 
@@ -1752,11 +1830,11 @@ def zone_texels(atlas: Atlas, zone: dict[str, Any] | None) -> dict[str, np.ndarr
     inb = (sp[:, 0] >= 0) & (sp[:, 0] < S) & (sp[:, 1] >= 0) & (sp[:, 1] < S)
     z = zone["z"][yi, xi]
     vis = inb & np.isfinite(z) & (sd <= np.where(np.isfinite(z), z, -np.inf) + tol) & (cosv > 0.0)
-    w = face.sample(zone["weight"][..., None], sp[:, 0], sp[:, 1])[:, 0] * vis
+    w = _sample(zone["weight"][..., None], sp[:, 0], sp[:, 1])[:, 0] * vis
     keep = zone["keep"][yi, xi] & vis if zone.get("keep") is not None else np.zeros(w.shape, dtype=bool)
     out = {"face": np.clip(w, 0.0, 1.0), "keep": keep}
     if zone.get("fill") is not None:
-        out["fill"] = np.clip(face.sample(zone["fill"][..., None], sp[:, 0], sp[:, 1])[:, 0] * vis, 0.0, 1.0)
+        out["fill"] = np.clip(_sample(zone["fill"][..., None], sp[:, 0], sp[:, 1])[:, 0] * vis, 0.0, 1.0)
     if zone.get("chin") is not None:
         out["under"] = chin_underside(atlas, zone["chin"])
     if zone.get("neck") is not None:  # above the head views' neck fade: there they keep the body fits off (blend)
@@ -2385,7 +2463,8 @@ def _pose_fit(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared"
               turns: list[float] | None = None, tilts: list[float] | None = None,
               lenses: list[float | None] | None = None, prior: float | None = None, window: float = PRIOR_DEG,
               keep: int = 3, turn_limit: tuple[float, float] | None = None, breadth: int = 1,
-              half_turn_ref: float | None = None) -> tuple["View | None", dict[str, Any]]:
+              half_turn_ref: float | None = None,
+              outline_cache: dict | None = None) -> tuple["View | None", dict[str, Any]]:
     """WP-61: the pose search (turn, tilt, lens) for one picture, then the D2 check, then the fit at the picked pose.
     hint: the turn the view is meant to be seen from; the search covers turns within POSE_HINT_DEG of it (None: all turns).
     prior: the turn the picture is expected at, window: how far from it a pose still agrees (_settle_by_prior); the
@@ -2395,7 +2474,7 @@ def _pose_fit(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared"
     Returns (view, record). The view is None when the search fails outright (the caller keeps its turn-only fit, logged);
     otherwise it is ok, or refused for D2 (the reason names the rival) or for its silhouette."""
     picked = _pose_pick(mesh, tex, prepared, src, src_n, name, centre, scale, min_iou, atlas_job, log, hint, turns, tilts,
-                        lenses, prior, window, keep, turn_limit, breadth, half_turn_ref)
+                        lenses, prior, window, keep, turn_limit, breadth, half_turn_ref, outline_cache)
     return _pose_view(mesh, tex, prepared, src, src_n, name, centre, scale, size, min_iou, log, picked)
 
 
@@ -2404,7 +2483,8 @@ def _pose_pick(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared
                hint: float | None = None, turns: list[float] | None = None, tilts: list[float] | None = None,
                lenses: list[float | None] | None = None, prior: float | None = None, window: float = PRIOR_DEG,
                keep: int = 3, turn_limit: tuple[float, float] | None = None,
-               breadth: int = 1, half_turn_ref: float | None = None) -> tuple[Any, dict[str, Any], str | None]:
+               breadth: int = 1, half_turn_ref: float | None = None,
+               outline_cache: dict | None = None) -> tuple[Any, dict[str, Any], str | None]:
     """_pose_fit's choice of pose, before the picture is fitted at it at full size: (pose or None when the search failed
     outright, record, refusal reason or None). The record is ready as soon as this returns (the drawn views take the
     step 1 picture's tilt and lens from it while the picture itself is still being fitted)."""
@@ -2418,7 +2498,7 @@ def _pose_pick(mesh: dict[str, np.ndarray], tex: np.ndarray, prepared: "Prepared
         tm: dict[str, float] = {}
         poses = ps.search(mesh, alpha, centre, scale, keep=keep, turns=turns, tilts=tilts, lenses=lenses, rgb=pic, tex=tex,
                           timings=tm, turn_limit=turn_limit, keep_full=ps.KEEP_FULL * breadth,
-                          lens_top=ps.LENS_TOP * breadth)
+                          lens_top=ps.LENS_TOP * breadth, cache=outline_cache)
     except Exception as e:  # a failed search keeps the turn-only fit, and the record says so
         if log:
             log(f"view {name}: pose search failed ({e}); the turn-only fit is kept")
@@ -2532,6 +2612,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
     centre, scale = model_frame(mesh)
     outlines: dict[tuple[float, int], np.ndarray] = {}
     prepared = Prepared()  # each picture prepared once in this call
+    pose_outlines: dict[Any, Any] = {}  # the model's outline at each searched pose, shared by every picture's search in this call
 
     def fit(name: str, src: Any, yaws: list[float]) -> View:
         p_, a_ = prepared(src, pic_n)
@@ -2548,7 +2629,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
             pv, _ = _pose_fit(mesh, tex, prepared, src, pic_n, name, centre, scale, size, bar, atlas_job, log,
                               turns=wide if front_known else None, prior=prior,
                               breadth=_breadth(wide if front_known else ps_turns()) if objects else 1,
-                              half_turn_ref=float(head_yaw) if objects else None)
+                              half_turn_ref=float(head_yaw) if objects else None, outline_cache=pose_outlines)
             if pv is not None and (pv.ok or not _silhouette_refused(pv)):
                 return pv
             return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, bar, log=log, outlines=outlines)
@@ -2558,7 +2639,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
             pv, _ = _pose_fit(mesh, tex, prepared, src, pic_n, name, centre, scale, size, bar, atlas_job, log, INTENDED_TURN[name],
                               tilts=[float(prec["tilt"]) + d for d in (-20.0, -10.0, 0.0, 10.0, 20.0)] if near else None,
                               lenses=[prec.get("lens")] if near else None, prior=INTENDED_TURN[name],
-                              window=DRAWN_PRIOR_DEG, keep=1)  # expected at the turn it was drawn at; best coarse pose only
+                              window=DRAWN_PRIOR_DEG, keep=1, outline_cache=pose_outlines)  # expected at the turn it was drawn at; best coarse pose only
             if pv is None:  # the search failed outright: today's turn-only fit, logged by _pose_fit
                 return fit_view(mesh, tex, p_, a_, name, yaws, centre, scale, size, bar, log=log, outlines=outlines)
             if pv.ok or not _silhouette_refused(pv):  # a D2 or expected-turn refusal stands
@@ -2616,7 +2697,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
                                        "picture", centre, scale, min_iou, atlas_job, log, None, picture_turns, None, None,
                                        None if wide_pic else picture_prior, PRIOR_DEG, 3, picture_limit,
                                        _breadth(picture_turns) if wide_pic else 1,
-                                       float(head_yaw) + picture_prior if wide_pic else None)
+                                       float(head_yaw) + picture_prior if wide_pic else None, pose_outlines)
         picture_pose_job = pool.submit(contextvars.copy_context().run, lambda: _pose_view(
             mesh, tex, prepared, picture, pic_n, "picture", centre, scale, size, min_iou, log, picture_pick_job.result()))
         jobs = {n: pool.submit(fit, n, s, y) for n, s, y in wanted}
