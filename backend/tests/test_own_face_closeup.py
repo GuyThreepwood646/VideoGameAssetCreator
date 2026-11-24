@@ -104,7 +104,7 @@ def test_your_own_close_up_guides_a_drawn_close_up_first(tmp_path, stubbed, monk
     _own(tmp_path, monkeypatch)
     guarded = []
 
-    def guard(glb_, base, crop, cu, px, photo=False, guided=False):
+    def guard(glb_, base, crop, cu, px, photo=False, guided=False, painted=False):
         guarded.append(guided)
         return {"ok": True, "reason": None, "likeness": 0.95, "feature_move": 0.003, "registered": None, "source_face_px": 459.0}
 
@@ -123,7 +123,7 @@ def test_a_refused_guided_close_up_falls_back_to_lining_up_your_own(tmp_path, st
     _own(tmp_path, monkeypatch)
     fixed = tmp_path / "face" / "fixed.png"
 
-    def guard(glb_, base, crop, cu, px, photo=False, guided=False):
+    def guard(glb_, base, crop, cu, px, photo=False, guided=False, painted=False):
         if guided:
             return {"ok": False, "reason": "likeness", "likeness": 0.8, "feature_move": 0.003, "registered": None}
         Image.new("RGB", (8, 8)).save(fixed)
@@ -208,7 +208,7 @@ def test_a_refused_guided_close_up_without_your_own_falls_back_to_the_plain_clos
     Image.new("RGB", (200, 260), (180, 140, 120)).save(guide)
     monkeypatch.setattr(fd, "compose_face_picture", lambda sc: guide)
 
-    def guard(glb_, base, crop, cu, px, photo=False, guided=False):
+    def guard(glb_, base, crop, cu, px, photo=False, guided=False, painted=False):
         if guided:
             return {"ok": False, "reason": "likeness", "likeness": 0.39, "feature_move": 0.03, "registered": None}
         return {"ok": True, "reason": None, "likeness": 0.97, "feature_move": 0.005, "registered": None, "source_face_px": 459.0}
