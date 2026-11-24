@@ -44,7 +44,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import colliders, guidance, hairmat, items, library, quality, reference, sockets, steptime
+from .. import colliders, guidance, hairmat, items, library, provenance, quality, reference, sockets, steptime
 from .. import springs as springs_mod
 from ..beauty import render_beauty, showcase_sky
 from ..db import _iso, utcnow
@@ -1633,6 +1633,7 @@ async def _export(sc: StageContext, params: dict[str, Any]) -> None:
     mp = sc.dir / "manifest.json"
     mp.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     sc.register("manifest", mp)
+    write_provenance(sc, name)
     await steptime.run(sc, "deliver", _deliver(sc, name, params))
     items.keep_if_equipping(sc)  # a rebuild with the items on is kept
     sc.progress(1.0, "export done")
@@ -1655,7 +1656,16 @@ def delivery_dir(export_root: Path, project_name: str, asset_name: str, project_
     return dest
 
 
-DELIVER_KEYS = ("fbx", "fbx_unreal", "glb", "glb_godot", "manifest", "sockets", "springs", "attachments", "glb_equipped", "grip", "base_color", "normal", "metallic", "roughness", "ao", "metallic_smoothness", "orm",
+def write_provenance(sc: StageContext, name: str) -> Path:
+    """provenance.json beside manifest.json: every model the asset's steps used, from the job records (PL-51)."""
+    doc = provenance.provenance_doc(manifest_provenance(sc)["models"], sc.asset.name, name)
+    path = sc.dir / provenance.PROVENANCE_FILE
+    path.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+    sc.register("provenance", path)
+    return path
+
+
+DELIVER_KEYS = ("fbx", "fbx_unreal", "glb", "glb_godot", "manifest", "provenance", "sockets", "springs", "attachments", "glb_equipped", "grip", "base_color", "normal", "metallic", "roughness", "ao", "metallic_smoothness", "orm",
                 "hair_base_color", "hair_normal", "hair_roughness", "hair_ao", "hair_flow", "hair_metallic_smoothness", "hair_orm", "readme",
                 "height", "tile_preview", "sprite_atlas", "unity_strip", "zip")
 

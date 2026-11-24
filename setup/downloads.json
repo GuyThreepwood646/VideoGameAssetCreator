@@ -110,7 +110,7 @@
    "save_as": "dino_v3_vit_l.safetensors",
    "publisher": true,
    "name": "DINOv3 image encoder (TRELLIS.2 companion)",
-   "licence": "See the Comfy-Org/TRELLIS.2 page",
+   "licence": "DINOv3 License (Meta), see the note in models.yaml",
    "extra": true,
    "required": true,
    "note": "The TRELLIS.2 graph loads dino_v3_vit_l.safetensors (backend/vgac/graphs/trellis.py). It is listed in models.yaml (companions), so the app's own check looks for it."

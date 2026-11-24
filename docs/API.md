@@ -104,7 +104,7 @@ Variants
 - Asset gains `base_asset_id` (string | null) and `variant_change` (string | null).
 - POST /api/assets/{aid}/variants body { "change": str, "name"?: str, "params"?: {} } -> { asset, job, version } (201).
   Creates a sibling asset in the same project (same category, style, platform; prompt = base prompt + change), copies the base's selected, finished concept version as the variant's first concept version (done, selected), and starts a concept Refine on it with the change as the instruction. 409 when the base has no finished selected concept, 400 when the change is empty.
-- The export manifest of a variant carries `variant_of {asset_id, change}`.
+- The export manifest of a variant carries `variant_of {asset_id, change}`. Every export also writes `provenance.json` beside `manifest.json` (and delivers it with the export): each model the asset's steps used, from the job records, with its version, licence, source and any companion file a used model loads (`backend/vgac/provenance.py`).
 
 Autopilot (decision D11)
 - POST /api/assets/{aid}/autopilot body { "until_stage"?: "export", "stop_on"?: "block" | "warn" | "never" } -> state. Runs the stages in order from the first without a kept result; concept makes 2 candidates and the automated metrics pick; a stage that already has finished versions but none kept is judged, not re-run (so Fix and Continue work by re-posting). Pauses on a failed check it cannot accept, errors when a job fails.
