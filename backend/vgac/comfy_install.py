@@ -48,7 +48,7 @@ from typing import Any, Callable
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import config, downloader, hardware_setup, lora_folders, setup_settings
+from . import config, downloader, hardware_setup, lora_folders, setup_settings, skintoken_fix
 from . import state_lock as state_lock_mod
 from .state_lock import state_lock
 from .downloader import DownloadError, Spec, Stopped
@@ -786,6 +786,8 @@ def step_packs(job: Install, ops: Ops, fence: Fence) -> None:
         target = cn / str(p.get("folder") or p["id"])
         guard(target, fence)
         if target.is_dir() and any(target.iterdir()):
+            if p["id"] == "skintoken":
+                _apply_skintoken_fix(job, target)   # a pack already here is checked and fixed in place (idempotent)
             continue
         job.text = f"Adding {p.get('name', p['id'])}"
         if p.get("local"):
@@ -804,7 +806,20 @@ def step_packs(job: Install, ops: Ops, fence: Fence) -> None:
         kids = [k for k in tmp.iterdir() if k.is_dir()]
         g_move(kids[0] if len(kids) == 1 else tmp, target, ops, fence)
         g_rmtree(tmp, ops, fence)
+        if p["id"] == "skintoken":
+            _apply_skintoken_fix(job, target)
         downloader.record(f"node pack {p.get('name', p['id'])}", target, "added", 0)   # the ledger says which folder is VGAC's
+
+
+def _apply_skintoken_fix(job: Install, target: Path) -> None:
+    """Applies the bone-tail fix to VGAC's own copy of the pack. A file that is not the expected copy is left alone and
+    the job says so; the install itself still completes."""
+    try:
+        if skintoken_fix.apply(target) == "applied":
+            job.text = "Fixed the SkinToken bone tails"
+    except skintoken_fix.PatchRefused as e:
+        log.warning("SkinToken bone-tail fix not applied: %s", e)
+        job.text = "SkinToken bone-tail fix not applied (the pack file is not the expected copy)"
 
 
 def step_test(job: Install, ops: Ops, fence: Fence, card_expected: bool) -> None:

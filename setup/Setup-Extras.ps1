@@ -451,6 +451,41 @@ if ($Blender -and $dl) {
 }
 
 # ======================================================================================================================
+# 3b. SkinToken's Blender path (a user environment variable for this account)
+# ======================================================================================================================
+if ($Blender) {
+    '== SkinToken: Blender path for the rigging node =='
+    'The rigging node in ComfyUI starts Blender through SKINTOKEN_BLENDER_BIN. It is set for this Windows account only, and never in a ComfyUI folder.'
+    $fbE = Find-Blender
+    $setScript = Join-Path $PSScriptRoot 'Set-SkinTokenBlender.ps1'
+    if (-not $fbE) {
+        Add-Row 'SKINTOKEN_BLENDER_BIN' 'Needs you' 'No Blender found, so the variable cannot be set.' 'Install Blender (see the Blender row), then run again with -Blender.'
+    } else {
+        $bvE = Get-BlenderVersion $fbE.Path
+        if (-not $bvE -or [int]$bvE.Groups[1].Value -lt 5) {
+            Add-Row 'SKINTOKEN_BLENDER_BIN' 'Needs you' "$($fbE.Path) reads below Blender 5 (or not at all); the variable is not set to it." 'Install Blender 5 first, then run again with -Blender.'
+        } elseif ([Environment]::GetEnvironmentVariable('SKINTOKEN_BLENDER_BIN', 'User') -eq $fbE.Path) {
+            Add-Row 'SKINTOKEN_BLENDER_BIN' 'Ready' "set for this account to $($fbE.Path)"
+        } elseif ($DryRun) {
+            Write-Host "  [dry run] would set SKINTOKEN_BLENDER_BIN to $($fbE.Path) for this account (and say that ComfyUI must be restarted)."
+            & $setScript -Exe $fbE.Path -DryRun | Out-Null
+        } elseif ($Doing) {
+            if (Ask-YesNo "  Set SKINTOKEN_BLENDER_BIN to $($fbE.Path) for this Windows account?") {
+                & $setScript -Exe $fbE.Path | ForEach-Object { Write-Host $_ }
+                if ($LASTEXITCODE -eq 0) { Add-Row 'SKINTOKEN_BLENDER_BIN' 'Ready' "set for this account to $($fbE.Path); restart ComfyUI so it reads it" }
+                else { Add-Row 'SKINTOKEN_BLENDER_BIN' 'Needs you' 'the variable could not be set (see above)' 'Set it by hand: Windows Settings, environment variables, user variables.' }
+            } else {
+                Write-Host '  [left] not set.'
+                Add-Row 'SKINTOKEN_BLENDER_BIN' 'Missing' "not set to $($fbE.Path)" 'Run with -Blender -Install (asks first); then restart ComfyUI.'
+            }
+        } else {
+            Add-Row 'SKINTOKEN_BLENDER_BIN' 'Missing' "not set to $($fbE.Path)" 'Run with -Blender -Install (asks first); then restart ComfyUI.'
+        }
+    }
+    ''
+}
+
+# ======================================================================================================================
 # 4. Animation and hair packs
 # ======================================================================================================================
 if ($Packs -and $dl) {
