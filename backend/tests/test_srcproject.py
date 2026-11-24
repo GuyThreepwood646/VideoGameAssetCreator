@@ -448,7 +448,7 @@ def test_the_refinement_stays_inside_the_turn_window(monkeypatch: pytest.MonkeyP
     beyond it (the hat's drawn views drifted about 30 degrees, past their window, in round 4)."""
     from vgac import posesearch as ps
 
-    def score(mesh, t, centre, scale, pose, tex=None):  # noqa: ANN001
+    def score(mesh, t, centre, scale, pose, tex=None, cache=None):  # noqa: ANN001
         return ps.Pose(pose[0], pose[1], pose[2], 0.9, float(pose[0]) / 100.0 - abs(pose[1]) / 100.0, {})
 
     monkeypatch.setattr(ps, "score_pose", score)
