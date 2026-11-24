@@ -34,7 +34,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from .. import declared_parts, guidance, headtris, imaging, library, limbjoins, quality, steptime
+from .. import declared_parts, grip_guard, guidance, headtris, imaging, library, limbjoins, quality, steptime
 from ..comfy import ComfyClient, ComfyError
 from ..moves import move_label
 from ..graphs.skintoken import TEMPLATES, rig_graph
@@ -963,6 +963,68 @@ def gait_finger_curl(params: dict[str, Any]) -> float:
     return gait.finger_curl_amount(params.get("finger_curl"))
 
 
+async def _grip_guard(sc: StageContext, anim_glb: Path, moves: Any, params: dict[str, Any], chosen_moves: Any,
+                      build_args) -> None:
+    """The attack-grip guard (grip_guard.py): measure the built-in attack's hands with the skin-stretch measure, and when
+    the share reaches the bar, rebuild the attack with a smaller grip until it clears the bar or the floor is reached.
+    Only built-in attacks are guarded: when the library's attack replaces it at the retarget, nothing here reaches the
+    shipped clip, so the guard does not run. Never raises; the step records what it did in hand_grip_guard."""
+    from .. import moves as moves_mod
+
+    rec: dict[str, Any] = {"bar": grip_guard.GRIP_BAR, "steps": list(grip_guard.GRIP_STEPS), "grip_scale": grip_guard.DEFAULT_SCALE}
+    t0 = time.monotonic()
+    names = None if moves is None else (list(moves) if isinstance(moves, (list, tuple)) else str(moves).split(","))
+    try:
+        if names is not None and "attack" not in names:
+            rec["skipped"] = "no attack clip in this build"
+            return
+        ok, _ = use_library(sc, params)
+        if ok and any(r.get("move") == "attack" for r in moves_mod.move_rows(sc.category, params, chosen_moves)):
+            rec["skipped"] = "the library attack replaces the built-in one"
+            return
+        work = sc.dir / "grip_guard"
+        work.mkdir(exist_ok=True)
+
+        async def hands_share(glb: Path, tag: str) -> float | None:
+            out = work / f"{tag}_stretch.json"
+            await sc.blender("skin_stretch.py", [glb, out, "--clips", "attack"], log_name=f"grip_guard_{tag}.log",
+                             timeout=sc.settings.blender_timeout_seconds)
+            hands = (json.loads(out.read_text(encoding="utf-8")).get("clips", {}).get("attack", {})
+                     .get("regions", {}).get("hands") or {})
+            return hands.get("over_share")
+
+        first = await hands_share(anim_glb, "default")
+        rec["default_share"] = first
+        trials: list[tuple[float, float | None]] = []
+        for scale in grip_guard.trial_scales(first):
+            trial = work / f"attack_{scale:g}.glb"
+            await sc.blender("procanim.py", build_args(trial, "attack", scale), log_name=f"grip_guard_build_{scale:g}.log",
+                             timeout=sc.settings.blender_timeout_seconds)
+            share = await hands_share(trial, f"attack_{scale:g}")
+            trials.append((scale, share))
+            if share is None or share < grip_guard.GRIP_BAR:
+                break  # the first step under the bar is kept; the smaller grips are not built
+        chosen, warning = grip_guard.choose(trials)
+        rec.update(trials=[{"grip_scale": s, "hands_over_share": v} for s, v in trials], grip_scale=chosen, warning=warning)
+        if chosen != grip_guard.DEFAULT_SCALE:
+            # The whole move set is rebuilt at the chosen grip; only the attack differs from the default build.
+            await sc.blender("procanim.py", build_args(anim_glb, clips_for(moves), chosen), log_name="procanim.log",
+                             timeout=sc.settings.blender_timeout_seconds)
+        sc.set_params(grip_scale=chosen)
+    except Exception as e:  # noqa: BLE001
+        rec["error"] = str(e)[:300]
+    finally:
+        rec["seconds"] = round(time.monotonic() - t0, 2)
+        sc.set_metrics(hand_grip_guard=rec)
+
+
+def clips_for(moves: Any) -> str | None:
+    """The --clips argument for the moves list the build uses (None when the build takes every clip)."""
+    if moves is None:
+        return None
+    return (",".join(moves) if isinstance(moves, (list, tuple)) else str(moves)) or "none"
+
+
 async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | None = None) -> None:
     """The moves: procedural clips per category (motion and moves: G30, G31), then for humanoids the hand-made CC0
     library clips retargeted onto the skeleton (retarget.py; clips_source auto or library), which replace the
@@ -977,21 +1039,29 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
     motion = params.get("motion") or sc.category.get("motion")
     chosen_moves = chosen_moves_of(sc.category, params)
     moves = chosen_moves if chosen_moves is not None else sc.category.get("clips")
-    args: list[Any] = [rig_glb, anim_glb, 24]
-    if motion:
-        args += ["--motion", str(motion)]
-    if moves is not None:
-        args += ["--clips", (",".join(moves) if isinstance(moves, (list, tuple)) else str(moves)) or "none"]
-    if params.get("move_size"):
-        args += ["--size", str(params["move_size"])]
-    if params.get("move_speed"):
-        args += ["--speed", str(params["move_speed"])]
+    clips_arg = (",".join(moves) if isinstance(moves, (list, tuple)) else str(moves)) if moves is not None else None
     arm_pose = gait_arm_pose(params)
-    args += ["--arm-pose", arm_pose]
     hand_pose, finger_curl = gait_hand_pose(params), gait_finger_curl(params)
-    args += ["--hand-pose", hand_pose, "--finger-curl", f"{finger_curl:g}"]  # WP-76: the resting hand in every built-in clip
-    if params.get("neutral_pose"):  # D9: one still frame of the stand-still arm angle (procanim ignores it off a humanoid)
-        args += ["--neutral-pose"]
+
+    def build_args(out_glb: Path, clips: str | None, grip: float) -> list[Any]:
+        args: list[Any] = [rig_glb, out_glb, 24]
+        if motion:
+            args += ["--motion", str(motion)]
+        if clips is not None:
+            args += ["--clips", clips or "none"]
+        if params.get("move_size"):
+            args += ["--size", str(params["move_size"])]
+        if params.get("move_speed"):
+            args += ["--speed", str(params["move_speed"])]
+        args += ["--arm-pose", arm_pose]
+        args += ["--hand-pose", hand_pose, "--finger-curl", f"{finger_curl:g}"]  # WP-76: the resting hand in every built-in clip
+        if grip != grip_guard.DEFAULT_SCALE:  # the guard's rebuild only; the default build keeps its arguments
+            args += ["--grip-scale", f"{grip:g}"]
+        if params.get("neutral_pose"):  # D9: one still frame of the stand-still arm angle (procanim ignores it off a humanoid)
+            args += ["--neutral-pose"]
+        return args
+
+    args = build_args(anim_glb, clips_arg, grip_guard.DEFAULT_SCALE)
     sc.set_params(motion=motion, moves=list(moves) if isinstance(moves, (list, tuple)) else moves, clips_source=clips_source(params),
                   idle_source=params["idle_source"], arm_pose=arm_pose, hand_pose=hand_pose, finger_curl=finger_curl)
     try:
@@ -1003,6 +1073,7 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
             # Every chosen move is then missing, so the step's clips check names them.
             sc.set_metrics(clips=[], missing_clips=list(moves) if isinstance(moves, (list, tuple)) else [])
             raise RuntimeError("the moves script stopped before writing anim.glb: " + _log_error(sc.dir / "procanim.log"))
+        await _grip_guard(sc, anim_glb, moves, params, chosen_moves, build_args)
         sc.register("anim_glb", anim_glb)
         if clips_path.is_file():
             sc.register("anim_clips", clips_path)
@@ -1210,7 +1281,7 @@ async def rig_from_donor(sc: StageContext, donor: Any, params: dict[str, Any], b
 # without folding into its neighbours or through the palm. The retarget limits each finger joint's turn to this many degrees
 # (blender/retarget.py --finger-cap). 0 turns it off. The fists and grips keep the library's own curl: clips named punch or
 # attack, and library actions Punch_*, Sword_* and Pistol_* (a held item or a punch needs a closed hand).
-FINGER_CAP_DEFAULT = 40.0
+FINGER_CAP_DEFAULT = 20.0
 FINGER_CAP_EXCEPT = ("punch", "attack", "Punch_", "Sword_", "Pistol_")
 
 
