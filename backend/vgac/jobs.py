@@ -163,12 +163,15 @@ def effective_capabilities(instance: str, settings: Settings | None = None, allo
 
 def route(stage: str, category: str, settings: Settings | None = None, disabled: Any = (),
           allowed_kinds: dict[str, Any] | None = None, default: str | None = None,
-          params: dict[str, Any] | None = None) -> str | None:
+          params: dict[str, Any] | None = None, load: dict[str, tuple[int, int] | None] | None = None) -> str | None:
     """Where a job for `stage` (or "judge") goes while the cards in `disabled` are turned off and each card may do
     only its `allowed_kinds`: the preferred instance unless it is off or not allowed that kind of work, else the
     first card that is on, allowed, and can run it (instance_capabilities), else None (nothing can take it now).
     Host stages always run on the host, and so does a rig step that will skip rigging (rig.rig_skips, from `params`):
     it needs no card. `default`: the person's default card, tried first for every step it can run.
+    `load`: per card, (work other senders hold in its engine, this app's own unfinished jobs on it), or None when
+    unknown. When the chosen card holds other senders' work and another card that could run the step has strictly
+    less in all, the step goes to that card (spread_by_load). Unknown readings and ties keep the choice.
     """
     from .stages.rig import rig_skips  # late: the stage module loads the graph and image code
 
@@ -178,16 +181,38 @@ def route(stage: str, category: str, settings: Settings | None = None, disabled:
         return HOST
     off = set(disabled or ())
     need = capability_for(stage, category)
-    if (default and default in settings.instances and default not in off and need in capabilities(default, settings)
-            and kind_allowed(default, need, allowed_kinds)):
-        return default
-    if preferred not in off and kind_allowed(preferred, need, allowed_kinds) and need in capabilities(preferred, settings):
-        return preferred
-    for name in settings.instances:
-        if (name != preferred and name not in off and kind_allowed(name, need, allowed_kinds)
-                and need in capabilities(name, settings)):
-            return name
-    return None
+
+    def can(name: str) -> bool:
+        return name not in off and kind_allowed(name, need, allowed_kinds) and need in capabilities(name, settings)
+
+    chosen: str | None = None
+    if default and default in settings.instances and can(default):
+        chosen = default
+    elif preferred in settings.instances and can(preferred):
+        chosen = preferred
+    else:
+        chosen = next((n for n in settings.instances if n != preferred and can(n)), None)
+    if chosen is not None and load and stage != "mesh":
+        chosen = spread_by_load(chosen, [n for n in settings.instances if can(n)], load)
+    return chosen
+
+
+def spread_by_load(chosen: str, candidates: list[str], load: dict[str, tuple[int, int] | None]) -> str:
+    """`chosen`, unless its engine holds work another sender put there and another candidate has strictly less waiting
+    work in all (that work running and pending, plus this app's unfinished jobs placed there); then the candidate with
+    the least (the first listed on a tie). No reading for a card, or no other work on `chosen`: unchanged. The mesh
+    step never comes here: it stays on the card the stage table names."""
+    mine = load.get(chosen)
+    if mine is None or mine[0] <= 0:
+        return chosen
+    best, best_total = chosen, mine[0] + mine[1]
+    for n in candidates:
+        got = load.get(n)
+        if n == chosen or got is None:
+            continue
+        if got[0] + got[1] < best_total:
+            best, best_total = n, got[0] + got[1]
+    return best
 
 
 def configured_card_can(capability: str, settings: Settings | None = None) -> bool:
@@ -395,6 +420,10 @@ class JobCancelled(Exception):
 # last step counts as having room. The 10 GB card had 8.8 GB free at start in the test (the desktop and drivers hold
 # the rest); the drawing model runs on it by loading in parts. Not measured below that: a guess with margin.
 LEND_MIN_ROOM_GB = 7.0
+# How often the queue reads each card's own ComfyUI queue for work other senders put there, and how old a reading may
+# be before it counts as unknown (place() then makes the choice it made before).
+LOAD_POLL_SECONDS = 5.0
+LOAD_STALE_SECONDS = 15.0
 STEP2_PREFIX = "turnaround."  # step 2's jobs, which borrow a card for their whole run
 # A card short of memory whose engine is idle is asked to let go of its models, then measured again (lend). On
 # ComfyUI 0.45 with DynamicVRAM the models an idle engine keeps loaded are not in its torch_vram figures, so
@@ -1039,6 +1068,10 @@ class JobQueue:
         self.leases: dict[str, Lease] = {}
         self._idle_task: asyncio.Task | None = None
         self._locate_task: asyncio.Task | None = None
+        # Work other senders hold in each card's engine: card -> (count, time.monotonic() of the reading). A card whose
+        # last read failed has no entry.
+        self.foreign: dict[str, tuple[int, float]] = {}
+        self._load_task: asyncio.Task | None = None
 
     def _requeue_orphans(self) -> None:
         """Jobs left 'running' by a crashed server go back to queued."""
@@ -1098,7 +1131,47 @@ class JobQueue:
         self._idle_task = asyncio.create_task(self._idle_loop(), name="vgac-engine-idle")
         if any(i.discover is not None for i in self.settings.instances.values()):
             self._locate_task = asyncio.create_task(self._locate_all(), name="vgac-engine-locate")
+        self._load_task = asyncio.create_task(self._load_loop(), name="vgac-card-load")
         _active = self
+
+    async def poll_foreign_once(self) -> None:
+        """Read every card's engine queue once, all cards at the same time, each within FOREIGN_READ_SECONDS. A card
+        that does not answer in time or at all loses its reading. Reads only; never touches an engine's queue."""
+        async def one(name: str) -> None:
+            client = self.clients.get(name)
+            try:
+                if client is None or name in self.disabled:
+                    raise LookupError(name)
+                self.foreign[name] = (await client.foreign_count(), time.monotonic())
+            except Exception:  # noqa: BLE001 - any failure means "unknown", never a stopped job
+                self.foreign.pop(name, None)
+        await asyncio.gather(*(one(n) for n in list(self.settings.instances)))
+
+    async def _load_loop(self) -> None:
+        while True:
+            try:
+                await self.poll_foreign_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                log.debug("card load poll failed", exc_info=True)
+            await asyncio.sleep(LOAD_POLL_SECONDS)
+
+    def card_load(self) -> dict[str, tuple[int, int] | None]:
+        """Per card: (work other senders hold in its engine, this app's unfinished jobs placed on it), or None when
+        no fresh reading of the engine exists."""
+        now = time.monotonic()
+        out: dict[str, tuple[int, int] | None] = {}
+        with session_factory()() as db:
+            for name in self.settings.instances:
+                got = self.foreign.get(name)
+                if got is None or now - got[1] > LOAD_STALE_SECONDS:
+                    out[name] = None
+                    continue
+                own = db.scalar(select(func.count()).select_from(Job).where(
+                    Job.instance == name, Job.status.in_(("queued", "running")))) or 0
+                out[name] = (got[0], int(own))
+        return out
 
     async def _locate_all(self) -> None:
         """At start: find each card that has `discover` (its ComfyUI may be on another port), read-only."""
@@ -1123,6 +1196,14 @@ class JobQueue:
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
         self._locate_task = None
+        if self._load_task is not None:
+            self._load_task.cancel()
+            try:
+                await self._load_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+            self._load_task = None
+        self.foreign.clear()
         if self._idle_task is not None:
             self._idle_task.cancel()
             try:
@@ -1154,6 +1235,18 @@ class JobQueue:
         off = self.unavailable() | firstrun.unusable_cards(self.settings, self.supervisor)
         target = route(stage, category, self.settings, off, self.allowed_kinds, self.default_instance, params)
         if target is not None:
+            load: dict[str, tuple[int, int] | None] = {}
+            try:
+                load = self.card_load()
+                spread = route(stage, category, self.settings, off, self.allowed_kinds, self.default_instance, params, load)
+            except Exception:  # noqa: BLE001 - a reading problem never stops a job
+                log.debug("card load not used", exc_info=True)
+                spread = target
+            if spread is not None and spread != target and target in self.settings.instances:
+                log.info("%s step sent to card %s instead of %s: %s holds other work (%s other, %s of ours), %s has %s and %s",
+                         stage, spread, target, target, load[target][0], load[target][1],  # type: ignore[index]
+                         spread, load[spread][0], load[spread][1])  # type: ignore[index]
+                return spread, None
             return target, None
         preferred = preferred_instance(stage, category, self.settings)
         return preferred, self._park_message(preferred, capability_for(stage, category))

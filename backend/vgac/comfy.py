@@ -132,6 +132,11 @@ JOB_PROMPTS: ContextVar[list[tuple["ComfyClient", str]] | None] = ContextVar("vg
 # Interrupted prompt ids are remembered (bounded) so a second withdraw of the same prompt never sends a second
 # interrupt: by then the prompt may have ended and another client's prompt may be the one running.
 _INTERRUPTED_KEEP = 1000
+# Prompt ids this app sent to any engine are remembered (bounded, one set for every client, because a client may send to
+# another card's address) so a /queue reading can tell other senders' work from the app's own.
+SENT_IDS_KEEP = 500
+SENT_IDS: dict[str, None] = {}
+FOREIGN_READ_SECONDS = 2.0
 
 
 def _queued_ids(items: Any) -> list[str]:
@@ -166,6 +171,7 @@ class ComfyClient:
         # The address each prompt was sent to: wait() keeps asking there even if the client is pointed elsewhere
         # meanwhile (a prompt exists only on the engine that took it). Clients for addresses other than base_url.
         self._prompt_url: dict[str, str] = {}
+        self.sent_ids = SENT_IDS  # shared by every client: prompt ids this app sent anywhere, oldest first (bounded)
         self._side: dict[str, tuple[httpx.AsyncClient, asyncio.AbstractEventLoop]] = {}
         self._interrupted: set[str] = set()  # prompt ids this client has interrupted (withdraw)
         # Prompts being waited on now (wait()): while above 0 the engine is working for us and its address is not
@@ -353,6 +359,9 @@ class ComfyClient:
         if not prompt_id:
             raise ComfyError(f"/prompt did not return a prompt_id: {data}")
         self._prompt_url[prompt_id] = url
+        self.sent_ids[prompt_id] = None
+        while len(self.sent_ids) > SENT_IDS_KEEP:
+            self.sent_ids.pop(next(iter(self.sent_ids)))
         sent = JOB_PROMPTS.get()
         if sent is not None:
             sent.append((self, prompt_id))
@@ -362,6 +371,17 @@ class ComfyClient:
         r = await self._client_at(self.prompt_url(prompt_id)).get(f"/history/{prompt_id}")
         r.raise_for_status()
         return r.json()
+
+    async def foreign_count(self, timeout: float = FOREIGN_READ_SECONDS) -> int:
+        """How many prompts this engine holds (running and pending) that this app did not send (a session's job).
+        A read only (GET /queue). Raises on a refused connection, a bad answer or a read over `timeout` seconds."""
+        async def read() -> dict[str, Any]:
+            r = await self._client().get("/queue", timeout=timeout)
+            r.raise_for_status()
+            return r.json()
+        state = await asyncio.wait_for(read(), timeout)
+        ids = _queued_ids(state.get("queue_running")) + _queued_ids(state.get("queue_pending"))
+        return sum(1 for i in ids if i not in self.sent_ids)
 
     async def queue_state(self) -> dict[str, Any]:
         r = await self._client().get("/queue", timeout=5.0)
