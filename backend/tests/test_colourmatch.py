@@ -284,3 +284,21 @@ def test_only_the_building_route_gets_the_roof_lift():
     assert lifted == {"environment"}
     assert all(meshgeom.route_of(c) != colourmatch.ROOF_ROUTE for c in ("humanoid", "prop_rigid", "vehicle", "foliage", "quadruped"))
     assert meshgeom.route_of(None) != colourmatch.ROOF_ROUTE
+
+
+def test_a_picture_of_the_side_is_found_when_the_front_turn_does_not_match(tmp_path):
+    # Fails on master: the turn search covered only the view's turn +/- 30 degrees and its mirror, so a picture of
+    # turn 90 was never tried for the front and the lightness was taken from the wrong side.
+    from vgac import texfidelity
+
+    glb, png, tex = _box_glb(tmp_path)
+    mesh = face.load_mesh(glb)
+    cam = texfidelity._frame_camera(mesh, 90.0, 300.0, 512)
+    r = face.render_view(mesh, tex, cam, background=0.0)
+    from PIL import Image
+
+    picture = tmp_path / "side.png"
+    Image.fromarray(np.dstack([face.to_uint8(r["image"]), (r["mask"] * 255).astype(np.uint8)])).save(picture)
+    pic, pm = texfidelity.load_picture(picture)
+    lp = colourmatch.lightness_plan(mesh, tex, pic, pm, "front")
+    assert lp["yaw"] in (90.0, 270.0)

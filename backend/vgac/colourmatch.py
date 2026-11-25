@@ -37,7 +37,10 @@ L_MIN_GAIN = 1.0      # a lightness gap smaller than this is left alone
 L_IOU_MIN = 0.5       # below this outline IoU the render is not taken to show the picture's figure
 L_SIZE = 512          # render size for the lightness stage
 L_MASK_MIN_PX = 1500  # each side's mask, after the border is left out, at L_SIZE
-L_SEARCH = (-30, -15, 0, 15, 30)  # turns tried around the view (and its mirror)
+L_COARSE = tuple(float(t) for t in range(0, 360, 45))  # coarse turns: a picture may show any side
+FINE_STEP = 15.0      # the fine turns are this far either side of each of the best coarse turns
+FINE_TOP = 2          # how many coarse turns are refined
+TURN_IOU_NEAR = 0.02  # turns whose outline fit is within this of the best are told apart by the picture's colours
 DRIFT_MAX = 4.0       # build view against step-1 picture, mean L* over each cut-out: past this the lightness stage is skipped
 ROOF_ROUTE = "buildings"  # the only route the roof lift runs for
 ROOF_UP_MIN = 0.35        # an island whose UV-area-weighted face normal points up by at least this much is a roof
@@ -139,8 +142,8 @@ def lightness_plan(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray
     """The lightness stage: the L* shift that brings the mean of the model's flat render, at the build view's turn, to
     the mean over the picture's cut-out. Means are over each side's own mask (the picture's background and the render's
     empty pixels never count), with texfidelity.BORDER_PX left out at each edge. The turn is the best outline fit among
-    L_SEARCH around the view's turn and around its mirror (ties to the view's own turn), so it is never far from the
-    side the picture shows. -> {mode: none|l_shift, shift, gap, capped, iou, yaw, render_px, picture_px,
+    L_COARSE (every 45 degrees, all round, then 15 degrees either side of the best two: a picture may show a side other than the view's own turn). Turns
+    whose outline fit is within TURN_IOU_NEAR of the best are told apart by the picture's colours (fidelity delta E). -> {mode: none|l_shift, shift, gap, capped, iou, yaw, render_px, picture_px,
     render_L, picture_L, reason}."""
     base = VIEW_TURN.get(view or "front", 0.0)
     ys, xs = np.nonzero(pic_mask)
@@ -149,16 +152,38 @@ def lightness_plan(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray
     extent = float(max(np.ptp(xs), np.ptp(ys)) + 1) * L_SIZE / max(pic.shape[:2])
     pm_sq = texfidelity._pad_square(pic_mask)
     pm_work = np.asarray(Image.fromarray((pm_sq * 255).astype(np.uint8)).resize((L_SIZE, L_SIZE), Image.BILINEAR)) >= 128
-    turns = sorted({round((t + d) % 360.0, 3) for t in (base, -base) for d in L_SEARCH})
-    best: dict[str, Any] | None = None
-    for y in turns:
+    cands: list[dict[str, Any]] = []
+    seen_turns: set[float] = set()
+
+    def probe(y: float) -> None:
+        y = round(y % 360.0, 3)
+        if y in seen_turns:
+            return
+        seen_turns.add(y)
         cam = texfidelity._frame_camera(mesh, y, extent, L_SIZE)
         r = face.render_view(mesh, tex, cam, background=0.0)
         iou = texfidelity.fit_silhouette(pm_work, r["mask"])["iou"]
-        key = (round(iou, 2), -_turn_gap(y, base))
-        if best is None or key > best["key"]:
-            best = {"key": key, "yaw": y, "iou": iou, "render": r}
-    assert best is not None
+        cands.append({"key": (round(iou, 2), -_turn_gap(y, base)), "yaw": y, "iou": iou, "render": r})
+
+    # coarse to fine: every COARSE_STEP turns, then FINE_STEP either side of the best FINE_TOP coarse turns
+    for y in L_COARSE:
+        probe(y)
+    for c in sorted(cands, key=lambda c: c["iou"], reverse=True)[:FINE_TOP]:
+        for d in (-FINE_STEP, FINE_STEP):
+            probe(c["yaw"] + d)
+    top = max(c["iou"] for c in cands)
+    near = sorted((c for c in cands if c["iou"] >= top - TURN_IOU_NEAR), key=lambda c: c["key"], reverse=True)
+    best = near[0]
+    if len(near) > 1:
+        # Turns whose outlines fit alike (a box, a symmetric prop): the picture's own colours pick the turn, as the
+        # fidelity check does, so the lightness is measured on the side the picture shows.
+        scored = []
+        for c in near[:FINE_TOP + 2]:
+            de = texfidelity._front_candidate(mesh, tex, pic, pic_mask, c["yaw"], L_SIZE, False).get("delta_e")
+            if de is not None:
+                scored.append((de, c))
+        if scored:
+            best = min(scored, key=lambda x: x[0])[1]
     rm = face.erode(best["render"]["mask"], texfidelity.BORDER_PX)
     border = max(1, int(round(texfidelity.BORDER_PX * max(pic.shape[:2]) / L_SIZE)))
     pm = face.erode(pic_mask, border)
