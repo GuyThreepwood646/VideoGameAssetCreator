@@ -17,11 +17,20 @@ public static partial class T
         RestartKeepingStopsAnythingElseTheBackendStarted();
         RestartKeepingNeverTouchesAnIdThatIsNotBelowTheBackend();
         RestartKeepingWithRealProcesses();
+        StartSwitchStopsAtWhatNeedsAPerson();
+    }
+
+    static void StartSwitchStopsAtWhatNeedsAPerson()
+    {
+        Check(UnattendedStart.Allowed(new List<string> { "screens" }), "--start goes through the screens' build");
+        Check(UnattendedStart.Allowed(new List<string>()), "and through nothing to do");
+        foreach (string s in new[] { "uv", "venv", "packages", "node" })
+            Check(!UnattendedStart.Allowed(new List<string> { s, "screens" }), "--start stops at " + s + ", which downloads and needs the person's yes");
     }
 
     static string RequestText(string id, long time, string engines)
     {
-        return "{\"id\": \"" + id + "\", \"time\": " + time + ", \"engines\": \"" + engines + "\", \"force\": true, \"keep_pids\": [101], \"restart_engines\": [\"a\", \"b\"]}";
+        return "{\"id\": \"" + id + "\", \"kind\": \"restart\", \"time\": " + time + ", \"engines\": \"" + engines + "\", \"force\": true, \"keep_pids\": [101], \"restart_engines\": [\"a\", \"b\"]}";
     }
 
     static void RestartRequestIsRead()
@@ -32,6 +41,11 @@ public static partial class T
         Check(RestartRequests.Parse(RequestText("abc", 1000, "restart")).KeepEngines == false, "engines restart is read");
         Check(RestartRequests.Parse(RequestText("abc", 1000, "maybe")) == null, "an unknown engines word is refused");
         Check(RestartRequests.Parse("{\"time\": 5}") == null, "a request with no id is refused");
+        RestartRequest q = RestartRequests.Parse("{\"id\": \"q1\", \"kind\": \"quit\", \"time\": 1000, \"force\": false}");
+        Check(q != null && q.Quit && !q.Force, "a quit request is read");
+        Check(!RestartRequests.Parse(RequestText("abc", 1000, "keep")).Quit, "a restart request is not a quit");
+        Check(RestartRequests.Parse("{\"id\": \"x\", \"kind\": \"reboot\", \"time\": 1000}") == null, "an unknown kind is refused");
+        Check(RestartRequests.Parse("{\"id\": \"x\", \"time\": 1000}") == null, "a request with no kind is refused");
         Check(RestartRequests.Parse("not json") == null, "text that is not a request is refused");
     }
 

@@ -55,6 +55,16 @@ After the app opens the starter stays in the tray (the V icon). It does what the
   them over; they are stopped with the app at Quit); "restart" stops the whole tree like the tray menu and the new backend
   starts the engines that were running. A request over a minute old, one already there at start and a repeated id are
   ignored. The backend is started with `VGAC_LAUNCHER_RESTART=1`, so one started by hand refuses the call.
+- `VGAC.exe --start` goes through the Welcome page by itself, so a start with nobody at the screen brings the backend up.
+  It does this only when the one thing pending is building the screens (which downloads nothing new). If anything else is
+  pending (the package tool, the Python, the packages, Node) it stops at the Welcome page and waits for the Start button,
+  because that button is also the person's yes to contacting those sites; the log says so.
+- Closing without a person: `POST /api/quit` (body `{"force": false}`) uses the same request file as the restart, with
+  `"kind": "quit"`, and the same rules (this computer only, one use per id, ignored after 60 seconds, refused with 409
+  while steps run or wait unless `force`). The launcher logs the id, then closes as Quit does: it stops the backend, the
+  engines the app started and itself. The backend is gone afterwards, so the caller confirms by the launcher process
+  having exited, not by the API. A launcher built before this change reads a quit request as a restart, so rebuild the
+  launcher in the same update as the backend. The whole unattended sequence is in `docs/ADVANCED.md`.
 - Taskbar badge and notifications for the app's pages (`window.vgacDesktop`: `setWork`, `notify`, `startEngine`, the same
   three calls the Electron window gave). A notification is shown only while the app window is not in front.
 - Keys: Ctrl+Q quits (asked first), Ctrl+Shift+S shows the status window, F11 makes the app window full screen and back;

@@ -1486,22 +1486,38 @@ class RestartBody(BaseModel):
     force: bool = False  # skips only the check for running or waiting steps
 
 
-@app.post("/api/restart")
-async def restart_backend(body: RestartBody, request: Request) -> dict[str, Any]:
-    """Ask the launcher to restart this backend (see vgac/restart.py). Returns before the backend stops, with the id;
-    after the restart GET /api/health `backend.restart_id` shows the same id. Loopback callers only; a browser page
-    from another origin is refused by the same check as every other changing call (_block_foreign_origins)."""
+class QuitBody(BaseModel):
+    force: bool = False  # skips only the check for running or waiting steps
+
+
+def _write_launcher_request(kind: str, engines: str, force: bool, request: Request) -> dict[str, Any]:
     host = request.client.host if request.client else ""
     if host not in ("127.0.0.1", "::1"):
-        raise HTTPException(403, "Only this computer can restart the app.")
+        raise HTTPException(403, "Only this computer can restart or close the app.")
     q = _queue()
     sup = q.supervisor
     owned = {n: sup.engines[n].owned_pid for n in q.settings.instances
              if sup is not None and n in sup.engines and sup.owned(n) and sup.engines[n].state in ("running", "starting")}
     try:
-        return restart_mod.write_request(body.engines, body.force, restart_mod.work_in_flight(q.status()), owned)
+        return restart_mod.write_request(engines, force, restart_mod.work_in_flight(q.status()), owned, kind=kind)
     except restart_mod.RestartRefused as e:
         raise HTTPException(e.status, str(e))
+
+
+@app.post("/api/restart")
+async def restart_backend(body: RestartBody, request: Request) -> dict[str, Any]:
+    """Ask the launcher to restart this backend (see vgac/restart.py). Returns before the backend stops, with the id;
+    after the restart GET /api/health `backend.restart_id` shows the same id. Loopback callers only; a browser page
+    from another origin is refused by the same check as every other changing call (_block_foreign_origins)."""
+    return _write_launcher_request("restart", body.engines, body.force, request)
+
+
+@app.post("/api/quit")
+async def quit_launcher(body: QuitBody, request: Request) -> dict[str, Any]:
+    """Ask the launcher to close the app as its Quit does: it stops this backend, the engines the app started, and itself.
+    Same guards, one-use id and 60 second life as /api/restart. The backend is gone afterwards: the caller confirms by
+    the launcher process having exited."""
+    return _write_launcher_request("quit", "keep", body.force, request)
 
 
 @app.post("/api/gpus/{instance}/stop")
