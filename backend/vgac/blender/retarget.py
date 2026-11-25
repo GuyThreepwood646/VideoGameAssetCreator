@@ -875,6 +875,36 @@ for kind, n in final:
         r["source"] = "procedural"
         rows.append(r)
 
+def _library_walk_speed(rows):
+    """The ground speed a library walk should play at on this character: the median speed of its planted toe joints
+    (`gait.planted_speed`), read from the retargeted clip as it stands on this skeleton, so a short character's shorter
+    stride gives a lower speed than the library's 1.4 m/s. Written on the row as `speed_mps` (the importer reads it for the
+    shared clip too); a clip with no stance to read gets no speed. The run is left out: its planted share is under the
+    reader's minimum on the toe joint."""
+    feet_names = []
+    for side in ("Left", "Right"):
+        for short in (side + "ToeBase", side + "Foot"):
+            if T_all.has(short):
+                feet_names.append(T_all.name_of[short])
+                break
+    height = max(p.z for p in T_all.rest_head.values()) - min(p.z for p in T_all.rest_head.values())
+    for row in rows:
+        if row.get("source") != "library" or row["name"] != "walk" or not feet_names:
+            continue
+        for tr in ad.nla_tracks:
+            tr.mute = tr.name != row["name"]
+        feet = [[] for _ in feet_names]
+        for f in range(row["frame_start"], row["frame_end"] + 1):
+            scene.frame_set(1 + f)
+            bpy.context.view_layer.update()
+            for k, b in enumerate(feet_names):
+                feet[k].append(tuple(tgt.matrix_world @ tgt.pose.bones[b].head))
+        row.update(gait.speed_row_fields(gait.planted_speed(feet, fps, height)))
+    for tr in ad.nla_tracks:
+        tr.mute = False
+
+
+_library_walk_speed(rows)
 scene.frame_start, scene.frame_end = 1, max([r["frame_end"] + 1 for r in rows] or [fps * 2])
 scene.frame_set(1)
 for o in list(scene.objects):
