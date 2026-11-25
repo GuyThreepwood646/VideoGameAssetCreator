@@ -29,7 +29,7 @@ import numpy as np
 from PIL import Image
 from sqlalchemy.orm import Session
 
-from . import imaging, library
+from . import glow, imaging, library
 from .db import Version
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -333,6 +333,10 @@ async def paint(sc: Any, params: dict[str, Any]) -> None:
         sc.register("base_color", done["base"])
         sc.register("paint_mask", mask_out)
     sc.register("glb", done["glb"])
+    em = glow.carry(library.version_file(parent, "emission", sc.settings), sc.dir / "emission.png",
+                    edits["colour"] > 0.5 if has_colour else None)  # the glow stays, except where the person painted
+    if em is not None:
+        sc.register("emission", em)
     for key, file_name in (("shine", "roughness"), ("metal", "metallic")):
         if key not in maps:
             continue
@@ -513,6 +517,9 @@ async def smooth(sc: Any, params: dict[str, Any]) -> None:
     done = await asyncio.to_thread(work)
     sc.register("base_color", done["base"])
     sc.register("glb", done["glb"])
+    em = glow.carry(library.version_file(parent, "emission", sc.settings), sc.dir / "emission.png")
+    if em is not None:
+        sc.register("emission", em)
     carried = {k: v for k, v in (parent.metrics or {}).items() if k not in _RUN_METRICS}
     metrics = {**carried, "painted": True, "painted_of": parent.id,
                "geometry_of": (parent.metrics or {}).get("geometry_of") or parent.id, "polished": strength,

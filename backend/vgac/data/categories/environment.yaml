@@ -27,6 +27,8 @@ input_view_default: quarter
 # The square-on step 1 picture against the 3D step's renders places a building's front by quarter turns
 # (facing.by_picture): a box's outline cannot tell front from back, so the outline test never settles one.
 facing_by_picture: true
+# The picture's bright, saturated areas (neon signs, lit windows) become a glow map, emission.png (vgac/glow.py).
+emission_map: true
 motion: none
 clips: []
 lod_ratios: [0.5, 0.25]
