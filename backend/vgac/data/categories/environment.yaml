@@ -39,6 +39,10 @@ pose_block: >-
 # WP-44 (standard detail pairs, bakeoff/wp44): with the rebuild off, all five pieces (cottage, arch, doorway, fence, sign)
 # came out shattered (21 to 28 percent open edges). With the rebuild on they are whole and the doorway stays open.
 remesh_default: true
+# The 3D step builds at the platform's triangle and texture budget and the clean-up step reduces to the look's budget
+# (Low-poly: 1,500 triangles, 512 px). The builder keeps thin parts (awnings, crates, window frames) at the larger size;
+# its own reduction to 1,500 crumpled them.
+build_at_platform_budget: true
 budgets:
   mobile_low: {triangles: 3000, texture: 1024}
   pc_mid: {triangles: 15000, texture: 2048}
