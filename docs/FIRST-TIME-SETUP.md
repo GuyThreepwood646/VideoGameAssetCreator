@@ -53,6 +53,7 @@ A second script does the rest of the list. Same rules as the first: the default 
 | Blender | Accepts an existing Blender 5.0 or newer (tested with 5.2.3), refuses below 5.0, and otherwise fetches 5.2.3 portable into the project's `tools` folder after asking, checking the zip against Blender's own checksum file | Not read back: see "Could not be confirmed" |
 | Animation packs | Shows the plain description of each Quaternius pack. You download the zip (itch.io needs a click-through) and give the helper its path (`-Ual1Zip`, `-Ual2Zip`, or it asks); it unpacks into `data/animations/ual1` or `ual2`, keeping the folder names inside the zip | Pages: quaternius.itch.io, linked from quaternius.com |
 | Hair packs | A pick list with the pack descriptions; the choice is written to `library/hair-packs.json`. Then it gets the packs you kept (the two MakeHuman zips by direct link after asking; the Quaternius zip you download yourself and give with `-QuaterniusZip`), unpacks them into `runtime/hairpacks` and builds the hair library into `library/hairlib` (needs Blender 5 and the backend venv), checks it with `tools/hairlib_verify.py` and swaps it in. Safe to run again: a pack already unpacked or a library already built is skipped. `-HairPacks id,id` picks without asking | See "Hair packs" below |
+| SkinToken's Blender path | Sets the user setting `SKINTOKEN_BLENDER_BIN` to the Blender it found (5.0 or newer), for this Windows account only (`setup\Set-SkinTokenBlender.ps1`, run from the SkinToken part of `Setup-Extras.ps1`). Restart ComfyUI after it changes |
 | Settings | Writes proposed copies `backend/config.proposed.yaml`, `desktop/config.proposed.json`, `runtime/start-comfy-b.proposed.ps1` and `runtime/start-comfy-a.proposed.ps1` from what it finds (project folder, cards, `-ComfyRoot` and `-ComfyInstall`, Blender 5.x, Unity, input and output folders, animation pack paths). Never edits or overwrites an existing file, an earlier proposed one included. A key whose value already fits this PC is left out | One card: engine B only, `stage_instances`, `material_stage_instances` and `judge_instance` all on b, and no engine A start script |
 
 Could not be confirmed (so left to you, or guarded):
@@ -159,8 +160,9 @@ preferred the other card runs on it, one graphics step at a time.
 What a one-card PC has to get right, not built or tested in this round:
 
 1. One ComfyUI only, and it should be the one the app calls B (port 8189, started from its `engine` settings).
-   Rigging runs on B only: the SkinToken node finds Blender through `SKINTOKEN_BLENDER_BIN`, which the backend sets.
-   A rig job waits for B instead of moving to A.
+   Rigging prefers B; card A takes a rig only when B is off. The SkinToken node finds Blender through
+   `SKINTOKEN_BLENDER_BIN`: the backend sets it on each ComfyUI it starts itself, but a ComfyUI started by someone else
+   needs it set (the helper's SkinToken part does this; restart that ComfyUI after it changes).
 2. In the app, switch off the card you do not have. Pictures and the 3D model then use the one card.
 3. Memory: a 10 GB card ran the pictures and rigging on the author's PC; a 12 GB card ran the 3D model. Whether one
    10 GB card can run the 3D model is not recorded anywhere in the repository. Treat it as unknown.

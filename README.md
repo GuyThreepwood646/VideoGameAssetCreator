@@ -108,6 +108,8 @@ powershell -ExecutionPolicy Bypass -File setup\Setup-Extras.ps1 -Install -ComfyR
 
 `-ComfyRoot` is your ComfyUI folder: the one that holds `models` and `custom_nodes`.
 
+The rigging node (SkinToken) finds Blender through the user setting `SKINTOKEN_BLENDER_BIN`. The helper sets it to the Blender it found (`setup\Set-SkinTokenBlender.ps1`, run from the helper's SkinToken part). Restart ComfyUI after it changes.
+
 > A few models have their own terms (Hunyuan3D, Anima, Gemma). The helper shows them and asks you to type a confirmation; it never accepts terms for you.
 
 ### Step 6. Point the app at your tools
@@ -193,7 +195,7 @@ When the last step finishes, the page shows **Your asset is ready** with a movin
 <p align="center"><img src="docs/images/step6-finished.png" alt="The finished asset: real size, Unity checks, moves, sockets, hair and files" width="100%"></p>
 
 - Click **FBX** or **GLB** to download, or **Download FBX** at the top of any step.
-- Every finished asset is also saved to `exports\<project>\<asset>\` inside the project folder, with its textures and a `manifest.json`.
+- Every finished asset is also saved to `exports\<project>\<asset>\` inside the project folder, with its textures, a `manifest.json`, and a `provenance.json` that lists every AI model the steps used, with its version, licence and source. A `README.txt` is added when the asset has hair or spring bones.
 - The **Gallery** page lists every finished asset, with a **Copy** button for its folder.
 
 <p align="center"><img src="docs/images/gallery.png" alt="The Gallery page with finished characters" width="100%"></p>
@@ -245,7 +247,7 @@ Sets the real-world size, puts the pivot at the feet, fixes holes, sharpens the 
 <td width="50%" valign="top">
 
 **5. Make it move**<br>
-Adds a skeleton, tests that the joints bend cleanly, and attaches moves (idle, walk, run, attack and more). Use **Add a move** to pick more. Rigid props skip this step.
+Adds a skeleton, tests that the joints bend cleanly, and attaches moves (idle, walk, run, attack and more). Use **Add a move** to pick more. Rigid props have no skeleton, so they skip rigging and need no graphics card for this step.
 
 </td>
 <td width="50%" valign="top">
