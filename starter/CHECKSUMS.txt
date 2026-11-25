@@ -1,2 +1,2 @@
-c022343e691d6ab1fcde8cfa56988afe5428d89aeca3fe11fedb67478ba72a67  VGAC.exe  (built by the starter build script with the in-box compiler; a rebuild is not byte-identical)
+a7162dc936d6dcf062c95f464bcc94eacc53958b3984aa0f72d206a32270422a  VGAC.exe  (built by the starter build script with the in-box compiler; a rebuild is not byte-identical)
 652918978f45679466a84dd78a40d25cab854ef4dae4b4b24d1ac1857c79fac7  starter/icon.ico  (the same picture as desktop/build/icon.ico; compiled into VGAC.exe)
