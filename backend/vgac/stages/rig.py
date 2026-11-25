@@ -1104,6 +1104,7 @@ async def _animate(sc: StageContext, rig_glb: Path, params: dict[str, Any] | Non
                            clips_source="procedural", library_clips=[], procedural_clips=list(rep.get("clips") or []),
                            hand_fingers=[len(h.get("fingers") or []) for h in (rep.get("hands") or [])])  # WP-76: finger chains per hand (0 = one-lump)
         await _retarget(sc, anim_glb, params, chosen_moves)
+        await _creature_clips(sc, anim_glb, params, chosen_moves)
         await _after_moves(sc, anim_glb, params)
     except Exception as e:
         sc.set_metrics(anim_error=str(e)[:500])
@@ -1386,6 +1387,65 @@ async def _retarget(sc: StageContext, anim_glb: Path, params: dict[str, Any], ch
     ids = {r["id"] for r in recs}
     kept_models = [x for x in (sc.version.metrics.get("models") or []) if isinstance(x, dict) and x.get("role") != "moves" and x.get("id") not in ids]
     sc.set_metrics(models=kept_models + recs)
+
+
+def hand_made_rows(category: dict[str, Any], moves: Any, root: Path | None) -> list[dict[str, Any]]:
+    """The category's hand-made creature clips (hand_made_clips in its yaml) that the moves knob keeps and whose file is
+    on disk, as the rows creature_clips.py takes: name, file, loop, pack, licence, from. A clip is looked for as
+    <root>/<animal>/animations/<clip>.glb, the `from` value being "<animal>/<clip>"."""
+    spec = category.get("hand_made_clips") or {}
+    if root is None or not spec:
+        return []
+    chosen = None if moves is None else {str(m).strip().lower() for m in (moves if isinstance(moves, (list, tuple)) else str(moves).split(","))}
+    out = []
+    for r in spec.get("clips") or []:
+        name = str(r.get("name") or "")
+        if not name or (chosen is not None and name not in chosen):
+            continue
+        animal, _, clip = str(r.get("from") or "").partition("/")
+        f = Path(root) / animal / "animations" / f"{clip}.glb"
+        if animal and clip and f.is_file():
+            out.append({"name": name, "file": str(f), "loop": bool(r.get("loop")), "pack": spec.get("pack") or "mesh2motion",
+                        "licence": spec.get("licence") or "CC0 1.0", "from": str(r["from"])})
+    return out
+
+
+async def _creature_clips(sc: StageContext, anim_glb: Path, params: dict[str, Any], chosen_moves: Any) -> None:
+    """Move the hand-made creature clips (CC0 Mesh2Motion) onto the creature's skeleton by bone role (creature_clips.py),
+    replacing the generated clip of the same name in anim.glb. Every clip the pack has no file for, and every clip when
+    the knob says built-in moves, the pack is missing or the script fails, stays the generated one."""
+    if not sc.category.get("hand_made_clips"):
+        return
+    if clips_source(params) == "procedural":
+        sc.set_metrics(library_skipped="built-in moves chosen")
+        return
+    rows = hand_made_rows(sc.category, chosen_moves, getattr(sc.settings, "creature_clips_dir", None))
+    if not rows:
+        sc.set_metrics(library_skipped="no hand-made clip for this creature found on disk")
+        return
+    classes = sc.dir / "anim_anim.json"
+    spec_path = sc.dir / "anim_retarget_spec.json"
+    spec_path.write_text(json.dumps(rows, indent=1), encoding="utf-8")
+    report = sc.dir / "anim_retarget.json"
+    t0 = time.monotonic()
+    try:
+        sc.progress(0.82, "moving the hand-made creature clips onto the skeleton")
+        await sc.blender("creature_clips.py", [anim_glb, anim_glb, "--classes", classes, "--spec", spec_path, "--fps", 24, "--report", report],
+                         log_name="creature_clips.log", timeout=sc.settings.blender_timeout_seconds)
+    except Exception as e:  # noqa: BLE001
+        rep = json.loads(report.read_text()) if report.is_file() else {}
+        sc.set_metrics(retarget_error=str(rep.get("error") or e)[:500], retarget_seconds=round(time.monotonic() - t0, 2))
+        return
+    rep = json.loads(report.read_text()) if report.is_file() else {}
+    sc.register("anim_retarget", report)
+    made = list(rep.get("library_clips") or [])
+    sc.set_metrics(clips=rep.get("clips") or [], clips_source="library" if made else "procedural", library_clips=made,
+                   procedural_clips=[c for c in (rep.get("clips") or []) if c not in made], retarget_error=None, library_skipped=None,
+                   missing_clips=[r["name"] for r in rows if r["name"] not in made], clips_library=rows[0]["pack"],
+                   retarget_seconds=round(time.monotonic() - t0, 2))
+    if made:
+        kept = [x for x in (sc.version.metrics.get("models") or []) if isinstance(x, dict) and x.get("id") != rows[0]["pack"]]
+        sc.set_metrics(models=kept + [{**reference.model_record(rows[0]["pack"]), "role": "moves"}])
 
 
 def _hair_points(sc: StageContext, work: Path) -> Path | None:

@@ -18,6 +18,19 @@ input_view_default: quarter
 hair: fur
 motion: legs
 clips: [idle, walk, run, turn_left, turn_right, attack, hit, death]
+# Hand-made clips (CC0 Mesh2Motion animals, fetched by setup\Setup-Extras.ps1 -Packs) moved onto the skeleton by bone role.
+# `from` is "<animal>/<clip>" under creature_clips_dir. A clip left out here (hit) keeps its generated version.
+hand_made_clips:
+  pack: mesh2motion
+  licence: CC0 1.0 (Mesh2Motion)
+  clips:
+    - {name: idle, from: fox/idle, loop: true}
+    - {name: walk, from: fox/walk, loop: true}
+    - {name: run, from: fox/run, loop: true}
+    - {name: turn_left, from: horse/turn-left, loop: false}
+    - {name: turn_right, from: horse/turn-right, loop: false}
+    - {name: attack, from: fox/bite, loop: false}
+    - {name: death, from: fox/death, loop: false}
 lod_ratios: [0.5, 0.25, 0.1]
 views: [front, left, back, right, quarter]
 pose_block: >-

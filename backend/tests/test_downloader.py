@@ -106,7 +106,7 @@ ALLOWED_HOSTS = {
     "download.blender.org", "www.blender.org",  # Blender Foundation
     "huggingface.co",  # only the repositories in ALLOWED_HF below
     "ai.google.dev", "storage.googleapis.com",  # Google: Gemma terms, MediaPipe's own model files
-    "github.com",  # only the project's own repositories in ALLOWED_GH below
+    "github.com", "raw.githubusercontent.com",  # only the project's own repositories in ALLOWED_GH below
     "quaternius.itch.io",  # the author's own page
     "files.makehumancommunity.org", "files2.makehumancommunity.org", "static.makehumancommunity.org",  # MakeHuman's own
     "store.steampowered.com", "apps.microsoft.com",  # Blender's own listings; links the person opens, nothing is fetched from them
@@ -121,7 +121,8 @@ ALLOWED_HF = {  # owner/repo: each one is the author's, the publisher's, or Comf
     "tarn59/character_turnaround_sheet_qwen_edit_2511", "tencent/Hunyuan3D-2mv",
 }
 ALLOWED_GH = {"xinntao/Real-ESRGAN", "Rizzlord/ComfyUI-SkinToken", "Comfy-Org/ComfyUI",
-              "Kim2091/Kim2091-Models"}  # Kim2091: the publisher of 4x-PBRify UpscalerV4 (CC0), its own release page
+              "Kim2091/Kim2091-Models",  # Kim2091: the publisher of 4x-PBRify UpscalerV4 (CC0), its own release page
+              "Mesh2Motion/mesh2motion-app"}  # Mesh2Motion: the author of the CC0 animal clips, fetched from a pinned commit
 
 
 def test_every_address_in_the_shipped_list_is_on_an_allowed_host():
@@ -149,7 +150,7 @@ def test_every_address_in_the_shipped_list_is_on_an_allowed_host():
         parts = p.path.strip("/").split("/")
         if p.netloc == "huggingface.co":
             assert "/".join(parts[:2]) in ALLOWED_HF, f"{u}: a Hugging Face repository that is not on the allowed list"
-        if p.netloc == "github.com":
+        if p.netloc in ("github.com", "raw.githubusercontent.com"):
             assert "/".join(parts[:2]) in ALLOWED_GH, f"{u}: a GitHub repository that is not on the allowed list"
 
 
