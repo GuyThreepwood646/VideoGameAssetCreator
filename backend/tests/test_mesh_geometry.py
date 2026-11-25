@@ -56,6 +56,8 @@ def test_a_melted_building_with_no_folds_fails_and_fine_ones_pass():
     # A report from before the measure existed is not judged on it; other routes are never judged on it.
     assert _check("environment", HEALTHY)["passed"] is True
     assert _check("humanoid", MELTED_CLUB)["passed"] is True
+    # Round scenery has almost no level surface and is not judged on it.
+    assert _check("environment", {**HEALTHY, "level_share": 0.09})["passed"] is True
 
 
 def test_plants_may_have_open_edges_and_pieces_but_not_a_shard_cloud():

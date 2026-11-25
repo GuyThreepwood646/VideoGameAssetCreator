@@ -6,7 +6,7 @@ report, judges it per route (the families of plan section 5A) and makes the chec
 
 Level share: the area share of faces within LEVEL_TOLERANCE degrees of straight up or flat (walls, level roofs, floors; round
 towers count). Melted or sheared buildings fall well below whole ones while keeping a good outline score and no folds; the
-limit sits under the lowest whole build measured. Buildings only: other routes have shapes that are not meant to be level.
+limit sits under the lowest whole build measured. Models far below it (round scenery with no walls) are not judged on it. Buildings only: other routes have shapes that are not meant to be level.
 
 Why not the silhouette score: a model shattered into shards can still fill the drawn outline (the Nutra Pak building scored
 0.838). The folded-edge share is what separated it: folded edges are edges whose two faces face away from each other by
@@ -54,6 +54,10 @@ LIMITS: dict[str, dict[str, float | None]] = {
 REBUILD_ROUTES: frozenset[str] = frozenset({"buildings"})
 REBUILD_MAX = 2
 
+# Level share is judged only on models that have walls to bend: below this share the model is round or rough on purpose (a
+# rock, a tree, a ball), and the measure says nothing about it. A bent building sits between this and the route's limit.
+LEVEL_FLOOR = 0.25
+
 # Measures where more is better: the share must reach the limit, not stay under it.
 MIN_KEYS = ("largest_piece", "level")
 
@@ -91,6 +95,8 @@ def problems(route: str, report: dict[str, Any]) -> list[str]:
         if limit is None:
             continue
         over = sh[key] < limit if key in MIN_KEYS else sh[key] > limit
+        if key == "level" and sh[key] < LEVEL_FLOOR:
+            over = False
         if over:
             out.append(PROBLEM_WORDS[key].format(share=f"{sh[key] * 100:.1f}%", limit=f"{limit * 100:.0f}%"))
     return out
