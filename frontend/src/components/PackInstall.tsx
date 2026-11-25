@@ -158,7 +158,7 @@ export default function PackInstall({ kit: kitId, onChanged, onClose }: { kit: s
           )}
           <div className="row-gap">
             <button type="button" className="btn primary" onClick={() => void act(() => api.packStart(kitId, run.choices.length ? run.choices : picked))}>
-              {run.state === 'cancelled' ? 'Carry on' : 'Try again'}
+              {run.state === 'cancelled' ? 'Resume download' : 'Try again'}
             </button>
           </div>
         </div>

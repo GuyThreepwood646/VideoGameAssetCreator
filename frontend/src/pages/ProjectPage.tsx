@@ -11,7 +11,7 @@ import { Info } from '../components/Info'
 import { ChipInput, Disclosure, ErrorText, Field, SubmitTextarea, useAsync } from '../components/ui'
 import { useEvents } from '../events'
 import { autopilotDefault, rememberAutopilotDefault, rememberConceptModel } from '../guide'
-import { axisWord, CATEGORY_HELP, exampleName, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, stagePlainFor, suggestFallback, totalEstimate } from '../help'
+import { axisWord, CATEGORY_HELP, exampleName, examplePrompts, fmtDuration, joinAnd, plainJargon, metres, modelLabel, PICTURE_POSITION_GUIDE, platformConsequence, platformPlain, PROMPT_TEMPLATE, sizeAxisOf, sizeDefault, sizeFromDescription, stagePlain, stagePlainFor, suggestFallback, totalEstimate } from '../help'
 import { hairNotes } from '../hairNotes'
 import { editLoras } from '../editLoras'
 import { EditLoras } from '../pipeline/EditLoras'
@@ -533,7 +533,7 @@ function CreateAssetForm({ project, assets }: { project: Project; assets: AssetS
           value={picture}
           onChange={setPicture}
           label="Your picture"
-          hint={`Best: one subject on a plain background, all of it in the picture. The app cuts it out and checks it is ready for 3D. ${SIZE_ADVICE}`}
+          hint={`${PICTURE_POSITION_GUIDE} The app cuts it out and checks it is ready for 3D. ${SIZE_ADVICE}`}
         />
       )}
       {fromPicture && sizeNote(picture) && <div className="tool-note small">{sizeNote(picture)}</div>}

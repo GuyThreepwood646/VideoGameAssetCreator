@@ -129,6 +129,11 @@ export function stageTech(stage: StageId, info?: StageInfo | null): string {
   return info?.technical_short || STAGE_TEXT[stage].tech
 }
 
+// The plain guidance under every upload box for a picture of the person's own (PL-48): where the item sits in the
+// picture and what background works. Shared by the step 1 "A picture I have" box and the "Your picture" box of step 1.
+export const PICTURE_POSITION_GUIDE =
+  'Best: the whole item in the picture, centred and not cropped, on a simple background that is neither cluttered nor plain white. For a person, a front view, standing, with the arms away from the sides. One item per picture.'
+
 // What the Try again button will do, said on the button (UX-11). Null where it could do nothing useful: a step 1 made
 // from a picture the person brought has no description to paint new pictures from.
 export function tryAgainLabel(stage: StageId, opts: { count?: number; fromPicture?: boolean; hasDescription?: boolean } = {}): string | null {
@@ -391,7 +396,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   remesh: H(
     'Remesh (close holes)',
     'Rebuild the surface so it is one closed shell.',
-    'Characters and creatures: keep it on, it removes double walls. Plants: untested so far; thin leaves may come out thicker. Hard objects (props, vehicles): it can round crisp edges and thicken or lose thin parts, so turn it off if the edges matter. Buildings and scenery: off by default so doorways and arches stay open, but a building built with it off at a low triangle count can come out torn; the same building came out whole with it on, as a softer shape. After a build, look at the grey views under the model.',
+    'On by default for every kind of object, props and vehicles included. It closes holes, so the textures are not stretched across them. It can round a crisp edge a little and thicken or lose a very thin part, so turn it off only if a sharp edge matters more. Plants: untested so far; thin leaves may come out thicker. Buildings and scenery: keep it on; with it off a building can come out torn. After a build, look at the grey views under the model.',
     'remesh (watertight)',
   ),
   silhouette_iou: H('Outline match (silhouette IoU)', 'How closely the model outline matches the drawing from each side.', 'Low match means the model does not look like the picture.', 'silhouette IoU (intersection over union)'),

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { api, ApiError, libraryUrl, type Asset, type FaceCloseup, type StageId, type Version } from '../api'
 import { ImageDrop, type PickedImage } from '../components/ImageDrop'
+import { PICTURE_POSITION_GUIDE } from '../help'
 import { SIZE_ADVICE, sizeNote } from '../pictureSize'
 import { Info } from '../components/Info'
 import { Disclosure, PanelClose } from '../components/ui'
@@ -291,7 +292,7 @@ function ConceptUpload({ asset, busy, act, onCreated }: { asset: Asset; busy: bo
             hint={
               material
                 ? 'Best: taken straight on, in even light, the surface filling the whole photo.'
-                : `Best: one subject on a plain background, all of it in the picture. It is cut out and checked like a painted one. ${SIZE_ADVICE}`
+                : `${PICTURE_POSITION_GUIDE} It is cut out and checked like a painted one. ${SIZE_ADVICE}`
             }
           />
           {!material && sizeNote(picture) && <div className="tool-note small">{sizeNote(picture)}</div>}
