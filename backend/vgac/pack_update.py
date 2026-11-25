@@ -1,4 +1,4 @@
-"""Version and update of the project's own node pack (vgac-nodes, PL-81).
+"""Version and update of the project's own node pack (vgac-nodes).
 
 A pack copied from comfy-nodes/vgac-nodes gets a manifest (MANIFEST) that records the version of the source it came
 from and the list of files it installed. The version is a hash of the source's files, so any change to the pack makes

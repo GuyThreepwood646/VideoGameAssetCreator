@@ -740,7 +740,7 @@ export type HardwarePlan = {
 export type HardwareChoice = { use?: number[]; three_d?: number; min_free_ram_gb?: number }
 export type ComfyCheck = { ok: boolean; problems: string[]; torch: string }
 export type ComfyPacksReport = {
-  packs: { id: string; name: string; present: boolean; requirements?: string[] }[]
+  packs: { id: string; name: string; present: boolean; outdated?: boolean; requirements?: string[] }[]
   python: { checked: boolean; adds: { name: string; to: string }[]; changes: { name: string; from: string; to: string }[]; note: string }
 }
 export type ComfyInstallStep = { id: string; label: string; download_bytes: number; done: boolean }
@@ -752,7 +752,7 @@ export type ComfyInstallStatus = {
 }
 export type ComfyInstallOffer = {
   version: string; goes_to: string; hosts: string[]; download_bytes: number; needs_bytes: number; licence: string
-  needs_admin: boolean; ready: boolean; missing: string[]; status: ComfyInstallStatus
+  needs_admin: boolean; ready: boolean; missing: string[]; status: ComfyInstallStatus; packs_outdated?: string[]
 }
 
 export type ModelItem = {
@@ -970,6 +970,7 @@ export const api = {
   comfyInstallStatus: () => get<ComfyInstallStatus>('/api/comfy/install/status'),
   comfyInstallStart: (choice: 'A' | 'C', id?: string) => post<ComfyInstallStatus>('/api/comfy/install/start', { choice, id }),
   comfyInstallStop: () => post<ComfyInstallStatus>('/api/comfy/install/stop', {}),
+  comfyInstallUpdatePacks: () => post<{ warnings: string[]; packs_outdated: string[] }>('/api/comfy/install/update-packs', {}),
   comfyInstallEngines: () => post<{ engines: { name: string; state: string; text: string }[]; message?: string }>('/api/comfy/install/engines', {}),
   comfyInstallRemove: (alsoModels: boolean) =>
     post<{ removed: boolean; kept_models: string; message: string }>('/api/comfy/install/remove', { confirm: true, also_models: alsoModels }),

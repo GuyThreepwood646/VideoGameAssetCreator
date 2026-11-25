@@ -817,7 +817,7 @@ def step_packs(job: Install, ops: Ops, fence: Fence) -> None:
 
 def _update_local_pack(job: Install, p: dict[str, Any], target: Path, fence: Fence) -> None:
     """An older copy of VGAC's own pack: the old folder is backed up under VGAC's folder, then the pack's files are written
-    over it. Only the files the old manifest named (and the pack still has) are removed; the person's other files stay.
+    over it. Only the files the old manifest named that the pack no longer has are removed; the person's other files stay.
     The job warns that ComfyUI must restart before the new nodes load."""
     src = downloader.project_dir() / str(p["local"])
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -1060,6 +1060,19 @@ def status() -> dict[str, Any]:
             "warnings": [], "engines": [], "steps": plan(root)}
 
 
+def packs_outdated() -> list[str]:
+    """Names of VGAC's own local node packs whose copy in its ComfyUI is an older version (pack_update.state)."""
+    app = install_root() / "ComfyUI"
+    out: list[str] = []
+    for p in shipped_packs():
+        if not p.get("local"):
+            continue
+        target = app / "custom_nodes" / str(p.get("folder") or p["id"])
+        if pack_update.state(target, downloader.project_dir() / str(p["local"])) == pack_update.OUTDATED:
+            out.append(str(p.get("name", p["id"])))
+    return out
+
+
 def offer() -> dict[str, Any]:
     """What the panel shows before anything starts."""
     e = entry()
@@ -1068,7 +1081,21 @@ def offer() -> dict[str, Any]:
     return {"version": e.get("version", ""), "goes_to": str(root), "hosts": ["github.com", "download.pytorch.org", "files.pythonhosted.org"],
             "download_bytes": total + _zip_bytes(e), "needs_bytes": space_needed(root),
             "licence": e.get("licence", ""), "needs_admin": False, "ready": not pins_missing(), "missing": pins_missing(),
-            "status": status()}
+            "packs_outdated": packs_outdated(), "status": status()}
+
+
+def update_packs(ops: Ops | None = None) -> dict[str, Any]:
+    """The Update the node pack button on VGAC's own install: the packs step runs again, which replaces only a pack whose
+    copy is an older version (step_packs). Refused while an install is running."""
+    with _lock:
+        if _current is not None and _current.state == "working":
+            raise DownloadError("busy", "The install is already running.", "Wait for it, or stop it first.")
+    root = install_root()
+    _require_own(root)
+    ops = ops or Ops()
+    job = Install(state="working")
+    step_packs(job, ops, fence_for(ops))
+    return {"warnings": list(job.warnings), "packs_outdated": packs_outdated()}
 
 
 # --- removing ------------------------------------------------------------------------------------------------------------
@@ -1560,6 +1587,14 @@ def post_start(body: StartIn) -> dict[str, Any]:
                 raise DownloadError("choice", "Choice A needs your ComfyUI chosen in the list.", "")
             shared = str(find_by_id(body.id)["models"])
         return start(body.choice, shared).public()
+    except DownloadError as e:
+        raise _bad(e) from None
+
+
+@router.post("/update-packs")
+def post_update_packs() -> dict[str, Any]:
+    try:
+        return update_packs()
     except DownloadError as e:
         raise _bad(e) from None
 

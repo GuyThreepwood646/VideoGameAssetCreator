@@ -485,7 +485,7 @@ def comfy_apps(settings: Any) -> list[tuple[str, Path]]:
 
 
 def check_node_pack(settings: Any, project_dir: Path = PROJECT_DIR) -> list[dict[str, Any]]:
-    """vgac-nodes in every ComfyUI the app uses (PL-81). A copy that is an older version is a warning: the rig step's
+    """vgac-nodes in every ComfyUI the app uses . A copy that is an older version is a warning: the rig step's
     VGACLoadTrimesh node (graphs/skintoken.py) comes from the pack, and setup or the Add the node packs step replaces the
     old files (pack_update). A ComfyUI without vgac-nodes is not reported here (the packs step adds it)."""
     from . import guidance, pack_update

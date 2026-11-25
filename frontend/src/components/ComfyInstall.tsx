@@ -62,6 +62,13 @@ export default function ComfyInstall({ shareFrom, onChanged }: { shareFrom: Comf
   }
   const begin = (choice: 'A' | 'C') => act(async () => setSt(await api.comfyInstallStart(choice, choice === 'A' ? shareFrom?.id : undefined)))
   const stop = () => act(async () => setSt(await api.comfyInstallStop()))
+  const updatePacks = () =>
+    act(async () => {
+      const r = await api.comfyInstallUpdatePacks()
+      setAnswer({ ok: true, text: r.warnings.length ? r.warnings.join(' ') : 'The node pack is up to date.' })
+      await load()
+      onChanged?.()
+    })
   const remove = () =>
     act(async () => {
       const r = await api.comfyInstallRemove(alsoModels)
@@ -128,6 +135,14 @@ export default function ComfyInstall({ shareFrom, onChanged }: { shareFrom: Comf
       {st?.error && (
         <div className="error small">
           {st.error.message} {st.error.fix}
+        </div>
+      )}
+      {!working && offer?.packs_outdated && offer.packs_outdated.length > 0 && (
+        <div>
+          <div className="warn small">Out of date: {offer.packs_outdated.join(', ')}. The 3D build and the rigging need its newer nodes.</div>
+          <button type="button" className="small-btn" disabled={busy} onClick={() => void updatePacks()}>
+            Update the node pack
+          </button>
         </div>
       )}
       {(state === 'stopped' || state === 'unfinished') && <div className="small">{st?.text || 'The install stopped before it finished. What was downloaded is kept.'}</div>}

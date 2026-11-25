@@ -446,9 +446,10 @@ def packs_report(c: dict[str, Any], opener: Callable[[str, int], Any] | None = N
     py = Path(c["python"]) if c.get("python") else None
     out = []
     all_req: list[str] = []
+    app = (Path(c["folder"]) / c["main"]).parent
     for p in pack_list():
-        present = bool(pack_present((Path(c["folder"]) / c["main"]).parent, p))
-        item = {"id": p["id"], "name": p.get("name", p["id"]), "present": present}
+        present = bool(pack_present(app, p))
+        item = {"id": p["id"], "name": p.get("name", p["id"]), "present": present, "outdated": bool(p.get("local") and _pack_outdated(app, p))}
         if not present:
             z = fetch_pack(p, opener)
             req = pack_requirements(p, z)

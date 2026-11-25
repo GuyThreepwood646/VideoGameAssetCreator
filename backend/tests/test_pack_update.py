@@ -1,4 +1,4 @@
-"""The project's own node pack (vgac-nodes) is updated when an older copy is found (PL-81; pack_update.py).
+"""The project's own node pack (vgac-nodes) is updated when an older copy is found (pack_update.py).
 
 Temp folders only: the shipped pack is a planted copy, and every ComfyUI is a planted folder. The install-level tests
 (step_packs) are in test_comfy_install.py, where the fake install lives."""
@@ -165,3 +165,21 @@ def test_needed_for_names_the_stages_whose_graphs_use_the_pack_nodes():
 def test_the_restart_line_is_plain_words():
     text = guidance.NODE_PACK["updated"]
     assert "Restart ComfyUI" in text and text.isascii()
+
+
+def test_the_packs_report_says_an_outdated_copy_is_there_but_will_be_updated(tmp_path, monkeypatch):
+    from vgac import downloader
+
+    _src(tmp_path)
+    (tmp_path / "setup").mkdir()
+    (tmp_path / "setup" / "downloads.json").write_text(json.dumps({"node_packs": {"vgac": {
+        "name": "vgac-nodes (this project)", "local": "comfy-nodes/vgac-nodes", "folder": "vgac-nodes"}}}), encoding="utf-8")
+    monkeypatch.setattr(downloader, "project_dir", lambda: tmp_path)
+    linked = tmp_path / "linked" / "ComfyUI"
+    linked.mkdir(parents=True)
+    (linked / "main.py").write_text("", encoding="utf-8")
+    _old_copy(linked)
+    c = {"folder": str(tmp_path / "linked"), "main": "ComfyUI/main.py", "python": str(tmp_path / "linked" / "python.exe")}
+    (tmp_path / "linked" / "python.exe").write_bytes(b"MZ")
+    rep = comfy_find.packs_report(c, pip=lambda argv: (0, ""))
+    assert rep["packs"] == [{"id": "vgac", "name": "vgac-nodes (this project)", "present": True, "outdated": True}]
