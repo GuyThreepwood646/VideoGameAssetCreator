@@ -20,6 +20,12 @@ LEAFY_TREE = {"triangles": 7027, "edges": 9937, "open_edges": 46, "bad_join_edge
 SHRUB = {"triangles": 7813, "edges": 11710, "open_edges": 1, "bad_join_edges": 11, "folded": {"120": 0.0686},
          "sliver_share": 0.0023, "pieces": 2, "largest_piece_area": 0.993}
 
+# Measured by blender/mesh_health.py on stored melted and whole buildings: same folded share, only the level share differs.
+MELTED_CLUB = {**HEALTHY, "folded": {"120": 0.01317}, "level_share": 0.41568}
+MELTED_STORE = {**HEALTHY, "folded": {"120": 0.01402}, "level_share": 0.33268}
+FINE_BUILDINGS = {"club_quarter": 0.70777, "store_front": 0.6868, "store_quarter": 0.74188, "club_front": 0.69682,
+                  "cottage": 0.55722, "painted_store": 0.69264, "low_poly_cottage": 0.51043}
+
 
 def _check(category, report, rebuild=None):
     return meshgeom.check(category, meshgeom.summary(category, report), rebuild)
@@ -38,6 +44,20 @@ def test_a_whole_model_passes_and_the_shattered_building_fails():
     bad = _check("environment", NUTRA_V2)
     assert bad["passed"] is False and bad["severity"] == "warn"
     assert "folded back" in bad["help"] and "torn seams" in bad["help"]
+
+
+def test_a_melted_building_with_no_folds_fails_and_fine_ones_pass():
+    """The outline score and the folded share both missed the melted Pixal3D buildings; the level share catches them."""
+    for report in (MELTED_CLUB, MELTED_STORE):
+        bad = _check("environment", report)
+        assert bad["passed"] is False and "bent out of shape" in bad["help"]
+    for name, level in FINE_BUILDINGS.items():
+        assert _check("environment", {**HEALTHY, "level_share": level})["passed"] is True, name
+    # A report from before the measure existed is not judged on it; other routes are never judged on it.
+    assert _check("environment", HEALTHY)["passed"] is True
+    assert _check("humanoid", MELTED_CLUB)["passed"] is True
+    # Round scenery has almost no level surface and is not judged on it.
+    assert _check("environment", {**HEALTHY, "level_share": 0.09})["passed"] is True
 
 
 def test_plants_may_have_open_edges_and_pieces_but_not_a_shard_cloud():
