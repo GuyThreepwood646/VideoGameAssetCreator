@@ -42,6 +42,10 @@ FINE_STEP = 15.0      # the fine turns are this far either side of each of the b
 FINE_TOP = 2          # how many coarse turns are refined
 TURN_IOU_NEAR = 0.02  # turns whose outline fit is within this of the best are told apart by the picture's colours
 DRIFT_MAX = 4.0       # build view against step-1 picture, mean L* over each cut-out: past this the target is step 1
+C_SCALE = (0.75, 1.4)  # the chroma stage scales a* and b* by the picture's mean chroma over the render's, within this range
+C_ROT_MAX = 15.0       # and turns their hue by the gap between the two mean hue directions, at most this many degrees
+C_MIN_SCALE = 0.05     # a chroma gap under this share and a hue gap under C_MIN_ROT degrees are left alone
+C_MIN_ROT = 2.0
 ROOF_ROUTE = "buildings"  # the only route the roof lift runs for
 ROOF_UP_MIN = 0.35        # an island whose UV-area-weighted face normal points up by at least this much is a roof
 ROOF_TEXEL_UP = 0.2       # inside a roof island only texels of faces that point up by at least this much are lifted
@@ -205,6 +209,52 @@ def lightness_plan(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray
             "capped": abs(gap) > cap, "reason": "applied"}
 
 
+def apply_chroma(rgb: np.ndarray, corr: dict[str, Any] | None) -> np.ndarray:
+    """The chroma move (from chroma_plan()) on an sRGB 0..1 image (..., 3): a* and b* scaled by corr["scale"] and turned
+    by corr["rotate"] degrees, L* untouched. A neutral texel stays neutral. None or mode "none": unchanged."""
+    if not corr or corr.get("mode") in (None, "none"):
+        return rgb
+    lab = face.to_lab(rgb)
+    ab = (lab[..., 1] + 1j * lab[..., 2]) * float(corr["scale"]) * np.exp(1j * np.radians(float(corr["rotate"])))
+    lab = np.array(lab, dtype=np.float64)
+    lab[..., 1], lab[..., 2] = ab.real, ab.imag
+    return from_lab(lab)
+
+
+def chroma_plan(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, pic_mask: np.ndarray,
+                yaw: float, iou: float) -> dict[str, Any]:
+    """The chroma and hue stage, run after the lightness stage on its texture `tex`. The model's flat render at the
+    lightness stage's turn `yaw` and the picture's cut-out are each reduced to their mean a*b* vector (its length is the
+    mean chroma, its direction the mean hue, so a colour cast survives the mean and a neutral picture stays neutral), with
+    the same masks as the lightness stage. The move scales chroma by the picture's over the render's (C_SCALE) and
+    turns the hue by the angle between the two (C_ROT_MAX). -> {mode: none|chroma, scale, rotate, render_chroma,
+    picture_chroma, reason}."""
+    if iou < L_IOU_MIN:
+        return {"mode": "none", "reason": "fit_too_loose"}
+    ys, xs = np.nonzero(pic_mask)
+    if len(ys) < 100:
+        return {"mode": "none", "reason": "no_cutout"}
+    extent = float(max(np.ptp(xs), np.ptp(ys)) + 1) * L_SIZE / max(pic.shape[:2])
+    r = face.render_view(mesh, tex, texfidelity._frame_camera(mesh, yaw, extent, L_SIZE), background=0.0)
+    border = max(1, int(round(texfidelity.BORDER_PX * max(pic.shape[:2]) / L_SIZE)))
+    rm, pm = face.erode(r["mask"], texfidelity.BORDER_PX), face.erode(pic_mask, border)
+    if rm.sum() < L_MASK_MIN_PX or pm.sum() < L_MASK_MIN_PX * (max(pic.shape[:2]) / L_SIZE) ** 2:
+        return {"mode": "none", "reason": "mask_too_small"}
+    rl = face.to_lab(face.to_uint8(r["image"]).astype(np.float64) / 255.0)[rm]
+    pl = face.to_lab(pic)[pm]
+    rv, pv = complex((rl[:, 1] + 1j * rl[:, 2]).mean()), complex((pl[:, 1] + 1j * pl[:, 2]).mean())
+    rc, pc = float(np.mean(np.hypot(rl[:, 1], rl[:, 2]))), float(np.mean(np.hypot(pl[:, 1], pl[:, 2])))
+    out: dict[str, Any] = {"render_chroma": round(rc, 2), "picture_chroma": round(pc, 2)}
+    if rc < 1.0 or pc < 1.0 or abs(rv) < 0.5 or abs(pv) < 0.5:
+        return {**out, "mode": "none", "reason": "neutral"}
+    scale = float(np.clip(pc / rc, *C_SCALE))
+    rot = float(np.clip(np.degrees(np.angle(pv / rv)), -C_ROT_MAX, C_ROT_MAX))
+    out.update({"scale": round(scale, 3), "rotate": round(rot, 2), "hue_gap": round(float(np.degrees(np.angle(pv / rv))), 2)})
+    if abs(scale - 1.0) < C_MIN_SCALE and abs(rot) < C_MIN_ROT:
+        return {**out, "mode": "none", "reason": "no_gain"}
+    return {**out, "mode": "chroma", "reason": "applied"}
+
+
 def roof_islands(uvmesh: dict[str, np.ndarray]) -> list[int]:
     """Islands that face up: the UV-area-weighted mean of their faces' up component is at least ROOF_UP_MIN."""
     uv, f = uvmesh["uv"], uvmesh["faces"]
@@ -292,11 +342,12 @@ def apply_roof_lift(tex: np.ndarray, uvmesh: dict[str, np.ndarray], plan: dict[s
 
 
 def match_base_colour(glb: Path | str, picture: Path | str, base_png: Path | str, view: str | None = None,
-                      step1: Path | str | None = None, route: str | None = None) -> dict[str, Any]:
+                      step1: Path | str | None = None, route: str | None = None, chroma: bool = False) -> dict[str, Any]:
     """Measure the model's lightness against its picture at the build view `view`'s turn and, when it is off, shift
     base_png and the GLB's own base colour image by the same move. When the build view's tone drifted from the step-1
     picture `step1` by more than DRIFT_MAX, the target is the step-1 picture instead, measured at the front turn.
-    -> metrics {applied, lightness: {...}, reason}."""
+    `chroma` (the four-view humanoid build only; every other route is the lightness stage alone, as before) adds the
+    chroma and hue stage after it. -> metrics {applied, lightness: {...}, chroma?: {...}, reason}."""
     rec: dict[str, Any] = {"applied": False}
     drift = step2_drift(picture, step1)
     drifted = drift is not None and abs(drift) > DRIFT_MAX
@@ -320,7 +371,11 @@ def match_base_colour(glb: Path | str, picture: Path | str, base_png: Path | str
             rp = roof_lift_plan(mesh, uvmesh, out, pic, pic_mask, ref_view, yaw=lp.get("yaw"))
             rec["roof_lift"] = rp
             out = apply_roof_lift(out, uvmesh, rp)
-    if lp.get("mode") != "l_shift" and rec.get("roof_lift", {}).get("mode") != "roof_lift":
+    if chroma and "yaw" in lp:
+        cp = chroma_plan(mesh, out, pic, pic_mask, lp["yaw"], lp.get("iou", 0.0))
+        rec["chroma"] = cp
+        out = apply_chroma(out, cp)
+    if lp.get("mode") != "l_shift" and rec.get("roof_lift", {}).get("mode") != "roof_lift" and rec.get("chroma", {}).get("mode") != "chroma":
         return rec
     Image.fromarray(face.to_uint8(out)).save(base_png)
     imaging.glb_replace_images(glb, base_color=base_png)
