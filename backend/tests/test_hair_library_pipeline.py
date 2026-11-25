@@ -442,7 +442,10 @@ for _stage, _part, _keys in (("turnaround", "files", ["quarter2", "quarter2_cuto
                              # WP-86 (2026-11): the re-bake's unreached-texel count, recorded on every clean-up (None when not re-baked).
                              ("prep", "metrics", ["rebake_unreached"]),
                              # Per-step time log (WP-91): metrics.timing on every run through the dispatcher.
-                             ("turnaround", "metrics", ["timing"]), ("mesh", "metrics", ["timing"]), ("prep", "metrics", ["timing"])):
+                             ("turnaround", "metrics", ["timing"]), ("mesh", "metrics", ["timing"]), ("prep", "metrics", ["timing"]),
+                             # A person's step 3 names no builder, so the category default (four views) is tried first; this harness has
+                             # no linked ComfyUI, so the model files are missing and the build says so (mesh.default_builder).
+                             ("mesh", "metrics", ["builder_note"])):
     GOLDEN_OFF[_stage][_part] = sorted(GOLDEN_OFF[_stage][_part] + _keys)
 # Today's checks that stand back when the model is bald on purpose.
 GONE_ON = {"prep": {"checks": {"hair_matches_picture"}}}
