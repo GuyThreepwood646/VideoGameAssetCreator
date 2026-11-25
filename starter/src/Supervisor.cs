@@ -117,7 +117,6 @@ namespace Vgac.Starter
             i.ComfyAUp = comfyA;
             i.ComfyAUrl = settings.ComfyAUrl; i.ComfyBUrl = settings.ComfyBUrl; i.BackendUrl = backend.Url;
             i.StartScriptIgnored = settings.StartScriptSet;
-            i.DesktopExeExists = !string.IsNullOrEmpty(settings.ComfyDesktopExe) && File.Exists(settings.ComfyDesktopExe);
             i.BackendOwned = backend.Owned;
             i.BackendPid = backend.Pid;
             i.BackendAgeSeconds = backend.Owned ? (DateTime.UtcNow - backend.StartedUtc).TotalSeconds : 0;

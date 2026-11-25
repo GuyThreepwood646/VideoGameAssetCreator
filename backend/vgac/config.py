@@ -64,8 +64,9 @@ class EngineConfig(BaseModel):
 
     The command is `<python> -s <main> --port <port> --listen <listen> --cuda-device <n>
     --extra-model-paths-config <file> --input-directory <dir> --user-directory <dir> --output-directory <dir>
-    <extra_args...>`, run in `comfy_dir`, with CUDA_DEVICE_ORDER=PCI_BUS_ID (so `cuda_device` is the number
-    nvidia-smi shows) and SKINTOKEN_BLENDER_BIN set to `blender_exe` (how the rigging node finds Blender)."""
+    --temp-directory <dir> <extra_args...>`, run in `comfy_dir`, with CUDA_DEVICE_ORDER=PCI_BUS_ID (so `cuda_device`
+    is the number nvidia-smi shows) and SKINTOKEN_BLENDER_BIN set to `blender_exe` (how the rigging node finds
+    Blender)."""
 
     # The ComfyUI install folder the command runs in.
     comfy_dir: Path
@@ -84,6 +85,9 @@ class EngineConfig(BaseModel):
     user_dir: Path | None = None
     # Default: the instance's output_dir.
     output_dir: Path | None = None
+    # ComfyUI keeps its working files in a "temp" folder inside this one and empties that folder every time it starts,
+    # so engines that share one install must not share it. Default: runtime/comfy-<instance>-temp in the project.
+    temp_dir: Path | None = None
     extra_args: list[str] = Field(default_factory=list)
 
 
@@ -106,8 +110,6 @@ class InstanceConfig(BaseModel):
     # A piece of the command line that identifies an already running copy (for example one started by the desktop
     # launcher or ComfyUI Desktop), so the backend waits for it instead of starting a second one.
     process_match: str | None = None
-    # Who usually runs this instance when the backend did not start it, for the card's note ("ComfyUI Desktop").
-    external_owner: str = ""
 
 
 class Settings(BaseModel):
@@ -192,7 +194,7 @@ def resolve_paths(settings: Settings, project_dir: Path = PROJECT_DIR) -> Settin
     for key in ("library_path", "export_path", "blender_exe", "finder_python", "finder_models", "unity_exe", "unity_project", "comfy_input_dir"):
         setattr(s, key, _resolve(getattr(s, key), project_dir))
     s.clips_libraries = {k: _resolve(v, project_dir) for k, v in s.clips_libraries.items()}  # type: ignore[misc]
-    for inst in s.instances.values():
+    for name, inst in s.instances.items():
         inst.output_dir = _resolve(inst.output_dir, project_dir)
         inst.start_script = _resolve(inst.start_script, project_dir)
         e = inst.engine
@@ -201,6 +203,7 @@ def resolve_paths(settings: Settings, project_dir: Path = PROJECT_DIR) -> Settin
             e.python = _resolve(e.python, e.comfy_dir)  # type: ignore[assignment]
             for key in ("extra_model_paths", "input_dir", "user_dir", "output_dir"):
                 setattr(e, key, _resolve(getattr(e, key), project_dir))
+            e.temp_dir = _resolve(e.temp_dir or Path(f"runtime/comfy-{name}-temp"), project_dir)
     return s
 
 

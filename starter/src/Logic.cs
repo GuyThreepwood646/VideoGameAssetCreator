@@ -476,7 +476,6 @@ namespace Vgac.Starter
     {
         public string ComfyAUrl = "http://127.0.0.1:8188";
         public string ComfyBUrl = "http://127.0.0.1:8189";
-        public string ComfyDesktopExe;       // desktop.comfyA.desktopExe
         public bool StartScriptSet;          // desktop.comfyB.startScript: no longer used
 
         public static DesktopSettings From(MachineFile m)
@@ -484,7 +483,6 @@ namespace Vgac.Starter
             var s = new DesktopSettings();
             string v = m.GetString2("desktop", "comfyA", "url"); if (!string.IsNullOrEmpty(v)) s.ComfyAUrl = v.TrimEnd('/');
             v = m.GetString2("desktop", "comfyB", "url"); if (!string.IsNullOrEmpty(v)) s.ComfyBUrl = v.TrimEnd('/');
-            s.ComfyDesktopExe = m.GetString2("desktop", "comfyA", "desktopExe");
             s.StartScriptSet = !string.IsNullOrEmpty(m.GetString2("desktop", "comfyB", "startScript"));
             return s;
         }
@@ -531,7 +529,6 @@ namespace Vgac.Starter
         public bool DistExists = true;
         public bool Building;
         public string BuildError;
-        public bool DesktopExeExists;
         public bool StartScriptIgnored;
         public string ComfyAUrl = "http://127.0.0.1:8188", ComfyBUrl = "http://127.0.0.1:8189", BackendUrl = "http://127.0.0.1:8765";
     }
@@ -594,15 +591,18 @@ namespace Vgac.Starter
             string off = !i.A.Enabled ? ". Off in the app" : "";
             string eng = i.GpusFromBackend ? i.A.State : null;
             if (i.ComfyAUp)
-                Set(r, "up", (i.GpusFromBackend && i.A.Owned ? "Running (started by the app when a step needed it)" : "Running (started by ComfyUI Desktop)") + off);
+                Set(r, "up", (i.GpusFromBackend && i.A.Owned ? "Running (started by the app when a step needed it)" : "Running (not started by this launcher, left alone on quit)") + off);
             else if (eng == "starting")
                 Set(r, "starting", "The app is starting it (about a minute)");
+            else if (!i.A.Enabled)
+                Set(r, "down", "Not running" + off);
+            else if (!i.BackendUp)
+                Set(r, "down", "Waiting for the app's engine, which starts it");
+            else if (eng == "failed")
+                Set(r, "error", "The app could not start it. Open the log folder to see why", new ActionItem("startA", "Try again"));
             else
-            {
-                string msg = (!i.A.Enabled ? "Not running" : "Open ComfyUI Desktop and start the instance that runs on this card") + off;
-                if (i.A.Enabled && i.DesktopExeExists) Set(r, "down", msg, new ActionItem("openComfyDesktop", "Open ComfyUI Desktop"));
-                else Set(r, "down", msg);
-            }
+                Set(r, "down", i.A.CanStart ? "Not running. The app starts it by itself when a step needs it" : "Not running",
+                    new ActionItem("startA", "Start"));
             return r;
         }
 

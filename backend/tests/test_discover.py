@@ -73,7 +73,7 @@ def card_settings(settings, tmp_path, a_ports=(8188, 8189, 8190, 8191, 8000)):
     inst = {
         "a": settings.instances["a"].model_copy(update={
             "url": A_URL, "gpu": "RTX 3060", "start_script": script, "start_timeout_seconds": 0.3,
-            "external_owner": "ComfyUI Desktop", "discover": DiscoverConfig(gpu_match="3060", ports=list(a_ports))}),
+            "discover": DiscoverConfig(gpu_match="3060", ports=list(a_ports))}),
         "b": settings.instances["b"].model_copy(update={
             "url": B_URL, "gpu": "RTX 3080", "start_script": script, "start_timeout_seconds": 0.3,
             "discover": DiscoverConfig(gpu_match="3080", ports=[])}),
@@ -147,10 +147,10 @@ def test_b_port_taken_by_the_other_card_is_a_setup_failure(settings, tmp_path):
     s, clients, sup, _ = make(settings, tmp_path, world)
     assert asyncio.run(sup.answers("b")) is False
     msg = sup.conflict("b")
-    assert msg == ("ComfyUI Desktop is using port 8189 on the RTX 3060; close it or change its port so the RTX 3080 can "
-                   "use port 8189.")
+    assert msg == ("Another copy of ComfyUI is using port 8189 on the RTX 3060; close it or change its port so the "
+                   "RTX 3080 can use port 8189.")
     # The start fails at once with that reason; nothing is started and no work goes to the wrong card.
-    with pytest.raises(StartFailed, match="ComfyUI Desktop is using port 8189"):
+    with pytest.raises(StartFailed, match="Another copy of ComfyUI is using port 8189"):
         asyncio.run(sup.ensure_running("b"))
     assert sup.state("b") == "failed" and sup.ops.spawned == []
     assert not sup.identity_ok("b", summary_of(DEV_3060)) and sup.identity_ok("b", summary_of(DEV_3080))
@@ -230,4 +230,4 @@ def test_gpus_show_the_found_address_and_the_setup_problem(settings, tmp_path, m
         asyncio.run_coroutine_threadsafe(q.supervisor.locate("b", force=True), q.workers["b"]._loop).result(5)
         rows = {r["instance"]: r for r in c.get("/api/gpus").json()}
         assert rows["b"]["reachable"] is False
-        assert rows["b"]["setup_problem"].startswith("ComfyUI Desktop is using port 8189")
+        assert rows["b"]["setup_problem"].startswith("Another copy of ComfyUI is using port 8189")

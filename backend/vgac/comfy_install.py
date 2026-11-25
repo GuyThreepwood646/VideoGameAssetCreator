@@ -939,7 +939,7 @@ def step_engines(job: Install, ops: Ops, fence: Fence, p: hardware_setup.Plan) -
             insts = data.setdefault("backend", {}).setdefault("instances", {})
             for name, e in engines.items():
                 inst = insts.get(name) if isinstance(insts.get(name), dict) else {}
-                for k in ("process_match", "external_owner", "start_script", "discover"):
+                for k in ("process_match", "start_script", "discover"):
                     inst.pop(k, None)  # discover comes back from the hardware plan, without another ComfyUI's ports
                 inst["url"] = f"http://127.0.0.1:{e['port']}"
                 inst["output_dir"] = e["output_dir"]  # where SkinToken's files are looked for: VGAC's own
@@ -1538,7 +1538,7 @@ async def start_engines(supervisor: Any, saved: config.Settings | None = None) -
             out.append({"name": name, "state": "restart", "text": "It starts the next time the app starts."})
             continue
         live.url, live.engine, live.discover = inst.url, inst.engine, inst.discover
-        live.process_match, live.external_owner, live.start_script = None, "", None
+        live.process_match, live.start_script = None, None
         client = supervisor.clients.get(name)
         if client is not None and hasattr(client, "set_base_url"):
             client.set_base_url(inst.url)

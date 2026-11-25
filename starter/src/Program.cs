@@ -641,25 +641,6 @@ namespace Vgac.Starter
             catch (Exception e) { log.Line("could not open " + p + ": " + e.Message); }
         }
 
-        void OpenComfyDesktop()
-        {
-            string exe = desk.ComfyDesktopExe;
-            if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
-            {
-                MessageBox.Show("ComfyUI Desktop was not found.\r\n\r\nExpected it at: " + (exe ?? "(not set)") + "\r\n\r\nSet desktop.comfyA.desktopExe in local\\machine.json if it lives elsewhere.", "VGAC");
-                return;
-            }
-            try
-            {
-                var psi = new ProcessStartInfo(exe);
-                psi.WorkingDirectory = Path.GetDirectoryName(exe);
-                psi.UseShellExecute = false;
-                Process.Start(psi);
-                log.Line("launched ComfyUI Desktop");
-            }
-            catch (Exception e) { log.Line("could not launch ComfyUI Desktop: " + e.Message); }
-        }
-
         // ---- the tray --------------------------------------------------------------------------------------------------
 
         void MakeTray()
@@ -675,14 +656,12 @@ namespace Vgac.Starter
             svc.DropDownItems.Add("-");
             svc.DropDownItems.Add("Open logs folder", null, delegate { OpenFolder(Path.Combine(root, "runtime", "logs")); });
             svc.DropDownItems.Add("Open exports folder", null, delegate { OpenFolder(Path.Combine(root, "exports")); });
-            var comfy = svc.DropDownItems.Add("Open ComfyUI Desktop", null, delegate { OpenComfyDesktop(); });
             svc.DropDownItems.Add("Open settings file", null, delegate { OpenSettingsFile(); });
             svc.DropDownItems.Add("-");
             svc.DropDownItems.Add("Check and repair...", null, delegate { OpenMaintenance(0); });
             svc.DropDownItems.Add("Update VGAC...", null, delegate { OpenMaintenance(1); });
             svc.DropDownItems.Add("Move the big files...", null, delegate { OpenMaintenance(2); });
             svc.DropDownItems.Add("Remove VGAC's downloads...", null, delegate { OpenMaintenance(3); });
-            svc.DropDownOpening += delegate { comfy.Enabled = !string.IsNullOrEmpty(desk.ComfyDesktopExe) && File.Exists(desk.ComfyDesktopExe); };
             menu.Items.Add(svc);
             menu.Items.Add("-");
             menu.Items.Add("Quit", null, delegate { RequestQuit(); });
@@ -711,7 +690,7 @@ namespace Vgac.Starter
             log.Line("action: " + id);
             switch (id)
             {
-                case "openComfyDesktop": OpenComfyDesktop(); break;
+                case "startA": Background(delegate { sup.StartViaBackend("a"); sup.TickNow(); }); break;
                 case "restartBackend": case "startBackend": RestartBackend(); break;
                 case "rebuild": Rebuild(); break;
                 case "startB": Background(delegate { sup.StartViaBackend("b"); sup.TickNow(); }); break;

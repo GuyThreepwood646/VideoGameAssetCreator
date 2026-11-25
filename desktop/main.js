@@ -4,7 +4,6 @@
 const { app, BrowserWindow, Tray, Menu, Notification, nativeImage, shell, dialog, ipcMain } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
 const { Supervisor } = require('./services');
 const bridge = require('./appbridge');
 const machine = require('./machine');
@@ -161,7 +160,6 @@ function servicesMenuTemplate() {
     { label: 'Open logs folder', click: () => openFolder(cfg.resolve(cfg.logsFolder)) },
     { label: 'Open exports folder', click: () => openFolder(cfg.resolve(cfg.exportsFolder)) },
     { type: 'separator' },
-    { label: 'Open ComfyUI Desktop', click: () => openComfyDesktop(), enabled: !!(cfg.comfyA.desktopExe && fs.existsSync(cfg.comfyA.desktopExe)) },
     { label: 'Edit launcher config', click: () => shell.openPath(cfg.file) },
   ];
 }
@@ -227,20 +225,6 @@ function openFolder(p) {
   shell.openPath(p).then((err) => { if (err) log('openPath ' + p + ': ' + err); });
 }
 
-function openComfyDesktop() {
-  const exe = cfg.comfyA.desktopExe;
-  if (!exe || !fs.existsSync(exe)) {
-    dialog.showMessageBox({ type: 'info', message: 'ComfyUI Desktop was not found', detail: `Expected it at:\n${exe || '(not set)'}\n\nSet desktop.comfyA.desktopExe in local/machine.json if it lives elsewhere.` });
-    return;
-  }
-  try {
-    spawn(exe, [], { detached: true, stdio: 'ignore', cwd: path.dirname(exe) }).unref();
-    log('launched ComfyUI Desktop');
-  } catch (e) {
-    log('could not launch ComfyUI Desktop: ' + e.message);
-  }
-}
-
 async function restartService(key) {
   const name = key === 'backend' ? 'backend' : 'ComfyUI B';
   let r = await supervisor.restart(key);
@@ -276,7 +260,7 @@ ipcMain.handle('action', async (e, id) => {
   if (!fromStatusWindow(e)) return false;
   log('action: ' + id);
   switch (id) {
-    case 'openComfyDesktop': openComfyDesktop(); break;
+    case 'startComfyA': await supervisor.startViaBackend('a'); supervisor.tick(); break;
     case 'startComfyB': supervisor.autoStarted.comfyB = true; supervisor.startComfyB(); break;
     case 'startBackend': supervisor.autoStarted.backend = true; supervisor.startBackend(); break;
     case 'retryBuild': supervisor.retryBuild(); break;
@@ -353,7 +337,7 @@ async function requestQuit() {
       defaultId: 0,
       cancelId: 1,
       message: 'Quit Video Game Asset Creator?',
-      detail: `This stops ${names}, which this launcher started. ComfyUI A (ComfyUI Desktop) is left running.`,
+      detail: `This stops ${names}, which this launcher started. Anything you started yourself is left running.`,
     });
     if (choice.response !== 0) return;
   }

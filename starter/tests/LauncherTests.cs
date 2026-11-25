@@ -178,10 +178,21 @@ public static partial class T
         Eq(StatusModel.Build(i).Get("comfyB").Actions[0].Id, "turnOnB", "running while off: only turn on, never stop");
         i = Backend(true); i.ComfyBUp = false; i.StartScriptIgnored = true;
         Check(StatusModel.Build(i).Get("comfyB").Message.Contains("The start script in the settings is no longer used; the app starts this engine itself."), "an ignored start script is said in the row");
-        i = Backend(true); i.ComfyAUp = false; i.DesktopExeExists = true;
-        Eq(StatusModel.Build(i).Get("comfyA").Actions[0].Id, "openComfyDesktop", "Open ComfyUI Desktop offered when it exists");
-        i.DesktopExeExists = false;
-        Eq(StatusModel.Build(i).Get("comfyA").Actions.Count, 0, "not offered when the exe is missing");
+        i = Backend(true); i.ComfyAUp = false; i.A.CanStart = true;
+        row = StatusModel.Build(i).Get("comfyA");
+        Eq(row.State, "down", "A not running"); Eq(row.Actions[0].Id, "startA", "Start asks the app, as for B");
+        Check(row.Message.Contains("The app starts it by itself"), "a stopped A is the app's to start");
+        i.A.State = "failed";
+        row = StatusModel.Build(i).Get("comfyA");
+        Eq(row.State, "error", "a failed start of A is an error"); Eq(row.Actions[0].Id, "startA", "Try again asks the app");
+        i.A.State = "starting";
+        Eq(StatusModel.Build(i).Get("comfyA").State, "starting", "the app is starting A");
+        i = Backend(true); i.ComfyAUp = true; i.A.Owned = true;
+        Check(StatusModel.Build(i).Get("comfyA").Message.Contains("started by the app"), "an A the app started says so");
+        i.A.Owned = false;
+        Check(StatusModel.Build(i).Get("comfyA").Message.Contains("not started by this launcher"), "an A nobody here started is left alone");
+        i = Backend(true); i.ComfyAUp = false; i.A.Enabled = false;
+        Eq(StatusModel.Build(i).Get("comfyA").Actions.Count, 0, "a card that is off offers no start");
     }
 
     static void StatusSummaryAndTooltip()
@@ -821,13 +832,12 @@ public static partial class T
         string root = NewProject();
         var m = MachineFile.Load(root);
         var d = DesktopSettings.From(m);
-        Check(!d.StartScriptSet && d.ComfyDesktopExe == null && d.ComfyAUrl.EndsWith(":8188") && d.ComfyBUrl.EndsWith(":8189"), "defaults without settings");
+        Check(!d.StartScriptSet && d.ComfyAUrl.EndsWith(":8188") && d.ComfyBUrl.EndsWith(":8189"), "defaults without settings");
         Directory.CreateDirectory(Path.Combine(root, "local"));
         File.WriteAllText(Path.Combine(root, "local", "machine.json"),
-            "{\"desktop\":{\"comfyA\":{\"desktopExe\":\"C:\\\\Comfy\\\\ComfyUI.exe\",\"url\":\"http://127.0.0.1:9000/\"},\"comfyB\":{\"startScript\":\"x.ps1\"}}}");
+            "{\"desktop\":{\"comfyA\":{\"url\":\"http://127.0.0.1:9000/\"},\"comfyB\":{\"startScript\":\"x.ps1\"}}}");
         d = DesktopSettings.From(MachineFile.Load(root));
         Check(d.StartScriptSet, "a start script that is set is noticed (it is ignored and said so)");
-        Eq(d.ComfyDesktopExe, "C:\\Comfy\\ComfyUI.exe", "the ComfyUI Desktop exe is read from the same key as before");
         Eq(d.ComfyAUrl, "http://127.0.0.1:9000", "the card's address is read");
     }
 }

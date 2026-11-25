@@ -117,12 +117,12 @@ let simulationSpeed = 1
 type MockEngine = 'running' | 'starting' | 'stopped' | 'failed'
 type MockGpu = { enabled: boolean; allowed: GpuKind[]; free_after_job: boolean; engine: MockEngine; owned: boolean; idle: number; last_error: string }
 const GPU_INFO: Record<'a' | 'b', { gpu: string; url: string; possible: GpuKind[]; vram_total_mb: number; note: string }> = {
-  a: { gpu: 'RTX 3060', url: 'http://127.0.0.1:8188', possible: ['pictures', 'model', 'review'], vram_total_mb: 12288, note: 'The other card can take over everything this card does.' },
-  b: { gpu: 'RTX 3080', url: 'http://127.0.0.1:8189', possible: [...GPU_KINDS], vram_total_mb: 10240, note: 'Rigging only runs on this card.' },
+  a: { gpu: 'RTX 3060', url: 'http://127.0.0.1:8188', possible: [...GPU_KINDS], vram_total_mb: 12288, note: 'The other card can take over everything this card does.' },
+  b: { gpu: 'RTX 3080', url: 'http://127.0.0.1:8189', possible: [...GPU_KINDS], vram_total_mb: 10240, note: 'The other card can take over everything this card does.' },
 }
 const gpuState: Record<'a' | 'b', MockGpu> = {
-  // a is run by ComfyUI Desktop (running, not the app's); b is started by the app when a step needs it.
-  a: { enabled: true, allowed: [...GPU_KINDS], free_after_job: false, engine: 'running', owned: false, idle: 0, last_error: '' },
+  // Both engines are the app's: a was started when a step needed it, b starts with its next step.
+  a: { enabled: true, allowed: [...GPU_KINDS], free_after_job: false, engine: 'running', owned: true, idle: 0, last_error: '' },
   b: { enabled: true, allowed: [...GPU_KINDS], free_after_job: false, engine: 'stopped', owned: false, idle: 0, last_error: '' },
 }
 // Shared card settings (PUT /api/gpus): the default card (null: each step's usual card) and sharing when busy.
@@ -203,11 +203,11 @@ function gpuList(): Gpu[] {
         : null,
       queued: store.jobs.filter((j) => j.instance === name && j.status === 'queued').length,
       can_run: [],
-      note: reachable && !st.owned ? `${info.note} ${name === 'a' ? 'Started by ComfyUI Desktop' : 'Started outside the app'}; the app leaves it running.` : info.note,
+      note: reachable && !st.owned ? `${info.note} Started outside the app; the app leaves it running.` : info.note,
       allowed_kinds: GPU_KINDS.filter((k) => st.allowed.includes(k)),
       possible_kinds: info.possible,
       effective_kinds: info.possible.filter((k) => st.allowed.includes(k)),
-      kind_notes: name === 'a' ? { rigging: "Rigging only runs on the RTX 3080's instance." } : {},
+      kind_notes: {},
       free_after_job: st.free_after_job,
       state,
       owned: st.owned && st.engine !== 'stopped',
