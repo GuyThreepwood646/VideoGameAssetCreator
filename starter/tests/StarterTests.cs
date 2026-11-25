@@ -180,6 +180,7 @@ public static partial class T
             Safety5All();
             Safety6All();
             Safety7All();
+            RestartAll();
         }
         finally
         {

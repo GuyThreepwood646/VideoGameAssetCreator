@@ -70,7 +70,25 @@ export function finishedBarShown(asset: Asset, stage: StageId, autopilot: Autopi
 }
 
 // "Step 3 of 6: Build the 3D model. You kept version 1, and it passed every check." with the way to the finished asset.
-function FinishedBar({ asset, stage, info, selected, saving = false }: { asset: Asset; stage: StageId; info: StageInfo | null; selected: Version | undefined; saving?: boolean }) {
+// The whole-asset checks of a finished asset, shown below the step's own content on steps 4 to 6 (UX-02). Earlier
+// steps keep them folded in the one-row finished bar.
+export function FinishedChecks({ asset, stage }: { asset: Asset; stage: StageId }) {
+  const items = attentionItems(asset)
+  if (items.length === 0) return null
+  return (
+    <Disclosure label={`${items.length} check${items.length === 1 ? '' : 's'} on the whole asset`} className="finish-bar-warn small">
+      <div className="muted small">{verdictLine(items)}</div>
+      <TieredChecks asset={asset} items={items} stage={stage} />
+    </Disclosure>
+  )
+}
+
+// Whether the finished bar's whole-asset checks move below the step's own content: the finished bar on steps 4 to 6.
+export function checksBelowBar(stage: StageId): boolean {
+  return STAGES.indexOf(stage) >= 3
+}
+
+function FinishedBar({ asset, stage, info, selected, saving = false, checksBelow = false }: { asset: Asset; stage: StageId; info: StageInfo | null; selected: Version | undefined; saving?: boolean; checksBelow?: boolean }) {
   const stepNo = STAGES.indexOf(stage) + 1
   const name = stagePlain(stage, info)
   const versions = versionsOf(asset, stage)
@@ -94,7 +112,7 @@ function FinishedBar({ asset, stage, info, selected, saving = false }: { asset: 
         </div>
         <div className="guide-happened">{kept}</div>
         <div className="guide-now muted">The whole asset is finished. A change here makes a new version; the finished files stay until you rebuild the steps after it.</div>
-        {warns > 0 && (
+        {warns > 0 && !checksBelow && (
           <Disclosure label={`${warns} check${warns === 1 ? '' : 's'} on the whole asset`} className="finish-bar-warn small">
             <div className="muted small">{verdictLine(items)}</div>
             <TieredChecks asset={asset} items={items} stage={stage} />
@@ -166,7 +184,7 @@ export function GuidePanel({ asset, stage, jobs, stages, estimates, active, sele
     return <FinishCard asset={asset} byAutopilot={autopilot?.status === 'done'} onMakeVariant={onMakeVariant} onFix={onFix} busy={busy} onChanged={onChanged} />
   }
   if (finishedBarShown(asset, stage, autopilot, jobs, selected)) {
-    return <FinishedBar asset={asset} stage={stage} info={info(stage)} selected={selected} saving={!!keepingId && keepingId !== selected?.id} />
+    return <FinishedBar asset={asset} stage={stage} info={info(stage)} selected={selected} saving={!!keepingId && keepingId !== selected?.id} checksBelow={checksBelowBar(stage)} />
   }
 
   // "Make it" shows whenever nothing is running and the asset is not finished.

@@ -127,7 +127,7 @@ export default function ModelsPanel({ onChanged, onClose }: { onChanged?: () => 
               disabled={busy || !s.enough_space || !phraseOk || !data?.models_folder}
               onClick={() => void run(async () => void (await api.startModelSet(s.id, typed)))}
             >
-              {job?.state === 'stopped' || job?.state === 'failed' ? 'Try again' : 'Get this set'}
+              {job?.state === 'stopped' || job?.state === 'failed' ? 'Try again' : 'Download this set'}
             </button>
           )}
           {job?.state === 'working' && (

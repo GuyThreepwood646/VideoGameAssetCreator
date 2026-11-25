@@ -914,6 +914,8 @@ export type HealthMemory = {
 export type Health = {
   ok: boolean
   version: string
+  // Which backend answered: after a restart request its `restart_id` is the id the request returned.
+  backend?: { pid: number; started_at: string; restart_id: string | null; launcher_restart: boolean }
   instances: Record<string, HealthInstance>
   host: { ram_total_bytes: number; ram_free_bytes: number; ram_free_gb: number; min_free_ram_gb: number; cpu_percent: number }
   queue: Record<string, { paused: boolean; enabled?: boolean; current_job_id: string | null; queued?: number; next_job_id?: string | null }>
@@ -940,6 +942,8 @@ export const api = {
   gpus: () => get<Gpu[]>('/api/gpus'),
   setGpu: (instance: string, body: GpuPatch) => put<Gpu[]>(`/api/gpus/${instance}`, body),
   setGpuSharing: (body: GpuSharingPatch) => put<Gpu[]>('/api/gpus', body),
+  // Asks VGAC.exe to restart the app's engine; answers before it stops. 409 with a plain sentence when steps are running.
+  restartApp: (engines: 'keep' | 'restart', force: boolean) => post<{ id: string; engines: string; restart_engines: string[] }>('/api/restart', { engines, force }),
   startGpu: (instance: string) => post<Gpu[]>(`/api/gpus/${instance}/start`),
   stopGpu: (instance: string) => post<Gpu[]>(`/api/gpus/${instance}/stop`),
   setup: (refresh = false) => get<SetupReport>('/api/setup' + (refresh ? '?refresh=1' : '')),

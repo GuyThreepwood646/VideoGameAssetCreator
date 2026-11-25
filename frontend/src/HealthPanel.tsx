@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { api, type Health, type HealthInstance } from './api'
+import { api, ApiError, type Health, type HealthInstance } from './api'
+import { RESTART_TEXT } from './help'
 import { Link } from 'react-router'
 import GpuCards from './GpuCards'
 import SetupCheck from './SetupCheck'
@@ -165,6 +166,67 @@ export function HealthBadge() {
   )
 }
 
+// Asks VGAC.exe to restart the app's engine, then waits until the engine that answers is the one that request started.
+function RestartApp({ health }: { health: Health | null }) {
+  const [alsoCards, setAlsoCards] = useState(false)
+  const [phase, setPhase] = useState<'idle' | 'working' | 'done' | 'failed'>('idle')
+  const [refused, setRefused] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function go(force: boolean) {
+    setRefused(null)
+    setError(null)
+    try {
+      const { id } = await api.restartApp(alsoCards ? 'restart' : 'keep', force)
+      setPhase('working')
+      const until = Date.now() + 180_000
+      while (Date.now() < until) {
+        await new Promise((r) => window.setTimeout(r, 2000))
+        try {
+          const h = await api.health()
+          if (h.backend?.restart_id === id) {
+            setPhase('done')
+            return
+          }
+        } catch {
+          // the engine is down while it restarts
+        }
+      }
+      setPhase('failed')
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && /working on/.test(e.message)) setRefused(e.message)
+      else setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const unavailable = health?.backend != null && !health.backend.launcher_restart
+  return (
+    <div className="restart-app">
+      <h2>{RESTART_TEXT.title}</h2>
+      <div className="meta">{RESTART_TEXT.explain}</div>
+      <label className="check-row">
+        <input type="checkbox" checked={alsoCards} disabled={phase === 'working'} onChange={(e) => setAlsoCards(e.target.checked)} />
+        {RESTART_TEXT.alsoCards}
+      </label>
+      <button type="button" className="small-btn" disabled={phase === 'working' || unavailable} onClick={() => void go(false)}>
+        {RESTART_TEXT.button}
+      </button>
+      {refused && (
+        <div className="warn">
+          {refused}{' '}
+          <button type="button" className="small-btn" onClick={() => void go(true)}>
+            {RESTART_TEXT.anyway}
+          </button>
+        </div>
+      )}
+      {error && <div className="error">{error}</div>}
+      {phase === 'working' && <div className="meta">{RESTART_TEXT.working}</div>}
+      {phase === 'done' && <div className="meta">{RESTART_TEXT.done}</div>}
+      {phase === 'failed' && <div className="error">{RESTART_TEXT.failed}</div>}
+    </div>
+  )
+}
+
 export default function HealthPanel() {
   const { health, error, updated } = useHealth()
   return (
@@ -225,6 +287,7 @@ export default function HealthPanel() {
         </div>
       )}
       {!health && !error && <div className="host">Loading...</div>}
+      {!error && <RestartApp health={health} />}
       </div>
       </div>
     </div>

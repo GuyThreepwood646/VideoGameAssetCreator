@@ -84,6 +84,12 @@ namespace Vgac.Starter
         Dictionary<string, GpuInfo> gpus;
         bool gpusFromBackend;
 
+        // A restart asked for by the backend (local/restart-request.json). The file is deleted before the event is raised, so a
+        // request is never read twice; one the launcher cannot act on yet (RestartBusy) stays until it is a minute old.
+        public event Action<RestartRequest> RestartAsked;
+        public Func<bool> RestartBusy;
+        readonly HashSet<string> handledRequests = new HashSet<string>();
+
         public event Action<StatusSnapshot> Changed;
         public event Action BackendCameUp;
 
@@ -183,11 +189,31 @@ namespace Vgac.Starter
                 if (backendUp && !backendWasUp) { var cb = BackendCameUp; if (cb != null) cb(); }
                 backendWasUp = backendUp;
                 MaybeStartB(i, backendUp);
+                CheckRestartRequest();
                 var ch = Changed;
                 if (ch != null) ch(snap);
             }
             catch (Exception e) { log.Line("check failed: " + e.Message); }
             finally { Interlocked.Exchange(ref ticking, 0); }
+        }
+
+        void CheckRestartRequest()
+        {
+            string path = RestartRequests.FilePath(backend.L.ProjectRoot);
+            if (!File.Exists(path)) return;
+            string text;
+            try { text = File.ReadAllText(path, Encoding.UTF8); } catch (Exception) { return; }   // being written: next tick
+            RestartRequest r = RestartRequests.Parse(text);
+            long now = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+            Func<bool> busy = RestartBusy;
+            RequestVerdict v = RestartRequests.Judge(r, now, handledRequests, busy != null && busy());
+            if (v == RequestVerdict.Wait) return;
+            try { File.Delete(path); }
+            catch (Exception e) { log.Line("restart request: could not delete the request file (" + e.Message + ")"); if (v == RequestVerdict.Act) handledRequests.Add(r.Id); return; }
+            if (v == RequestVerdict.Drop) { log.Line("restart request: ignored (" + (r == null ? "unreadable" : "too old or already handled") + ") and deleted"); return; }
+            handledRequests.Add(r.Id);
+            var ev = RestartAsked;
+            if (ev != null) ev(r);
         }
 
         // Once per run, when the backend is up and card b is on but ComfyUI B is not there: ask the backend to start it.
