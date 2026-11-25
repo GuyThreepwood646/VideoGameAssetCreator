@@ -147,6 +147,9 @@ class _SC:
     def lineage_file(self, key, stages=None):
         return self.files.get(key)
 
+    def stage_version(self, stage):
+        return SimpleNamespace(metrics={"flagged_views": list(getattr(self, "flagged", []))})
+
     def file(self, key):
         return self.registered.get(key)
 
@@ -279,6 +282,74 @@ def test_pixal3d_refused_in_plain_words_when_files_or_views_are_missing(build_en
     with pytest.raises(ValueError, match="hair from the library"):
         asyncio.run(mesh_stage._trellis(sc, sc.version.params))
     assert not build_env.calls
+
+
+# --- the humanoid category's default (data/categories/humanoid.yaml builder_default) ------------------------------------
+
+
+def _humanoid(env, params, files=None, flagged=()):
+    sc = _SC(env.dir, params, files or env.files)
+    sc.category = {"input_view_default": "quarter", "builder_default": "pixal3d"}
+    sc.flagged = list(flagged)
+    return sc
+
+
+def test_category_data_gives_only_the_humanoid_the_four_view_default():
+    assert reference.category("humanoid")["builder_default"] == "pixal3d"
+    assert [c for c in reference._data()["categories"] if reference.category(c).get("builder_default")] == ["humanoid"]
+    knob = next(x for x in reference._schema("mesh") if x["name"] == "builder")
+    by = knob["by_category"]
+    assert by["humanoid"]["default"] == "pixal3d"
+    assert {d["default"] for c, d in by.items() if c != "humanoid"} == {"trellis2"}
+
+
+def test_humanoid_builds_from_four_views_when_no_builder_is_chosen(build_env):
+    sc = _humanoid(build_env, {"seed": 3})
+    asyncio.run(mesh_stage._trellis(sc, sc.version.params))
+    assert set(build_env.calls[0]["views"]) == set(PIXAL3D_VIEWS)
+    assert sc.version.params["builder"] == "pixal3d" and "builder_note" not in sc.version.metrics
+
+
+def test_a_builder_the_person_chose_wins_over_the_category_default(build_env):
+    sc = _humanoid(build_env, {"seed": 3, "builder": "trellis2"})
+    asyncio.run(mesh_stage._trellis(sc, sc.version.params))
+    assert build_env.calls[0]["views"] is None and sc.version.params["builder"] == "trellis2"
+    assert "builder_note" not in sc.version.metrics
+
+
+def test_other_categories_keep_the_one_picture_builder(build_env):
+    sc = _SC(build_env.dir, {"seed": 3}, build_env.files)
+    sc.category = {"input_view_default": "concept"}
+    asyncio.run(mesh_stage._trellis(sc, sc.version.params))
+    assert build_env.calls[0]["views"] is None and sc.version.params["builder"] == "trellis2"
+
+
+@pytest.mark.parametrize("case", ["library_hair", "files_missing", "view_flagged", "view_missing"])
+def test_the_default_falls_back_to_one_picture_with_a_plain_note(build_env, monkeypatch, case):
+    files, flagged = build_env.files, ()
+    if case == "library_hair":
+        monkeypatch.setattr(mesh_stage.hairlib, "is_library", lambda sc: True)
+        files = {**files, "bald_quarter_cutout": files["quarter_cutout"]}
+    elif case == "files_missing":
+        monkeypatch.setattr(pixal3d, "missing_files", lambda fresh=False: [MOGE_MODEL])
+    elif case == "view_flagged":
+        flagged = ("back",)
+    else:
+        files = {k: v for k, v in files.items() if k != "right_cutout"}
+    sc = _humanoid(build_env, {"seed": 3}, files, flagged)
+    asyncio.run(mesh_stage._trellis(sc, sc.version.params))
+    assert build_env.calls[0]["views"] is None and sc.version.params["builder"] == "trellis2"
+    note = sc.version.metrics["builder_note"]
+    assert "one picture" in note and "Pixal3D" not in note and "TRELLIS" not in note
+    if case == "view_flagged":
+        assert "back picture" in note
+
+
+def test_a_chosen_four_view_build_still_fails_loudly_when_a_view_is_missing(build_env):
+    files = {k: v for k, v in build_env.files.items() if k != "right_cutout"}
+    sc = _humanoid(build_env, {"builder": "pixal3d"}, files)
+    with pytest.raises(FileNotFoundError, match="right picture"):
+        asyncio.run(mesh_stage._trellis(sc, sc.version.params))
 
 
 def test_unknown_builder_is_an_error():

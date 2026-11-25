@@ -96,6 +96,7 @@ MODEL_LOADERS: dict[str, tuple[str, str, str, bool]] = {
     "klein": ("UNETLoader", "unet_name", "concept", False),
     "anima": ("UNETLoader", "unet_name", "concept", False),
     "chroma": ("UNETLoader", "unet_name", "concept", False),
+    "pose_control": ("ModelPatchLoader", "name", "concept", True),
     "qwen_edit": ("UNETLoader", "unet_name", "turnaround", True),
     "qwen_angles_lora": ("LoraLoaderModelOnly", "lora_name", "turnaround", True),
     "qwen_lightning_lora": ("LoraLoaderModelOnly", "lora_name", "turnaround", True),

@@ -201,6 +201,18 @@
    "required": false,
    "note": "One file for both: the Z-Image Base graph and the FLUX.2 Klein graph load it by this name. The Comfy-Org/flux2-klein-4b repository holds the same file (same SHA-256)."
   },
+  "pose_control": {
+   "url": "https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/resolve/main/Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps.safetensors",
+   "page": "https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1",
+   "size": 6712485600,
+   "sha256": "d1251cc7bc3486bc61d25c3be498ef394c31c85ddf4ee9137d2e933411f4a689",
+   "dest": "model_patches",
+   "save_as": "Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps.safetensors",
+   "publisher": true,
+   "name": "Z-Image Turbo pose control (Fun ControlNet Union 2.1)",
+   "licence": "Apache-2.0",
+   "note": "Alibaba PAI's own repository (Apache-2.0 on its card). Makes the first picture of a character follow a fixed A-pose skeleton. Size and SHA-256 are the publisher's own (Hugging Face X-Linked-Size and X-Linked-ETag, read 2026-11-25) and match the file already installed."
+  },
   "flux_ae": {
    "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors",
    "page": "https://huggingface.co/Comfy-Org/z_image_turbo",
@@ -694,6 +706,7 @@
    "items": [
     "model:zturbo",
     "model:zimage_te",
+    "model:pose_control",
     "model:flux_ae",
     "model:qwen_edit",
     "model:qwen_te",
