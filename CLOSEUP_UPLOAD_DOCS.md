@@ -28,14 +28,7 @@ TURNAROUND_VIEWS = ("front", "left", "back", "right", "quarter", "quarter2", "to
 The frontend provides user-friendly names for each view in `OwnPictures.tsx`:
 
 ```typescript
-export const VIEW_NAMES: Record<string, string> = { 
-  front: 'Front', 
-  left: 'Left side', 
-  back: 'Back', 
-  right: 'Right side', 
-  quarter: 'Three-quarter', 
-  top: 'Top' 
-}
+export const VIEW_NAMES: Record<string, string> = { front: 'Front', left: 'Left side', back: 'Back', right: 'Right side', quarter: 'Three-quarter', quarter2: 'Three-quarter (other side)', top: 'Top' }
 ```
 
 ### UI Components
@@ -93,17 +86,7 @@ The backend supports:
 
 ## Testing
 
-A comprehensive test script (`test_closeup_upload.py`) validates:
-
-1. **Backend Views**: Verifies that the backend supports all expected views
-2. **Frontend View Names**: Ensures the frontend VIEW_NAMES matches backend views
-3. **API Endpoint**: Confirms the uploadView endpoint is properly defined
-4. **UI Integration**: Checks that all views are properly rendered in the UI
-
-Run the tests with:
-```bash
-python test_closeup_upload.py
-```
+There is no closeup upload test script. The view list is checked by `backend/tests/test_refine_views.py`, which reads `TURNAROUND_VIEWS` from `backend/vgac/reference.py`. Run the backend tests with `.venv\Scripts\python -m pytest -q tests` from `backend/` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Limitations and Notes
 

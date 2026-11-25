@@ -49,12 +49,12 @@ A second script does the rest of the list. Same rules as the first: the default 
 |------|--------------|--------------------|
 | Models and add-ons | A select list of every model in `models.yaml` and add-on in `addons.yaml` (exact file names), with size, the licence line from the yaml, and the source. Yes or no per item; files already there are skipped; nothing is replaced. Downloads resume after an interruption and are checked against the published size and SHA-256. It shows "Built and tested on 10 GB and 12 GB NVIDIA cards. Less than 10 GB is untested and may fail." and a `[!] Warning` line when `nvidia-smi` shows under 10 GB. `-Only id,id` picks items. Your own additions go in `setup/downloads.local.json` | Links, sizes and checksums are in `setup/downloads.json`, read from the Hugging Face file lists on 6 Nov 2026. Edit a link there; no code change |
 | Licence steps | Anima ("I have read this"), Gemma 3 12B ("I accept the Gemma terms myself", with Google's terms link). You type the sentence; the helper never accepts for you, and `-Yes` skips these items | An item is not downloaded unless you type its sentence |
-| Node packs | `ComfyUI-SkinToken` (GitHub zip) and the project's own `vgac-nodes` (copied from `comfy-nodes/`) into `custom_nodes`. Skips a pack that is there, never overwrites, never restarts ComfyUI, never runs `pip` (it prints the line when a pack has a `requirements.txt`) | The GitHub repository's default branch is `main` (checked) |
+| Node packs | `ComfyUI-SkinToken` (GitHub zip) and the project's own `vgac-nodes` (copied from `comfy-nodes/`) into `custom_nodes`. Skips a pack that is there, never overwrites, never restarts ComfyUI, never runs `pip` (it prints the line when a pack has a `requirements.txt`) | The GitHub repository's default branch is `main` (checked). This script leaves an existing `vgac-nodes` alone; the app's own "Add the node packs VGAC needs" step replaces an outdated copy (the old folder is backed up first) |
 | Blender | Accepts an existing Blender 5.0 or newer (tested with 5.2.3), refuses below 5.0, and otherwise fetches 5.2.3 portable into the project's `tools` folder after asking, checking the zip against Blender's own checksum file | Not read back: see "Could not be confirmed" |
 | Animation packs | Shows the plain description of each Quaternius pack. You download the zip (itch.io needs a click-through) and give the helper its path (`-Ual1Zip`, `-Ual2Zip`, or it asks); it unpacks into `data/animations/ual1` or `ual2`, keeping the folder names inside the zip | Pages: quaternius.itch.io, linked from quaternius.com |
 | Hair packs | A pick list with the pack descriptions; the choice is written to `library/hair-packs.json`. Then it gets the packs you kept (the two MakeHuman zips by direct link after asking; the Quaternius zip you download yourself and give with `-QuaterniusZip`), unpacks them into `runtime/hairpacks` and builds the hair library into `library/hairlib` (needs Blender 5 and the backend venv), checks it with `tools/hairlib_verify.py` and swaps it in. Safe to run again: a pack already unpacked or a library already built is skipped. `-HairPacks id,id` picks without asking | See "Hair packs" below |
 | SkinToken's Blender path | Sets the user setting `SKINTOKEN_BLENDER_BIN` to the Blender it found (5.0 or newer), for this Windows account only (`setup\Set-SkinTokenBlender.ps1`, run from the SkinToken part of `Setup-Extras.ps1`). Restart ComfyUI after it changes |
-| Settings | Writes proposed copies `backend/config.proposed.yaml`, `desktop/config.proposed.json`, `runtime/start-comfy-b.proposed.ps1` and `runtime/start-comfy-a.proposed.ps1` from what it finds (project folder, cards, `-ComfyRoot` and `-ComfyInstall`, Blender 5.x, Unity, input and output folders, animation pack paths). Never edits or overwrites an existing file, an earlier proposed one included. A key whose value already fits this PC is left out | One card: engine B only, `stage_instances`, `material_stage_instances` and `judge_instance` all on b, and no engine A start script |
+| Settings | Writes proposed copies `backend/config.proposed.yaml`, `desktop/config.proposed.json`, `runtime/start-comfy-b.proposed.ps1` and `runtime/start-comfy-a.proposed.ps1` from what it finds (the launcher reads the card B script only when `desktop.comfyB.startScript` names it; nothing reads the card A script, since the app starts card A from its `engine` settings) (project folder, cards, `-ComfyRoot` and `-ComfyInstall`, Blender 5.x, Unity, input and output folders, animation pack paths). Never edits or overwrites an existing file, an earlier proposed one included. A key whose value already fits this PC is left out | One card: engine B only, `stage_instances`, `material_stage_instances` and `judge_instance` all on b, and no engine A start script |
 
 Could not be confirmed (so left to you, or guarded):
 
@@ -86,8 +86,8 @@ means the person does it, and the helper only reports on it.
 | 4 | RAM | The job queue holds work while free RAM is below `min_free_ram_gb` (24 in `backend/config.yaml`) | n/a | n/a | n/a | By hand (lower the number for a smaller PC) |
 
 Also needed on a PC that is not the author's: this PC's values in `local/machine.json` (untracked): each engine's
-ComfyUI folder and card, `blender_exe`, `unity_exe`, `comfy_input_dir`, and ComfyUI Desktop's path for
-the launcher (docs/ADVANCED.md, "Settings files"). Section "What is still needed before other people can install this"
+ComfyUI folder and card (`instances.a.engine` and `instances.b.engine`), `blender_exe`, `unity_exe` and
+`comfy_input_dir` (docs/ADVANCED.md, "Settings files"). Section "What is still needed before other people can install this"
 says what a later round does about that. Until then, write that file by hand; `setup\Check-Setup.ps1` says which
 Blender and Unity it found.
 
@@ -113,7 +113,7 @@ Blender and Unity it found.
 
 | # | Item | What it is for | Size | Where from | Licence | Who installs |
 |---|------|----------------|------|------------|---------|--------------|
-| 13 | Blender 5.0 or newer (tested with 5.2.3; portable zip). Path in `blender_exe` | Cleans up the mesh, builds LODs, exports FBX and GLB, runs the rig checks | about 400 MB unzipped | blender.org | GPL (a tool the app runs; it does not ship it) | By hand: unzip, then set `blender_exe` in `backend/config.yaml` and the `SKINTOKEN_BLENDER_BIN` line in `runtime/start-comfy-*.ps1` |
+| 13 | Blender 5.0 or newer (tested with 5.2.3; portable zip). Path in `blender_exe` | Cleans up the mesh, builds LODs, exports FBX and GLB, runs the rig checks | about 400 MB unzipped | blender.org | GPL (a tool the app runs; it does not ship it) | By hand: unzip, then set `blender_exe` in `backend/config.yaml`. The setup helper's SkinToken part sets `SKINTOKEN_BLENDER_BIN` for this Windows account |
 | 14 | Unity Hub, then Editor 6000.0 (Unity 6) or newer (tested with 6000.4.3f1) | Imports the finished asset into the sandbox project and makes the prefab | about 10 GB with Windows build support | unity.com/download | Unity Personal (free for small teams) or Pro. Needs a Unity account and an activated licence | By hand (account, sign-in and licence are yours to do; the helper cannot check the licence) |
 | 15 | Animation packs `data/animations/ual1` and `ual2` (Universal Animation Library Standard and 2 Standard, by Quaternius) | Ready-made walk, run and other moves for humanoid characters | tens of MB each | Quaternius's pages (itch.io / quaternius.com); keep the folder names the config expects | CC0 | By hand: download, unzip into `data/animations`, keeping the names in `clips_libraries` |
 
@@ -121,7 +121,7 @@ Blender and Unity it found.
 
 | # | Item | What it is for | Size | Where from | Licence | Who installs |
 |---|------|----------------|------|------------|---------|--------------|
-| 16 | ComfyUI Desktop 0.34.0 or newer (tested with 0.45.3) | The engine that runs the picture, 3D and rigging models. The app talks to it over HTTP at the ports in `backend/config.yaml` | about 5 GB with its Python | comfy.org (its own installer) | GPL-3.0 | By hand |
+| 16 | ComfyUI Desktop 0.34.0 or newer (tested with 0.45.3) | The engine that runs the picture, 3D and rigging models. The app talks to it over HTTP at the ports in `backend/config.yaml`, and starts and stops both engines itself | about 5 GB with its Python | comfy.org (its own installer), or the app's own ComfyUI copy (choice C, or A to share your models, from the ComfyUI panel in "Is everything ready?") | GPL-3.0 | By hand, or the app's install |
 | 17 | Custom node packs: `ComfyUI-SkinToken` (rigging), `vgac-nodes` (the project's own mesh loader, in this repo), plus the packs that supply the TRELLIS.2, Hunyuan3D and background-removal nodes | Parts of the graphs the app sends | small each | ComfyUI Manager, or each pack's GitHub page | Each pack's own licence | By hand. The app's own "Is everything ready?" check lists which node classes are missing |
 | 18 | Models, exact file names from `backend/vgac/data/models.yaml` | The picture, side-view, 3D and rigging models | About 60 to 100 GB in all (estimate) | Each model's official page (Hugging Face) | See the next table | By hand |
 | 19 | Add-ons (small LoRA files), names from `backend/vgac/data/addons.yaml` | Extra looks (clay, PS1 style), the two the side views need, and the late-90s add-on the Retro 64 look always loads (in the Starter set) | tens to hundreds of MB each | Hugging Face pages named in `addons.yaml` | Apache-2.0 | By hand |
@@ -153,7 +153,7 @@ its own card and port. A one-card PC is expected for most people, so the helper 
 failure: with one card of 10 GB or more it shows the card as Ready, with a note; under 10 GB it shows "Needs you"
 because that is untested. The model check asks whichever ComfyUI is running, so one engine is enough to be checked.
 
-What the app does for you: it can turn a card off (Health page, "Graphics cards"), and `instance_capabilities` in
+What the app does for you: it can turn a card off (System page, "Graphics cards"), and `instance_capabilities` in
 `backend/config.yaml` (see the comment block there) says what each card can take over. With one card, work that
 preferred the other card runs on it, one graphics step at a time.
 
@@ -164,8 +164,10 @@ What a one-card PC has to get right, not built or tested in this round:
    `SKINTOKEN_BLENDER_BIN`: the backend sets it on each ComfyUI it starts itself, but a ComfyUI started by someone else
    needs it set (the helper's SkinToken part does this; restart that ComfyUI after it changes).
 2. In the app, switch off the card you do not have. Pictures and the 3D model then use the one card.
-3. Memory: a 10 GB card ran the pictures and rigging on the author's PC; a 12 GB card ran the 3D model. Whether one
-   10 GB card can run the 3D model is not recorded anywhere in the repository. Treat it as unknown.
+3. Memory: a 10 GB card ran the pictures and rigging on the author's PC; a 12 GB card ran the 3D model. The 3D build is
+   sized for a 10 GB card: a decoded mesh above 16 million vertices is thinned before the texture bake, and the bake
+   reference is clustered to at most 16 million vertices (`backend/vgac/graphs/trellis.py:28,32`). The 3D step has been
+   run on a 10 GB card for large subjects, with little headroom (peak memory 8.4 GB and 9.4 GB on 2026-11-24); a 12 GB card is more comfortable.
 4. Run one job at a time; two ComfyUIs sharing one card is likely to fail and the helper flags it.
 
 ## Licence rules for the later download step
@@ -294,8 +296,8 @@ What stays manual, what a later round of the helper could automate, and what it 
 
 Settings files: the helper never edits `backend/config.yaml` or `desktop/config.json`. When the project folder path
 differs, `-Install` writes `backend/config.proposed.yaml` and `desktop/config.proposed.json` beside them. Paths it
-does not propose and you must set by hand: the ComfyUI paths in the two start scripts, `desktopExe` in
-`desktop/config.json`, `comfy_input_dir` and the Blender path.
+does not propose and you must set by hand: the ComfyUI paths in the start scripts, `comfy_input_dir` and the
+Blender path.
 
 After setup, start the app (desktop shortcut or `backend/run.ps1`) and open "Is everything ready?" in the app for the
 deeper check of ComfyUI node packs and models.

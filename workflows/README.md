@@ -1,6 +1,6 @@
 # workflows
 
-ComfyUI API-format JSON graphs, one file per engine, as `POST /prompt` accepts them. They are written from the
+ComfyUI API-format JSON graphs, one file per graph, as `POST /prompt` accepts them. They are written from the
 graph builders in `backend/vgac/graphs/` with default parameters by
 
     cd backend
@@ -20,7 +20,7 @@ scripts they were ported from.
 | `birefnet_cutout.json` | `graphs.birefnet.cutout_graph` | B | `bakeoff/turnaround.py` |
 | `trellis_convert.json` | `graphs.trellis.convert_graph` | A | `bakeoff/convert.py` |
 | `hy3d_mv.json` | `graphs.hy3d.hy3d_graph` | A | `bakeoff/mesh.py` |
-| `skintoken_rig.json` | `graphs.skintoken.rig_graph` | B | `bakeoff/rig.py` |
+| `skintoken_rig.json` | `graphs.skintoken.rig_graph` | B (A when B is off) | `bakeoff/rig.py` |
 | `material_surface.json` | `graphs.material.t2i_graph` | B | `bakeoff/material.py` |
 | `judge_local.json` | `graphs.judge.judge_graph` | B | `bakeoff/judge.py` |
 

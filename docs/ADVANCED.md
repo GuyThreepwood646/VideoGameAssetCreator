@@ -22,16 +22,16 @@ The app is four services on your own PC. The desktop launcher starts the ones th
 
 | Service | Address | What it does |
 |---|---|---|
-| **ComfyUI A** ("engine A") | `http://127.0.0.1:8188` | Builds 3D models (TRELLIS.2, Hunyuan3D). Normally ComfyUI Desktop on the first card |
+| **ComfyUI A** ("engine A") | `http://127.0.0.1:8188` | Builds 3D models (TRELLIS.2, Hunyuan3D). Started and stopped by the app, like engine B |
 | **ComfyUI B** ("engine B") | `http://127.0.0.1:8189` | Pictures, side views and rigging (Z-Image, Qwen-Image-Edit, SkinToken). The same ComfyUI install launched a second time on the other card, by the backend from the engine settings in `local/machine.json` |
 | **Backend** | `http://127.0.0.1:8765` | Python (FastAPI). Holds the job queue, runs Blender and Unity, stores everything in `library/` |
 | **App screens** | served by the backend | React and Three.js, built into `frontend/dist` |
 
 Work is split into three queues: `a`, `b` and `host` (Blender and Unity on the PC itself). Each queue runs one job at a time, so a card never runs two models at once. A job waits while free system RAM is below `min_free_ram_gb`, and jobs left running by a crash are put back in the queue on restart.
 
-The **Health** page shows each card, lets you switch one off, and picks a default card. With **"Use the other card when one is busy"** ticked, a waiting step moves to an idle card that can do it.
+The **System** page shows each card, lets you switch one off, and picks a default card. With **"Use the other card when one is busy"** ticked, a waiting step moves to an idle card that can do it.
 
-The backend also starts a ComfyUI itself, from its `engine` settings, when a step needs one and nothing answers. On quit, the launcher stops only the processes it started, and the backend stops only the ComfyUI copies it started. A ComfyUI started by ComfyUI Desktop is never stopped by the app.
+The backend starts either ComfyUI itself, from its `engine` settings, when a step needs it and nothing answers. On quit, the launcher stops only the processes it started, and the backend stops only the ComfyUI copies it started. **Restart backend** in the launcher, for a backend the launcher started, stops the backend's whole process tree, so a ComfyUI the backend started stops too; the app starts it again when a step needs it. If the backend process ends by itself, the app does not stop those copies: they keep running and stay recorded as the app's (`engines.json` in the library folder). A ComfyUI the app did not start is never stopped by the app.
 
 ---
 
@@ -48,7 +48,7 @@ values out of the older tracked files. The previous copy is kept as `machine.jso
 {
   "schema": 1,
   "backend": { "blender_exe": "D:/Tools/blender/blender.exe", "instances": { "b": { "engine": { "comfy_dir": "D:/ComfyUI", "cuda_device": 0 } } } },
-  "desktop": { "comfyA": { "desktopExe": "C:/Program Files/Comfy Desktop/Comfy Desktop.exe" } }
+  "desktop": { "comfyB": { "startScript": "runtime/start-comfy-b.ps1" } }
 }
 ```
 
@@ -72,7 +72,7 @@ values out of the older tracked files. The previous copy is kept as `machine.jso
 | `stage_instances` | Optional. Which engine runs each step. Default `{concept: b, turnaround: b, mesh: a, prep: host, rig: b, export: host}` |
 | `material_stage_instances` | The same, for the `material` category |
 | `judge_instance` | Which engine runs the local picture judge (Gemma 3, optional) |
-| `instance_capabilities` | Which steps each card can take over when the other is switched off. Rigging stays on `b` only by default |
+| `instance_capabilities` | Which steps each card can take over when the other is switched off. Rigging prefers `b`; by default `a` also takes a rig when `b` is off |
 
 Relative paths are relative to the project folder. Restart the backend after editing either file. From the launcher:
 **Services > Restart backend**. Closing the app window is not enough if the backend was started outside the launcher.
@@ -80,8 +80,7 @@ Relative paths are relative to the project folder. Restart the backend after edi
 ### `desktop/config.json`
 
 The launcher's defaults: the ports, logs, process matches and window size; `projectRoot` is `..` (the launcher also
-looks upward for the project folder). Your PC's values (ComfyUI Desktop's `desktopExe`, card names, a start script
-for ComfyUI B) go in `local/machine.json` under `desktop`. Without a start script the launcher asks the backend to
+looks upward for the project folder). Your PC's values (card names, a start script for ComfyUI B) go in `local/machine.json` under `desktop`. Without a start script the launcher asks the backend to
 start ComfyUI B. Edit, then restart the launcher.
 
 ---
@@ -90,8 +89,8 @@ start ComfyUI B. Edit, then restart the launcher.
 
 The app is set up for two cards, but one card of 10 GB or more is expected to work. Not every step has been measured on one card, so treat this as untested.
 
-1. Run **one ComfyUI only**: engine B (port 8189, with its `engine` settings). Rigging only runs on B. Set `"a": null` under `instances` in `local/machine.json` to leave engine A out.
-2. On the **Health** page, switch off the card you do not have. Pictures and 3D models then run on the one card, one step at a time.
+1. Run **one ComfyUI only**: engine B (port 8189, with its `engine` settings). Rigging prefers B; card A takes a rig only when B is off. Set `"a": null` under `instances` in `local/machine.json` to leave engine A out.
+2. On the **System** page, switch off the card you do not have. Pictures and 3D models then run on the one card, one step at a time.
 3. The setup helper's `-Settings` part detects one card and writes `stage_instances`, `material_stage_instances` and `judge_instance` all set to `b`, with no engine A start script.
 4. Do not run two ComfyUIs on one card; it is likely to run out of graphics memory.
 

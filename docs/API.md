@@ -59,7 +59,7 @@ Assets
 
 Running stages (all return {job, version})
 - POST /api/assets/{id}/stages/{stage}/run  body { "parent_version_id"?: str, "params"?: {...}, "count"?: int }
-  Creates `count` (default 1, max 4 for concept) new Versions with status queued and one Job per version.
+  Creates `count` (default 1, max 4; only concept makes more than one, every other step makes 1) new Versions with status queued and one Job per version.
   The parent is the selected version of the previous stage unless given. Concept has no parent.
 - POST /api/versions/{vid}/refine  body { "instruction": str, "view"?: str, "mask_png"?: base64, "params"?: {} }
   New version in the same stage with parent = vid, produced by the stage's refine engine.
@@ -87,11 +87,11 @@ Library
 ## Stage params (the "Adjust" knobs; also accepted by run)
 
 concept: model, seed, width, height, steps, readiness_block (bool), prompt_override
-turnaround: views [front,left,back,right,quarter,top], turn_method "standard|sheet|shadow_free" (sheet: humanoid only, shadow_free: prop_rigid only; the knob's options_by_category lists them; another category drops the knob), lora_strength (standard only), seed, auto_reroll (bool)
+turnaround: views [front,left,back,right,quarter,quarter2,top] (default front, left, back, right, quarter), turn_method "standard|sheet|shadow_free" (sheet: humanoid only, shadow_free: prop_rigid only; the knob's options_by_category lists them; another category drops the knob), lora_strength (standard only), seed, auto_reroll (bool)
 mesh: engine "trellis|hy3d", builder "trellis2|pixal3d" (trellis engine; pixal3d builds from the front, left, back and right views and is listed, and accepted, only when its model files are present; recorded in params, metrics.builder and metrics.recipe.mesh.builder; a build records metrics.camera_fov_deg and camera_fov_source), camera_angle (Pixal3D only, degrees 1 to 170; empty is the front picture's own estimate, "picture"; a number is "chosen"), input_view "concept|front|quarter", target_faces, texture_size, upsample (1024|1536), seed, remesh (bool), head_build (bool, humanoid; empty means on where it applies), head_crop (0.18 to 0.4, empty means 0.26)
 prep: height_m, symmetric (bool), pivot "base|center", smooth_angle, quarter_pictures (bool, humanoid, default true; false leaves the two three-quarter pictures out of the picture projection and the face pass)
 rig: template "auto|mixamo|generic|none", target_faces, group_per_vertex, bottom_center_origin, bend_test (bool)
-export: lods [ratios], collider "hull|none", formats [fbx, glb], unity (bool), clips_library "ual1|ual2|none", sprites (bool), sprite_directions, sprite_size
+export: lods [ratios], collider "auto|hull|decompose|mesh|none" (default auto), collider_max_parts (1 to 32), formats [fbx, glb], unity (bool), clips_library "ual1|ual2|none", sprites (bool), sprite_directions, sprite_size
 
 ## Additions (2026-11-04)
 
@@ -351,3 +351,63 @@ where a row is still in the old label form.
 - POST /api/comfy/packs/report (a linked ComfyUI, backend/vgac/comfy_find.py) -> each pack item gains `outdated` (boolean): true for a present VGAC pack whose copy is an older version. The ComfyUI panel shows it as "out of date, will be updated" and offers Go ahead for it.
 - POST /api/comfy/packs/apply (a linked ComfyUI) replaces an outdated copy with the same backup rule, backing up under `local/pack-backups/`, and lists it in `added` as "<name> (updated: restart ComfyUI)".
 - GET /api/setup gains one item per ComfyUI the app uses that has an outdated vgac-nodes: id `node_pack.<n>`, group tools, state `warn`, label "Node pack out of date", needed_for `mesh` and `rig`. The checked ComfyUIs are VGAC's own install and each instance's linked engine (preflight.py `comfy_apps`). A current copy gives state `ok`; a ComfyUI with no vgac-nodes gives no item.
+
+## Endpoints not listed above (checked 2026-11-24)
+
+Each route below is in the routers under `backend/vgac` (file and line in brackets). Bodies are plain JSON; the code is the reference for their fields.
+
+Versions and the picture steps
+- PUT /api/versions/{vid}/marks/accepted: sets or clears "These look right" on the body marks; used by undo and redo of that step [bodymarks_api.py].
+- POST /api/versions/{vid}/upscale: a new concept version: the finished picture made bigger [own_images.py].
+- GET /api/versions/{vid}/zip: every file of a version in one .zip [main.py].
+- POST /api/versions/{vid}/open-folder: opens the version's folder (the delivered folder when the export has one) in the file explorer [main.py].
+- POST /api/versions/{vid}/fix-plan: the one redraw instruction for the ticked failed checks on a first picture [main.py].
+- GET /api/recipe: the resolved recipe for a style, category and platform, with the add-on entries [main.py].
+- POST /api/assets/{aid}/autopilot/dismiss: "Steer by hand instead": the autopilot goes idle and the steps it left stopped are set aside [main.py].
+- GET, POST, DELETE /api/assets/{aid}/face-closeup: read, keep or stop using the person's own close-up of the face [own_images.py].
+- PUT /api/assets/{aid}/attachments/{att_id}/record: puts back an earlier record of one attachment (undo and redo in the item editor) [items.py].
+- PUT /api/my-addons/{aid}/start-on: sets the categories and uses where one of the person's LoRAs starts on [user_addons.py].
+
+Clean-up, paint and shape (step 4 and the mesh tab)
+- POST /api/versions/{vid}/paint: saves touch-up paint as a new clean-up version [main.py].
+- POST /api/versions/{vid}/smooth: smooths the paint of a painted clean-up, as a new version [main.py].
+- POST /api/versions/{vid}/shape/preview: where each arm's cut would start on this rig; computes only, no job and no version [main.py].
+- POST /api/versions/{vid}/shape: separates a fused arm; a new clean-up version from the one the rig was made from [main.py].
+
+Rig suggestions and pose preview (step 5)
+- GET, POST /api/versions/{vid}/suggestion: read the worn-item suggestion; POST is the Suggest button and queues the suggestion job on the host [parts_api.py].
+- POST /api/versions/{vid}/suggestion/{state}: keep or dismiss a suggested point [parts_api.py].
+- GET /api/versions/{vid}/pose-preview: state of the resting-pose preview [pose_preview.py].
+- POST /api/versions/{vid}/pose-preview: queues one hand preview with the form's Resting pose values [pose_preview.py].
+- GET /api/versions/{vid}/pose-preview/picture: the preview picture [pose_preview.py].
+
+Model sets and content packs
+- GET /api/model-sets: the model sets and what is on this PC [models_setup.py].
+- POST /api/model-sets/{set_id}/start and /stop: start or stop getting a model set [models_setup.py].
+- POST /api/model-sets/verify: checks the model files that are there [models_setup.py].
+- POST /api/model-sets/choose: "I already have this": uses the file at a path for one entry instead of downloading it [models_setup.py].
+- POST /api/model-sets/{set_id}/scan-folder: which files of the set a chosen folder holds; saves nothing [models_setup.py].
+- POST /api/model-sets/{set_id}/use-folder: takes the matches of a folder (all, or the entries in `ids`) as the person's files [models_setup.py].
+- POST /api/model-sets/place: makes a file the engine cannot read where it can: a hard link (same drive) or a copy [models_setup.py].
+- POST /api/model-sets/unchoose: stops using the file that was pointed at; the person's file is never touched [models_setup.py].
+- POST /api/model-sets/accept: records that a model file present on this PC was accepted [models_setup.py].
+- POST /api/model-sets/test_character: records whether a character test passed [models_setup.py].
+- GET /api/packs, GET /api/packs/{kit_id}: the content kits (hair library, animation packs), their state and sources [packs.py].
+- POST /api/packs/{kit_id}/start and /cancel: start or cancel getting a kit [packs.py].
+- POST /api/packs/{kit_id}/clean: removes the kit's leftover files; refused while it is working (409) [packs.py].
+- POST /api/packs/{kit_id}/zip/{source_id}: the zip the person downloaded by hand; it is streamed to disk and checked [packs.py].
+
+Setup, this PC's tools and hardware
+- GET /api/hardware: reads the graphics cards and memory of this PC, with the proposed engines and step layout [hardware_setup.py].
+- POST /api/hardware/accept: saves the proposed engines and step layout; 400 with a plain message on a refused setting [hardware_setup.py].
+- GET, PUT /api/setup/settings: this machine's settings, written from the setup card [setup_settings.py].
+- GET /api/tools/blender: whether Blender is found, linked or to be got [tools_setup.py].
+- POST /api/tools/blender/use: uses the Blender the person chose [tools_setup.py].
+- POST /api/tools/blender/install and /stop: get Blender into the project, or stop that download [tools_setup.py].
+- POST /api/tools/blender/seen: "Fine, keep using it": remembers the version that is there now, so the notice goes away [tools_setup.py].
+- POST /api/tools/blender/zip: the Blender zip the person downloaded by hand [tools_setup.py].
+- GET /api/tools/unity: whether Unity is found, or the guide to get it [tools_setup.py].
+- POST /api/tools/unity/use: uses the Unity the person chose [tools_setup.py].
+- POST /api/comfy/check and POST /api/comfy/link: check a ComfyUI the person has, and link it [comfy_find.py].
+- POST /api/comfy/choice/{choice}: records the person's answer to a ComfyUI setup question [comfy_find.py].
+- POST /api/comfy/install/start, /stop, /engines and /remove, GET /api/comfy/install/status: VGAC's own ComfyUI install (start, stop, its engines, status and removal). Removal is refused (400) until `confirm` is sent [comfy_install.py].

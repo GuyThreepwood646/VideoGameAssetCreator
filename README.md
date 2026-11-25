@@ -90,7 +90,7 @@ powershell -ExecutionPolicy Bypass -File setup\Check-Setup.ps1 -Install
 
 ### Step 4. Install ComfyUI, Blender and Unity
 
-These are the engines the app drives. Install them yourself:
+These are the engines the app drives. Install them yourself, or let the app install its own copy of ComfyUI from the **Is everything ready?** box:
 
 | Tool | What it does in the app | Where to get it |
 |---|---|---|
@@ -120,8 +120,9 @@ The helper wrote suggested settings files next to the real ones, filled in with 
 |---|---|
 | `backend\config.proposed.yaml` | `backend\config.yaml` |
 | `desktop\config.proposed.json` | `desktop\config.json` |
-| `runtime\start-comfy-b.proposed.ps1` | `runtime\start-comfy-b.ps1` |
-| `runtime\start-comfy-a.proposed.ps1` (two cards only) | `runtime\start-comfy-a.ps1` |
+| `runtime\start-comfy-b.proposed.ps1` (optional: only if `desktop.comfyB.startScript` in `local\machine.json` names it) | `runtime\start-comfy-b.ps1` |
+
+The app starts both ComfyUI engines itself, from their `engine` settings, so no card A start script is needed.
 
 What each setting means is in [Advanced: settings files](docs/ADVANCED.md#settings-files).
 
@@ -135,9 +136,9 @@ cd desktop; npm run dist; powershell -ExecutionPolicy Bypass -File make-shortcut
 
 From now on, **double-click VGAC on your desktop**. A small status window starts each service, then the app opens in its own window.
 
-**Last check:** open **Health** in the top bar. The **"Is everything ready?"** box checks every model and node pack and tells you, in plain words, anything that is still missing.
+**Last check:** open **System** in the top bar. The **"Is everything ready?"** box checks every model and node pack and tells you, in plain words, anything that is still missing.
 
-<p align="center"><img src="docs/images/health.png" alt="The Health page: Is everything ready, and the graphics cards" width="620"></p>
+<p align="center"><img src="docs/images/health.png" alt="The System page: Is everything ready, and the graphics cards" width="620"></p>
 
 ---
 
@@ -184,7 +185,7 @@ Under every result is a **"Happy with this?"** bar:
 | **Change something** | Describe a change in words, such as *"make the helmet open-faced"*, or fine-tune the settings |
 | **Thumbs up / down** | Tell the app what you liked, so it can suggest better settings later. Stays on your PC |
 
-Nothing is ever lost. Every try is kept as a version you can go back to.
+Nothing you kept is lost. Every finished try is kept as a version you can go back to. A try you stop, or one that fails, is not kept.
 
 <p align="center"><img src="docs/images/review-and-change.png" alt="The Happy with this bar and the Describe the change box" width="100%"></p>
 
@@ -194,7 +195,7 @@ When the last step finishes, the page shows **Your asset is ready** with a movin
 
 <p align="center"><img src="docs/images/step6-finished.png" alt="The finished asset: real size, Unity checks, moves, sockets, hair and files" width="100%"></p>
 
-- Click **FBX** or **GLB** to download, or **Download FBX** at the top of any step.
+- Click **FBX** or **GLB** to download, or use the **Download FBX** (or **Download GLB**) button on the asset page.
 - Every finished asset is also saved to `exports\<project>\<asset>\` inside the project folder, with its textures, a `manifest.json`, and a `provenance.json` that lists every AI model the steps used, with its version, licence and source. A `README.txt` is added when the asset has hair or spring bones.
 - The **Gallery** page lists every finished asset, with a **Copy** button for its folder.
 
@@ -270,10 +271,10 @@ Builds lower-detail copies, a collision shape and the final FBX and GLB, imports
 - **Hover any small "i"** for a plain explanation of that word or setting. The **Glossary** in the top bar lists them all.
 - **Make a variant** (top of the asset page) makes a copy with one change, such as *"winter cloak with fur trim"*, that still looks like the same character.
 - **Add an item** makes a sword, shield, bow or backpack as its own asset and attaches it to the character, so it can really hold it in your game.
-- **Show guide again** (top bar) reopens the three-step introduction.
+- **Show the guide again** (the **?** menu in the top bar) reopens the three-step introduction.
 - **The dots in the top bar** show whether each engine (the two graphics cards and the host PC) is reachable. Green means ready.
 - **A step says "needs attention"?** Open it: the checks say what failed and usually offer a one-click fix.
-- **Something slow or stuck?** Open **Health**. It shows each graphics card, what it is doing, and lets you switch a card off.
+- **Something slow or stuck?** Open **System**. It shows each graphics card, what it is doing, and lets you switch a card off.
 
 ---
 

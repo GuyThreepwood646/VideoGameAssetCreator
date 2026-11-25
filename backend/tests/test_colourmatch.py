@@ -118,16 +118,23 @@ def test_a_matching_build_is_left_alone_by_the_lightness_stage(tmp_path):
     assert colourmatch.lightness_plan(mesh, tex, pic, pm, "front")["mode"] == "none"
 
 
-def test_a_step2_picture_whose_tone_drifted_from_step1_leaves_the_texture_alone(tmp_path):
-    # The build view came out 10 L brighter than the step-1 picture, which the texture already matches: matching the
-    # build view would carry the redraw's drift into the model, so the lightness stage is skipped.
+def test_a_build_whose_input_view_drifted_darker_than_step1_is_corrected_toward_step1(tmp_path):
+    # Fails on master: the quarter input came out 8 L darker than step 1 (over DRIFT_MAX), so the old match skipped it
+    # and the model kept the dark tone. The target is now step 1's own lightness at the front turn.
     glb, png, tex = _box_glb(tmp_path)
     step1 = _picture_of(glb, tex, tmp_path, l_shift=0.0, name="step1.png")
-    build = _picture_of(glb, tex, tmp_path, l_shift=10.0, name="build.png")
-    before = face.read_rgb(png)
-    rec = colourmatch.match_base_colour(glb, build, png, view="front", step1=step1)
-    assert rec["lightness"]["reason"] == "step2_tone_drift" and rec["lightness"]["drift"] > colourmatch.DRIFT_MAX
-    assert np.array_equal(face.read_rgb(png), before)
+    build = _picture_of(glb, tex, tmp_path, l_shift=-8.0, name="build.png")
+    from PIL import Image
+
+    dark = colourmatch.apply(tex, {"mode": "l_shift", "shift": [-8.0, 0, 0]})  # the model's base colour, 8 L too dark
+    Image.fromarray(face.to_uint8(dark)).save(png)
+    gap_before, _ = _front_gap(glb, png, step1)
+    assert gap_before > 6.0
+    rec = colourmatch.match_base_colour(glb, build, png, view="quarter", step1=step1)
+    assert rec["lightness"]["drift"] < -colourmatch.DRIFT_MAX and rec["lightness"]["target"] == "step1"
+    assert rec["applied"] and rec["lightness"]["mode"] == "l_shift"
+    gap_after, _ = _front_gap(glb, png, step1)
+    assert abs(gap_after) < 2.0
 
 
 def test_a_step2_picture_that_kept_the_tone_is_still_matched(tmp_path):

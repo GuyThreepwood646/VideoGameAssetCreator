@@ -11,8 +11,9 @@ needs it and nothing answers its /system_stats. ensure_running(name):
    SKINTOKEN_BLENDER_BIN set, and a temp folder of its own, because ComfyUI empties its temp folder at every start
    and several engines may run from one install); otherwise the start script (powershell -NoProfile
    -ExecutionPolicy Bypass -File).
-   Record that the backend owns it (the pid, also saved in <library_path>/engines.json so a backend restart still
-   knows), and wait until it answers or start_timeout_seconds pass.
+   The engine's user, output and temp folders are made first. Record that the backend owns it (the pid, also saved
+   in <library_path>/engines.json so a backend restart still knows), and wait until it answers or
+   start_timeout_seconds pass.
 
 stop(name) only ever stops a process tree the backend started itself (taskkill /PID <pid> /T /F on Windows); for
 anything else it raises NotOwned. An instance run by ComfyUI Desktop or the desktop launcher is never stopped.
@@ -213,6 +214,32 @@ def engine_command(settings: Settings, name: str, keep_loaded: bool = False) -> 
     if settings.blender_exe is not None:
         env["SKINTOKEN_BLENDER_BIN"] = str(settings.blender_exe)
     return argv, Path(e.comfy_dir), env
+
+
+def engine_folders(settings: Settings, name: str) -> list[Path]:
+    """The folders instance `name`'s engine must find when it starts: its user, output and temp folders (ComfyUI
+    stops at once when the user folder it is given is not there)."""
+    inst = settings.instances[name]
+    e = inst.engine
+    if e is None:
+        return []
+    output_dir = e.output_dir if e.output_dir is not None else inst.output_dir
+    return [Path(d) for d in (e.user_dir, output_dir, e.temp_dir) if d is not None]
+
+
+def last_log_line(path: Path, limit: int = 300) -> str:
+    """The last line with text in a log file, shortened, or "" (what an engine said before it closed)."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 8192))
+            lines = f.read().decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    for line in reversed(lines):
+        if line.strip():
+            return line.strip()[:limit]
+    return ""
 
 
 class StartFailed(Exception):
@@ -568,7 +595,9 @@ class Supervisor:
             if self.conflict(name):
                 raise StartFailed(self.conflict(name))
             self._set(name, "starting", "")
-            spawned = False
+            # The process this start launched. Kept here, not read back from the engine's record: asking whether
+            # the engine is the app's (owned()) forgets a process that has gone, and the wait below must still see it.
+            spawned: int | None = None
             if self.owned(name):
                 log.info("graphics engine %s: the copy the app started (pid %s) is still loading; waiting", name, e.owned_pid)
             else:
@@ -587,6 +616,11 @@ class Supervisor:
                         if not Path(argv[0]).is_file():
                             raise StartFailed(f"its ComfyUI Python {argv[0]} was not found (instances.{name}.engine."
                                               "python in local/machine.json)")
+                        try:
+                            for folder in engine_folders(self.settings, name):
+                                folder.mkdir(parents=True, exist_ok=True)
+                        except OSError as err:
+                            raise StartFailed(f"one of its folders could not be made ({err})") from err
                         try:
                             pid = self.ops.launch(argv, cwd, env, out_log, err_log)
                         except OSError as err:
@@ -607,7 +641,7 @@ class Supervisor:
                     e.owned_created = self.ops.create_time(pid)
                     e.last_busy = self.clock()
                     self._save_owned()
-                    spawned = True
+                    spawned = pid
                     log.info("graphics engine %s: started %s as pid %s (logs %s, %s)", name, what, pid, out_log, err_log)
             deadline = self.clock() + inst.start_timeout_seconds
             _, err_log = self.log_paths(name)
@@ -620,9 +654,12 @@ class Supervisor:
                     raise StartFailed(self.conflict(name))
                 if e.abort:
                     raise StartAborted("the start was stopped")
-                if spawned and e.owned_pid is not None and not self.ops.alive(e.owned_pid):
-                    self._forget_owned(name)
-                    raise StartFailed(f"it closed while starting (see {err_log.name} in runtime/logs)")
+                if spawned is not None and not self.ops.alive(spawned):
+                    if e.owned_pid == spawned:
+                        self._forget_owned(name)
+                    said = last_log_line(err_log)
+                    raise StartFailed(f"it closed while starting{': ' + said if said else ''} "
+                                      f"(see {err_log.name} in runtime/logs)")
                 if self.clock() >= deadline:
                     raise StartFailed(f"it did not answer within {inst.start_timeout_seconds:g} seconds "
                                       f"(see {err_log.name} in runtime/logs)")
