@@ -59,9 +59,10 @@ After the app opens the starter stays in the tray (the V icon). It does what the
 - Closing the app window means quit. Before the app has opened (or when it opened in the browser) closing the status
   window means quit; afterwards it hides to the tray.
 
-What it starts and stops. It starts one thing: the backend (and it asks the backend, never a program of its own, to bring
-up ComfyUI B). The backend's output goes straight to `runtime/logs/backend.log`, and it inherits only its log handles, nothing else this
-program has open.
+What it starts and stops. It starts one thing itself: the backend. For the two ComfyUI engines it only asks the backend,
+never runs a ComfyUI of its own: it asks for ComfyUI B when card B is on and that engine is down, and the Start button on
+either ComfyUI row asks the backend to start that card's engine. The backend's output goes straight to `runtime/logs/backend.log`,
+and it inherits only its log handles, nothing else this program has open.
 
 - Quit asks first when it would stop something: "This stops the app's engine ... ComfyUI Desktop and anything else you
   started yourself is left running", and it says how many jobs are running or waiting and will be lost (Cancel is then the
