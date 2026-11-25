@@ -43,7 +43,7 @@ import { useMyAddons } from './AddMyAddon'
 import { editLoras, editLoraApplied, editLoraNotes } from '../editLoras'
 import { BriefCard } from './Brief'
 import { PictureViewer, Zoomable, type PictureItem } from '../components/PictureViewer'
-import { finishShown, GuidePanel, guideState, nextStage } from './GuidePanel'
+import { checksBelowBar, finishedBarShown, finishShown, FinishedChecks, GuidePanel, guideState, nextStage } from './GuidePanel'
 import { opensInView, readToolState, toolPath, type ToolFocus } from './openTool'
 import { ConceptView } from './views/ConceptView'
 import { ExportView } from './views/ExportView'
@@ -728,6 +728,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
           </div>
         )}
       </section>
+      {finishedBarShown(asset, stage, autopilot, jobs, selected) && checksBelowBar(stage) && <FinishedChecks asset={asset} stage={stage} />}
     </div>
   )
 }
