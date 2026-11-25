@@ -334,3 +334,15 @@ def test_category_defaults_no_longer_name_a_lid_or_doors():
 
     assert reference.category("prop_articulated").get("parts_default") == []
     assert reference.category("vehicle").get("parts_default") == ["wheels"]
+
+
+def test_only_wheels_and_lids_on_props_and_vehicles_are_left_to_the_shape_search():
+    declared = [{"name": "lid", "kind": "hinge"}, {"name": "wheels", "kind": "spin"}, {"name": "drawer", "kind": "slide"},
+                {"name": "door", "kind": "hinge"}, {"name": "gate leaf", "kind": "hinge"}, {"name": "hatch", "kind": "hinge"}]
+    rows = dp.placed([{"name": "hatch", "locations": [[0, 1, 0]]}], declared, "prop_articulated")
+    got = dp.for_shape(declared, rows, "prop_articulated")
+    assert [r["name"] for r in got] == ["lid", "wheels"]  # not the door, the gate or the slide; the hatch has its points
+    assert got[0] == {"name": "lid", "kind": "hinge", "locations": [], "side": "auto", "open_at_rest": False, "angle": 100.0}
+    assert dp.for_shape(declared[:2], [], "vehicle") and dp.for_shape(declared[:2], [], "prop_rigid")
+    for other in ("environment", "humanoid", "quadruped", None):
+        assert dp.for_shape(declared[:2], [], other) == []

@@ -126,3 +126,31 @@ def test_a_lid_inset_on_a_box_is_cut_at_the_crease_and_takes_all_its_seeds():
     lid_pts = co[:, 2] > 0.4 + 1e-9
     assert found[lid_pts].all()
     assert not found[co[:, 2] < 0.4 - 1e-9].any()
+
+
+def test_wheels_are_found_with_no_points_placed_and_a_round_body_is_not_a_wheel():
+    w1, f1 = torus(centre=(0.0, 1.0, 0.4), R=0.3, r=0.1)
+    w2, f2 = torus(centre=(0.0, -1.0, 0.4), R=0.3, r=0.1)
+    body = trimesh.creation.box((0.5, 3.0, 0.4), trimesh.transformations.translation_matrix((-0.5, 0, 1.0)))
+    n = len(w1) + len(w2)
+    co = np.r_[w1, w2, body.vertices]
+    faces = np.r_[f1, f2 + len(w1), body.faces + n]
+    found, pieces, info = mp.find_pieces(co, faces, [], kind="spin", info=True)
+    assert len(pieces) == 2
+    assert found[:n].mean() > 0.75 and not found[n:].any()  # most of each tyre (the torus's inner face is not tread), none of the body
+    centres = sorted(round(float(i["centre"][1]), 1) for i in info)
+    assert centres == [-1.0, 1.0] and all(abs(abs(i["axis"][0]) - 1) < 2e-2 for i in info)
+    # an upright drum is round about a vertical axis: no level axle, so nothing is found
+    drum = trimesh.creation.cylinder(radius=0.4, height=1.0, sections=48)
+    v, f = trimesh.remesh.subdivide_to_size(drum.vertices, drum.faces, max_edge=0.03)
+    assert mp.find_pieces(np.asarray(v), np.asarray(f), [], kind="spin")[1] == []
+
+
+def test_a_lid_with_no_point_placed_is_found_from_the_top_and_takes_what_lies_above_its_seam():
+    box = [(i, j, k) for i in range(6) for j in range(6) for k in range(4)]
+    lid = [(i, j, 4 + h) for i in range(1, 5) for j in range(1, 5) for h in range(2)]
+    co, faces = voxels(box + lid)
+    found, pieces = mp.find_pieces(co, faces, [], kind="hinge")
+    assert len(pieces) == 1
+    assert found[co[:, 2] > 0.4 + 1e-9].all()
+    assert not found[co[:, 2] < 0.4 - 1e-9].any()

@@ -26,6 +26,11 @@ budget (a quarter for low-poly, 40 percent for Retro 64) and the texture size th
 platform's). A look without surface bumps (mesh.normal_map false) never registers the normal map the builder bakes,
 and its model.glb loses its copy. The checks measure against the recipe's targets, and say so.
 
+Full budget build (params full_budget; category file build_at_platform_budget, buildings): under a look that asks for
+fewer triangles than the platform allows (Low-poly) the TRELLIS target and the texture size are the platform's, and the
+clean-up step reduces to the look's budget (prep_triangle_limit) and shrinks the maps. The 3D step's checks measure it
+against the platform budget.
+
 More triangles on the head (vgac/headtris.py): for humanoids in a look that keeps the full budget with smooth shading,
 the TRELLIS target is headtris.HEAD_ROOM times the usual one (params head_room). The model is over the budget on
 purpose; its triangle_budget check measures it against its own target and says why. The clean-up step decimates it back
@@ -214,27 +219,52 @@ def recipe_target_faces(rec: dict[str, Any], budget_triangles: int | None) -> in
     return max(RECIPE_FACES_MIN, int(int(t) * BUDGET_HEADROOM))
 
 
+def full_budget_applies(rec: dict[str, Any], budget: dict[str, Any], category_id: str | None) -> bool:
+    """Whether the 3D step builds at the platform's triangle and texture budget and leaves the reduction to the look's
+    budget to the clean-up step: a category that asks for it (`build_at_platform_budget` in its file) under a look that
+    asks for less than the platform allows (Low-poly) and has no bake size of its own (Retro 64 keeps its route)."""
+    m = rec.get("mesh") or {}
+    if not category_id or m.get("bake_texture"):
+        return False
+    try:
+        if not reference.category(category_id).get("build_at_platform_budget"):
+            return False
+    except KeyError:
+        return False
+    t, platform = m.get("triangles"), budget.get("triangles")
+    return bool(t and platform and int(t) < int(platform))
+
+
 def resolve_targets(rec: dict[str, Any], params: dict[str, Any], budget: dict[str, Any], category_id: str | None = None) -> dict[str, Any]:
     """{target_faces, target_faces_source, texture_size, texture_source}: the version's choice ("chosen"), else the
     recipe's ("recipe"; the platform budget for looks that keep it). With category_id, when the look and category get
     more triangles on the head (headtris.applies) and the target is the recipe's, the target is headtris.HEAD_ROOM
-    times larger and the result has head_room: the clean-up step decimates back to the budget with the head kept."""
+    times larger and the result has head_room: the clean-up step decimates back to the budget with the head kept.
+    When full_budget_applies, the target and the texture size are the platform's and the result has full_budget: the
+    clean-up step reduces to the look's budget (prep_triangle_limit) and shrinks the maps."""
     m = rec.get("mesh") or {}
     room = None
+    full = full_budget_applies(rec, budget, category_id)
     if params.get("target_faces"):
         faces, fsrc = int(params["target_faces"]), "chosen"
     else:
         faces, fsrc = recipe_target_faces(rec, budget.get("triangles")), "recipe"
+        if full:
+            faces = default_target_faces(budget.get("triangles"))
         if category_id is not None and budget.get("triangles") and headtris.applies(rec, category_id):
             faces, room = headtris.room_target(faces), headtris.HEAD_ROOM
     if params.get("texture_size"):
         tex, tsrc = int(params["texture_size"]), "chosen"
+    elif full:
+        tex, tsrc = int(budget.get("texture") or 2048), "recipe"
     else:
         # a look that paints at a larger size than it ships (Retro 64) bakes at that size; the clean-up shrinks it
         tex, tsrc = int(m.get("bake_texture") or m.get("texture") or budget.get("texture") or 2048), "recipe"
     out = {"target_faces": faces, "target_faces_source": fsrc, "texture_size": tex, "texture_source": tsrc}
     if room:
         out["head_room"] = room
+    if full and fsrc == "recipe":
+        out["full_budget"] = True
     return out
 
 
@@ -349,6 +379,8 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     sc.set_params(engine="trellis", builder=builder, input_view=input_view, target_faces=target_faces, texture_size=tex, upsample=upsample, tex_steps=tex_steps, seed=first_seed, remesh=remesh,
                   padding=padding, target_faces_source=targets["target_faces_source"], texture_source=targets["texture_source"],
                   head_room=targets.get("head_room"), first_seed=None)
+    if targets.get("full_budget"):
+        sc.set_params(full_budget=True)
     if views is not None:
         sc.set_params(input_view_origin="four_views")
     elif params.get("input_view_origin") == "four_views":
@@ -861,6 +893,8 @@ def triangle_target(rec: dict[str, Any], params: dict[str, Any], budget: dict[st
     room = headtris.mesh_limit(params, platform)
     if room:
         return room, {"head_room": True, "platform_triangles": platform}
+    if params.get("full_budget"):
+        return platform, None  # built at the platform budget on purpose; the clean-up step reduces it to the look's
     target = (rec.get("mesh") or {}).get("triangles")
     chosen = params.get("target_faces_source") == "chosen" or (params.get("target_faces") and "target_faces_source" not in params)
     if chosen and int(params.get("target_faces") or 0) > int(target or 0):
@@ -886,10 +920,13 @@ def raw_triangle_note(rec: dict[str, Any], params: dict[str, Any], budget: dict[
     return quality.check(HY3D_RAW_NOTE, True, tris, pl["limit"]), metrics
 
 
-def texture_target(rec: dict[str, Any], budget: dict[str, Any], baked: bool = False) -> tuple[int | None, dict[str, Any] | None]:
+def texture_target(rec: dict[str, Any], budget: dict[str, Any], baked: bool = False, full_budget: bool = False) -> tuple[int | None, dict[str, Any] | None]:
     """The texture size limit a check measures against: the recipe's when smaller than the platform's. baked: the 3D
-    step's own maps, which a look with a bake size (Retro 64) makes at that size before the clean-up shrinks them."""
+    step's own maps, which a look with a bake size (Retro 64) makes at that size before the clean-up shrinks them.
+    full_budget: the 3D step built at the platform's size on purpose (the clean-up step shrinks the maps)."""
     platform = budget.get("texture")
+    if baked and full_budget:
+        return platform, None
     m = rec.get("mesh") or {}
     tex = (m.get("bake_texture") if baked else None) or m.get("texture")
     if tex and platform and int(tex) < int(platform):
@@ -909,7 +946,7 @@ def with_vars(checks: list[dict[str, Any]], vars: dict[str, Any] | None, suffix:
 
 async def judge(sc: StageContext) -> None:
     rec = stage_recipe(sc)
-    tex_limit, tex_vars = texture_target(rec, sc.budget, baked=True)
+    tex_limit, tex_vars = texture_target(rec, sc.budget, baked=True, full_budget=bool((sc.version.params or {}).get("full_budget")))
     checks = with_vars(quality.texture_checks({k: library.version_file(sc.version, k, sc.settings) for k in TEXTURE_KEYS}, tex_limit),
                        tex_vars, "_budget")
     tris = sc.version.metrics.get("triangles")
@@ -1104,6 +1141,7 @@ def inherit(parent_params: dict[str, Any], params: dict[str, Any]) -> dict[str, 
         if base.get(src) == "recipe" and key not in params:
             base.pop(key, None)
         base.pop(src, None)
+    base.pop("full_budget", None)  # set again by the run when the route still applies
     return {**base, **params}
 
 

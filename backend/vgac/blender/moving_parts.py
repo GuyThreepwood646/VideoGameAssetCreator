@@ -40,6 +40,22 @@ RIM = 0.03  # the cylinder reaches this share past the radius
 ROUND_CELL = 0.05  # round_trim: the wheel's profile (distance from the axis, place along it) in cells this share of the radius
 ROUND_BINS = 24  # round_trim: the turn in this many slices
 ROUND_SHARE = 0.5  # round_trim: a profile cell with points in fewer than this share of the slices is not round
+# Parts found with no points placed (auto_seeds).
+HOUGH_CELL = 0.01  # a wheel's centre is voted for on a grid of cells this share of the asset's size
+WHEEL_MIN, WHEEL_MAX = 0.04, 0.35  # a wheel's radius, as shares of the asset's size
+HOUGH_FLAT = 0.25  # a tread point's normal is within about 15 degrees of square to the axle
+HOUGH_SHARE = 0.01  # a circle needs at least this share of the surface's points (and 25) voting for its centre
+CIRCLE_BAND = 0.06  # a point is on the circle within this share of its radius
+CIRCLE_OUTER = 0.2  # a tyre rounder at its middle than at its sides reaches out to this share beyond the commonest radius
+CIRCLE_INNER = 0.5  # a tyre's rounded flank reaches in to this share of its radius
+CIRCLE_BINS = 24  # the circle is round when this many slices of the turn ...
+CIRCLE_COVER = 0.75  # ... have this share of them holding a point
+WHEEL_SHARE = 0.5  # a wheel is less than this share of the surface (a round body is not a wheel)
+SEAM_BIN = 0.01  # lid seam: the height the weld ring sits at is found in bins of this share of the asset's size
+SEAM_SHARE = 0.3  # a seam is a ring with at least this share of its points at one height
+SEAM_TOL = 0.02  # the lid takes everything above the seam height plus this share of the asset's size, and keeps what it had
+LID_MIN, LID_MAX = 0.1, 0.65  # a lid is between these shares of the surface
+TOP_SHARE = 0.01  # the lid's seed is the middle of the highest points: this share of the surface
 
 
 def weld(co, tol=WELD):
@@ -121,8 +137,13 @@ def find_pieces(co, faces, seeds, kind="hinge", size=None, toll=CREASE_TOLL, far
     if size is None:
         size = float(np.ptp(wco, axis=0).max())
     adj = _adjacency(len(wco), edges, length)
-    src = sorted({int(np.argmin(np.linalg.norm(wco - np.asarray(p, dtype=float), axis=1))) for p in seeds})
+    auto = len(seeds) == 0  # no points placed: the part is found from the shape alone
+    if auto:
+        seeds = wheel_seeds(wco, wf, size) if kind == "spin" else lid_seeds(wco, size) if kind == "hinge" else []
+    src = sorted({_surface_seed(wco, p) for p in seeds})
     found = []
+    if not src:  # nothing to start from (a part of a kind that is only found from placed points)
+        return (np.zeros(len(co), dtype=bool), [], []) if info else (np.zeros(len(co), dtype=bool), [])
     if kind == "spin":
         for s in src:
             if any(f[0][s] for f in found):
@@ -131,7 +152,22 @@ def find_pieces(co, faces, seeds, kind="hinge", size=None, toll=CREASE_TOLL, far
             found.append((piece, None if a is None else {"axis": a, "centre": c, "radius": R}))
     else:
         found = [(p, None) for p in _split(_fronts(adj, wco, wf, edges, src, size, toll, far_share), edges, src)]
+        if kind == "hinge":
+            found = [(seam_cut(wco, edges, p, src, size), None) for p, _ in found]
     found = [f for f in found if f[0].sum() >= MIN_PIECE]
+    if auto:  # a found part must look like one: a wheel is round on a level axle and not the whole body; a lid is a piece of it
+        keep = []
+        for p, i in found:
+            share = p.sum() / len(wco)
+            if kind == "spin":
+                if i is None or abs(i["axis"][2]) > LEVEL_SIN or share > WHEEL_SHARE or i["radius"] < WHEEL_MIN * size:
+                    continue
+                if any(np.linalg.norm(i["centre"] - j["centre"]) < 0.5 * i["radius"] for _, j in keep):
+                    continue  # the same wheel, found from another point of its tread
+            if kind == "hinge" and not LID_MIN <= share <= LID_MAX:
+                continue
+            keep.append((p, i))
+        found = keep
     wmask = np.zeros(len(wco), dtype=bool)
     for p, _ in found:
         wmask |= p
@@ -139,6 +175,107 @@ def find_pieces(co, faces, seeds, kind="hinge", size=None, toll=CREASE_TOLL, far
     if info:
         return wmask[inv], pieces, [i for _, i in found]
     return wmask[inv], pieces
+
+
+def seam_cut(wco, edges, piece, seeds, size, up=2):
+    """A lid sits on its body along a level seam. The weld ring the fronts cut is ragged where the lid's own end panels
+    or a clasp lie inside a groove, so a ring with SEAM_SHARE of its points at one height (bins of SEAM_BIN of the
+    size) is replaced by the plane through that height: the piece keeps what it had and takes every point above the
+    height plus SEAM_TOL of the size that joins it (the lid's end panels and clasp). A ring with no such height leaves the piece as it was. -> the piece."""
+    cross = piece[edges[:, 0]] != piece[edges[:, 1]]
+    ring = np.unique(edges[cross].ravel())
+    ring = ring[piece[ring]]
+    if len(ring) < MIN_PIECE:
+        return piece
+    z = wco[ring, up]
+    bins = np.floor(z / (SEAM_BIN * size)).astype(int)
+    vals, counts = np.unique(bins, return_counts=True)
+    count_of = dict(zip(vals.tolist(), counts.tolist()))
+    two = counts + np.array([count_of.get(v + 1, 0) for v in vals.tolist()])  # a bin and the one above it
+    k = int(np.argmax(two))
+    if two[k] < SEAM_SHARE * len(ring):
+        return piece
+    sel = (bins == vals[k]) | (bins == vals[k] + 1)
+    h = float(z[sel].mean())
+    if wco[piece, up].mean() <= h:
+        return piece  # a piece that lies below its seam is not a lid
+    above = (wco[:, up] > h + SEAM_TOL * size) | piece
+    out = _split(above, edges, [int(s) for s in seeds if above[int(s)]])
+    return out[0] if out else piece
+
+
+def _surface_seed(wco, p):
+    return int(np.argmin(np.linalg.norm(wco - np.asarray(p, dtype=float), axis=1)))
+
+
+def lid_seeds(wco, size, up=2):
+    """The point of a lid with none placed: the middle of the object's highest points, on the surface."""
+    z = wco[:, up]
+    top = wco[z >= np.quantile(z, 1.0 - TOP_SHARE)]
+    return [wco[_surface_seed(wco, top.mean(axis=0))]]
+
+
+def wheel_seeds(wco, wfaces, size, up=2):
+    """Points on each wheel of an object with none placed. A wheel's tread is a ring of points whose normals point
+    through one centre, square to the axle. For each of the object's own axes as the axle, the tread-like points
+    (normals square to it) vote along their normals, in the plane square to the axle, for that centre; the biggest
+    vote that is a round ring (CIRCLE_COVER of the turn holds points at one radius) is a wheel axle line; its points
+    are cut into wheels where they are apart along the axle, and each wheel gives one seed. -> [point] (up to 8)."""
+    n = point_normals(wco, wfaces)
+    out = []
+    cell = HOUGH_CELL * size
+    steps = np.arange(-WHEEL_MAX * size, WHEEL_MAX * size + cell, cell)
+    for ax in range(3):
+        if ax == up:
+            continue  # a wheel's axle is level: a turntable is not a wheel
+        a = np.zeros(3)
+        a[ax] = 1.0
+        keep = np.abs(n[:, ax]) < HOUGH_FLAT
+        planar = [i for i in range(3) if i != ax]
+        P, N = wco[keep][:, planar], n[keep][:, planar]
+        ln = np.linalg.norm(N, axis=1)
+        ok = ln > 1e-6
+        P, N, idx = P[ok], N[ok] / ln[ok][:, None], np.where(keep)[0][ok]
+        if len(P) < 25:
+            continue
+        lo = P.min(axis=0) - WHEEL_MAX * size
+        shape = np.ceil((P.max(axis=0) + WHEEL_MAX * size - lo) / cell).astype(int) + 1
+        live = np.ones(len(P), dtype=bool)
+        for _ in range(4):
+            grid = np.zeros(shape, dtype=np.int32)
+            pts = P[live, None, :] + N[live, None, :] * steps[None, :, None]
+            cells = np.floor((pts - lo) / cell).astype(int)
+            good = (cells >= 0).all(axis=2) & (cells < shape).all(axis=2)
+            np.add.at(grid, (cells[..., 0][good], cells[..., 1][good]), 1)
+            # smooth over the neighbouring cells so a centre between two cells still counts
+            g = grid.astype(float)
+            sm = sum(np.roll(np.roll(g, i, 0), j, 1) for i in (-1, 0, 1) for j in (-1, 0, 1))
+            peak = np.unravel_index(int(np.argmax(sm)), sm.shape)
+            if sm[peak] < max(25, HOUGH_SHARE * len(wco)):
+                break
+            c = lo + (np.array(peak) + 0.5) * cell
+            rel = P - c
+            d = np.linalg.norm(rel, axis=1)
+            through = np.abs(rel[:, 0] * N[:, 1] - rel[:, 1] * N[:, 0]) <= 2 * cell  # the normal's line passes through the centre
+            hist, edges_ = np.histogram(d[through], bins=np.arange(WHEEL_MIN * size, WHEEL_MAX * size + cell, cell))
+            if hist.max() < 25:
+                break
+            r = float(edges_[int(np.argmax(hist))] + cell / 2)
+            ring = np.abs(d - r) <= CIRCLE_BAND * r
+            on = through & (d >= CIRCLE_INNER * r) & (d <= (1 + CIRCLE_OUTER) * r)  # the tread and a rounded tyre's flanks
+            live &= ~(ring | through)  # this circle's points do not vote again
+            ang = np.arctan2((P - c)[:, 1], (P - c)[:, 0])
+            cover = len(set(((ang[on] + np.pi) / (2 * np.pi) * CIRCLE_BINS).astype(int).tolist())) / CIRCLE_BINS
+            if cover < CIRCLE_COVER or on.sum() < 25:
+                continue
+            # one seed per wheel: the circle's points along the axle, split where there is a gap of a tenth of the radius
+            t = wco[idx[on], ax]
+            order = np.argsort(t)
+            cuts = np.where(np.diff(t[order]) > 0.1 * r)[0] + 1
+            for grp in np.split(order, cuts):
+                if len(grp) >= 8:
+                    out.append(wco[idx[on][grp[len(grp) // 2]]])
+    return out[:8]
 
 
 # --- Pivots (numpy; Blender frame: Z up, the object's front facing -Y) -------------------------------------------------
@@ -522,9 +659,7 @@ def main():  # pragma: no cover - runs inside Blender
     owner = np.full(len(co), -1, dtype=int)  # which piece (index into pieces) claims each vertex
     pieces = []  # {part, n, mask, info}
     for part in parts:
-        seeds = [gltf_to_blender(p) for p in part.get("locations") or []]
-        if not seeds:
-            continue
+        seeds = [gltf_to_blender(p) for p in part.get("locations") or []]  # none placed: find_pieces looks for it by shape
         _, masks, infos = find_pieces(co, tri, seeds, kind=part["kind"], size=size, info=True)
         for n, (m, inf) in enumerate(zip(masks, infos), start=1):
             m = m & (owner < 0)
