@@ -523,6 +523,61 @@ def test_either_card_is_started_reported_and_stopped_the_same_way(settings, tmp_
         sup.stop(name)
 
 
+def _engine_settings(settings, tmp_path, name="a", **folders):
+    from vgac.config import EngineConfig
+
+    comfy_dir = tmp_path / "comfy"
+    py = comfy_dir / "ComfyUI" / ".venv" / "Scripts" / "python.exe"
+    py.parent.mkdir(parents=True, exist_ok=True)
+    py.write_text("", encoding="utf-8")
+    s = _unscripted(settings)
+    eng = EngineConfig(comfy_dir=comfy_dir, python=py, **folders)
+    return s.model_copy(update={"instances": {
+        **s.instances, name: s.instances[name].model_copy(update={"engine": eng, "start_timeout_seconds": 0.5})}})
+
+
+def test_an_engine_finds_its_folders_when_it_starts(settings, tmp_path):
+    """The engine's user, output and temp folders exist by the time its command runs."""
+    folders = {"user_dir": tmp_path / "new" / "user", "output_dir": tmp_path / "new" / "out",
+               "temp_dir": tmp_path / "new" / "temp"}
+    s = _engine_settings(settings, tmp_path, **folders)
+    there: list[bool] = []
+
+    class Ops(LaunchOps):
+        def launch(self, argv, cwd, env, out_log, err_log):
+            there.extend(p.is_dir() for p in folders.values())
+            return super().launch(argv, cwd, env, out_log, err_log)
+
+    sup = Supervisor(s, {"a": FakeClient(up_after=3), "b": FakeClient()}, ops=Ops(), poll_seconds=0.01,
+                     project_dir=tmp_path)
+    asyncio.run(sup.ensure_running("a"))
+    assert there == [True, True, True]
+
+
+def test_an_engine_that_closes_at_once_fails_with_what_it_said(settings, tmp_path):
+    """A launched process that exits straight away is a failed start with its last words, also when something asked
+    whether the engine is the app's in between (the card list does, and that forgets a process that has gone)."""
+    s = _engine_settings(settings, tmp_path)
+    ops = LaunchOps()
+    sup: Supervisor
+
+    class Asking(FakeClient):
+        async def cached_vram_summary(self, max_age: float = 5.0) -> dict[str, Any]:
+            if ops.launched:
+                ops.alive_pids.clear()  # the process has exited
+                err = sup.log_paths("a")[1]
+                err.parent.mkdir(parents=True, exist_ok=True)
+                err.write_text("usage: main.py\nmain.py: error: the path does not exist.\n\n", encoding="utf-8")
+                assert sup.owned("a") is False
+            return await super().cached_vram_summary(max_age)
+
+    sup = Supervisor(s, {"a": Asking(), "b": FakeClient()}, ops=ops, poll_seconds=0.01, project_dir=tmp_path)
+    with pytest.raises(StartFailed, match="it closed while starting: main.py: error: the path does not exist."):
+        asyncio.run(sup.ensure_running("a"))
+    assert len(ops.launched) == 1 and sup.state("a") == "failed" and not sup.owned("a")
+    assert "comfy-a.err.log" in sup.last_error("a")
+
+
 def test_engine_with_a_missing_comfyui_fails_plainly(settings, tmp_path):
     from vgac.config import EngineConfig
 
