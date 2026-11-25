@@ -133,8 +133,8 @@ class Settings(BaseModel):
     host_cleanup_workers: int = Field(default=1, ge=1, le=3)
     # Seconds a ComfyUI job may run before the worker gives up on it.
     job_timeout_seconds: float = Field(default=3600, ge=1)
-    # Which instance runs each stage ("host" is Blender and Unity on this machine). Concept, turnaround and rig need
-    # the image/rig GPU (b); mesh needs the 3D GPU (a). The material category is images only, so it stays on b.
+    # Which instance runs each stage ("host" is Blender and Unity on this machine). Concept and turnaround run on b;
+    # rig is preferred on b and goes to a only when b is off (instance_capabilities lists rig for both); mesh needs the 3D GPU (a). The material category is images only, so it stays on b.
     # jobs.check_stage_instances validates these against reference.STAGE_ORDER and the instances above at start.
     stage_instances: dict[str, str] = Field(default_factory=lambda: {
         "concept": "b", "turnaround": "b", "mesh": "a", "prep": "host", "rig": "b", "export": "host"})

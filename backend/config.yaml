@@ -52,9 +52,10 @@ job_timeout_seconds: 3600
 # the app (Health page, "Graphics cards"; stored in <library_path>/prefs.json). Names are stages plus judge (the
 # local picture judge) and material (every graphics-card step of the material category). prep and export run on
 # the host and never need a card.
-# Rig stays on b only: the SkinToken node finds Blender only through the SKINTOKEN_BLENDER_BIN environment
-# variable. The backend sets it on every engine it starts itself, but a ComfyUI started by someone else (ComfyUI
-# Desktop) may not have it, so a rig job waits for b to be turned back on instead of moving.
+# Both cards can rig. Rig is preferred on b, and a rig job goes to a only when b is off. The SkinToken node finds
+# Blender only through the SKINTOKEN_BLENDER_BIN environment variable: the backend sets it on every engine it starts,
+# and setup sets it for each ComfyUI it configures. An engine without that variable must not be listed for rig; a
+# ComfyUI started some other way (ComfyUI Desktop) may not have it.
 # instance_capabilities:
-#   a: [concept, turnaround, mesh, material, judge]
+#   a: [concept, turnaround, mesh, rig, material, judge]
 #   b: [concept, turnaround, mesh, rig, judge, material]

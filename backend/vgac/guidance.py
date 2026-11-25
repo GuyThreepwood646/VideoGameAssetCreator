@@ -1763,7 +1763,7 @@ NODE_PACK = {
     "current": "The node pack vgac-nodes is up to date.",
     "label": "Node pack out of date",
     "detail": ("Your copy of the vgac-nodes node pack is an older version than this app. The newer nodes the 3D step needs are missing."),
-    "fix": ("Press Update the node pack on the ComfyUI setup card (VGAC's own ComfyUI), or Node packs then Go ahead for your own "
-            "ComfyUI. The old files are backed up first; then restart ComfyUI."),
+    "fix": ("On the System page, open Find or use my ComfyUI. For VGAC's own ComfyUI press Update the node pack there; for a "
+            "ComfyUI you linked, press Node packs, then Go ahead. The old files are backed up first; then restart ComfyUI."),
     "updated": "vgac-nodes was updated. Restart ComfyUI so it loads the new nodes.",
 }
