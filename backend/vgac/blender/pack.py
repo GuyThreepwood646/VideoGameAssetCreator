@@ -2,7 +2,7 @@
 
 Run: blender -b --python pack.py -- <in.glb> <out_dir> <asset_name> [--lods 0.5,0.25,0.1] [--collider hull|parts|mesh|none]
      [--collider-obj collider_parts.obj] [--formats fbx,glb]
-     [--base-color base_color.png] [--normal normal.png] [--orm T_<asset>_ORM.png] [--uv-source prep.glb]
+     [--base-color base_color.png] [--emission emission.png] [--normal normal.png] [--orm T_<asset>_ORM.png] [--uv-source prep.glb]
      [--shading smooth|flat] [--sockets humanoid|quadruped|multileg|winged|serpent|none]
      [--hair-layout hair_layout.json --hair-base-color hair_base_color.png [--hair-normal ...] [--hair-orm ...]]
      [--hair-object VGAC_Hair --hair-mesh hair_mesh.npz --hair-base-color ... [--hair-kind cards] [--hair-alpha cutout]
@@ -86,6 +86,7 @@ formats = [f.strip() for f in _common.opt("--formats", "fbx,glb").split(",") if 
 tex_base = _common.opt("--base-color", "")
 tex_normal = _common.opt("--normal", "")
 tex_orm = _common.opt("--orm", "")
+tex_emission = _common.opt("--emission", "")
 uv_source = _common.opt("--uv-source", "")
 shading = _common.opt("--shading", "smooth")
 socket_category = _common.opt("--sockets", "none")
@@ -880,11 +881,12 @@ def _tex_node(nt, path, colorspace):
     return t
 
 
-def build_material(tex_base=tex_base, tex_normal=tex_normal, tex_orm=tex_orm, mat_name=None, alpha=False):
+def build_material(tex_base=tex_base, tex_normal=tex_normal, tex_orm=tex_orm, mat_name=None, alpha=False, tex_emit=""):
     """Principled BSDF the glTF exporter reads: base colour, normal map, and one ORM image whose G drives roughness,
     B metallic and R occlusion (through the 'glTF Material Output' group), so the GLB references the ORM texture as
-    both metallicRoughnessTexture and occlusionTexture. The hair's own material is built the same way from its maps."""
-    have = [p for p in (tex_base, tex_normal, tex_orm) if p and os.path.isfile(p)]
+    both metallicRoughnessTexture and occlusionTexture. tex_emit (scenery's glow map) drives Emission Color at strength 1, so the
+    GLB gets an emissiveTexture and emissiveFactor. The hair's own material is built the same way from its maps."""
+    have = [p for p in (tex_base, tex_normal, tex_orm, tex_emit) if p and os.path.isfile(p)]
     if not have:
         return None
     mat = bpy.data.materials.new(mat_name or (name + "_mat"))
@@ -901,6 +903,10 @@ def build_material(tex_base=tex_base, tex_normal=tex_normal, tex_orm=tex_orm, ma
         nm = nt.nodes.new("ShaderNodeNormalMap")
         nt.links.new(t.outputs["Color"], nm.inputs["Color"])
         nt.links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
+    if tex_emit and os.path.isfile(tex_emit):
+        t = _tex_node(nt, tex_emit, "sRGB")
+        nt.links.new(t.outputs["Color"], bsdf.inputs["Emission Color"])
+        bsdf.inputs["Emission Strength"].default_value = 1.0
     if tex_orm and os.path.isfile(tex_orm):
         t = _tex_node(nt, tex_orm, "Non-Color")
         sep = nt.nodes.new("ShaderNodeSeparateColor")
@@ -931,7 +937,7 @@ if "glb" in formats:
     if two:
         for m in (body_slot, hair_slot):
             m.name = m.name + "_slot"  # the FBX already carries these names; the GLB's textured materials take them
-    mat = build_material(mat_name=(name + "_Body") if two else None)
+    mat = build_material(mat_name=(name + "_Body") if two else None, tex_emit=tex_emission)
     hmat = build_material(hair_base, hair_normal, hair_orm, name + "_Hair", alpha=library_hair and hair_alpha == "cutout") if two else None
     if mat is not None and hmat is not None:
         # every level kept both slots through the decimation: the slots get the textured materials, the faces keep

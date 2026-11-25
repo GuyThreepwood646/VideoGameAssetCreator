@@ -502,7 +502,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         fdm = (fd.get("metrics") or {}).get("face_detail") or {}
         steptime.add(sc, "sharpening", fdm.get("redraw_seconds") or None)
         steptime.add(sc, "face_rebake", (fdm.get("layout") or {}).get("rebake_seconds") or None)
-        body_views.clear()  # several large pictures per view: let them go
+        if not sc.category.get("emission_map"):
+            body_views.clear()  # several large pictures per view: let them go (scenery keeps them for the glow map, below)
         for key, p in fd["files"].items():
             sc.register(key, p)
         sc.set_metrics(**fd["metrics"])
@@ -527,6 +528,10 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
             final = await colour_faces(sc, out, final, rec, head_yaw)
         if late_cap:
             final = await ship_late(sc, out, final, {**look, "cap": late_cap}, tex)
+        if sc.category.get("emission_map") and body_views.get("views") and final.get("base_color"):
+            # last, so the glow map is made on the final layout at the final size (nothing after this changes either)
+            await make_glow(sc, out, final, body_views)
+        body_views.clear()
         if final.get("metallic") != maps.get("metallic") or final.get("base_color") != maps.get("base_color"):
             # metal was cleared (skin, hair) and colours painted after the texture pass measured them: measure again, so the
             # metal and colour-range checks read the finished maps
@@ -569,6 +574,29 @@ def late_cap_of(rec: dict[str, Any], look: dict[str, Any], tex: int) -> int | No
     if not (rec.get("mesh") or {}).get("bake_texture") or not cap or int(tex) <= int(cap):
         return None
     return int(cap)
+
+
+async def make_glow(sc: StageContext, glb: Path, current: dict[str, Path], kept: dict[str, Any]) -> None:
+    """Scenery: the glow map (vgac/glow.py) from the views the picture paint fitted, registered as `emission` and noted in
+    the metrics. Never fails the step."""
+    from .. import glow
+
+    def work() -> tuple[Path | None, dict[str, Any]]:
+        size = int(imaging.read_map(current["base_color"]).shape[0])
+        gains, how = glow.finder_gains(sc.settings, kept, sc.dir / "glow")   # the finder, when installed; else the colour rule
+        path, rec = glow.write_emission(glb, kept, size, sc.dir / "emission.png", gains)
+        return path, {**rec, **how}
+
+    try:
+        path, rec = await asyncio.to_thread(work)
+    except Exception as e:  # noqa: BLE001
+        path, rec = None, {"made": False, "reason": f"failed: {str(e)[:160]}"}
+    stale = sc.dir / "emission.png"
+    if path is None and stale.is_file():
+        stale.unlink()
+    if path is not None:
+        sc.register("emission", Path(path))
+    sc.set_metrics(emission_map=rec)
 
 
 async def ship_late(sc: StageContext, glb: Path, maps: dict[str, Path], look: dict[str, Any], tex: int) -> dict[str, Path]:
