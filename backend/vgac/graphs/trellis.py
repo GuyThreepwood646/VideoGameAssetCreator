@@ -1,6 +1,9 @@
 """TRELLIS.2 shape + texture + native post chain: RGBA image -> textured low-poly GLB with PBR maps.
 
-bakeoff/convert.py node for node. RemeshMesh takes dotted sub-inputs "sign_mode.fill" and "sign_mode.qef".
+bakeoff/convert.py node for node, except the two decodes: dshape and dtex are VGAC's own nodes
+(comfy-nodes/vgac-nodes/trellis_decode.py), which clear the card for the decode's real size and decode a subject too
+large for the card in windows. UNTESTED ON A CARD. RemeshMesh takes dotted sub-inputs "sign_mode.fill" and
+"sign_mode.qef".
 Output nodes: glb (SaveGLB) and SaveImage nodes s_base, s_met, s_rough, s_nrm, s_ao, s_in.
 
 padding (G03) is UnwrapMesh's texel gap between charts; the node accepts 0 to 16. The bake nodes have no margin input;
@@ -49,11 +52,11 @@ def convert_graph(image_name: str, prefix: str, target_faces: int = 20000, tex: 
         "upst": {"class_type": "Trellis2UpsampleStage", "inputs": {"positive": ["ss", 0], "negative": ["ss", 1], "shape_latent": ["k2", 0], "vae": ["svae", 0], "target_resolution": upsample}},
         "k3": {"class_type": "KSampler", "inputs": {"model": ["rc2", 0], "positive": ["upst", 0], "negative": ["upst", 1], "latent_image": ["upst", 2],
                                                    "seed": seed, "steps": 12, "cfg": 7.5, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
-        "dshape": {"class_type": "VaeDecodeShapeTrellis", "inputs": {"samples": ["k3", 0], "vae": ["svae", 0]}},
+        "dshape": {"class_type": "VGACTrellisShapeDecode", "inputs": {"samples": ["k3", 0], "vae": ["svae", 0]}},
         "tex": {"class_type": "Trellis2TextureStage", "inputs": {"positive": ["upst", 0], "negative": ["upst", 1], "shape_latent": ["k3", 0]}},
         "k4": {"class_type": "KSampler", "inputs": {"model": ["unet", 0], "positive": ["tex", 0], "negative": ["tex", 1], "latent_image": ["tex", 2],
                                                    "seed": tseed, "steps": int(tex_steps), "cfg": 1.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
-        "dtex": {"class_type": "VaeDecodeTextureTrellis", "inputs": {"samples": ["k4", 0], "vae": ["tvae", 0], "shape_subdivides": ["dshape", 1]}},
+        "dtex": {"class_type": "VGACTrellisTextureDecode", "inputs": {"samples": ["k4", 0], "vae": ["tvae", 0], "shape_subdivides": ["dshape", 1]}},
         "info": {"class_type": "GetMeshInfo", "inputs": {"mesh": ["dshape", 0]}},
     }
     high = "info"

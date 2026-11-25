@@ -98,6 +98,9 @@ def test_trellis_matches_convert(bakeoff_dir):
     for remesh in (True, False):
         ours = trellis.convert_graph("in.png", "bakeoff/convert/knight_20000", 20000, 2048, 1024, seed=42, remesh=remesh)
         theirs = bk.convert_graph("in.png", "knight_20000", 20000, 2048, 1024, seed=42, remesh=remesh)
+        # The app decodes with its own nodes; they take the same inputs as the two ComfyUI nodes the script uses.
+        assert theirs["dshape"]["class_type"] == "VaeDecodeShapeTrellis" and theirs["dtex"]["class_type"] == "VaeDecodeTextureTrellis"
+        theirs["dshape"]["class_type"], theirs["dtex"]["class_type"] = "VGACTrellisShapeDecode", "VGACTrellisTextureDecode"
         assert ours == theirs
     g = trellis.convert_graph("in.png", "x")
     assert g["remesh"]["inputs"]["sign_mode.fill"] == 20 and g["remesh"]["inputs"]["sign_mode.qef"] is False

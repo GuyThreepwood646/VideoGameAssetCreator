@@ -15,6 +15,10 @@ from vgac.graphs.trellis import convert_graph
 
 
 def _digest(g: dict) -> str:
+    # The hashes below were taken when the two decodes were ComfyUI's own nodes. VGAC's take the same inputs, so the
+    # graph is hashed with the old names in their place and everything else as it is.
+    assert g["dshape"]["class_type"] == "VGACTrellisShapeDecode" and g["dtex"]["class_type"] == "VGACTrellisTextureDecode"
+    g = {**g, "dshape": {**g["dshape"], "class_type": "VaeDecodeShapeTrellis"}, "dtex": {**g["dtex"], "class_type": "VaeDecodeTextureTrellis"}}
     return hashlib.sha256(json.dumps(g, sort_keys=True).encode()).hexdigest()
 
 

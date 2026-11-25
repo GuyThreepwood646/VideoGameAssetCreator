@@ -265,7 +265,7 @@
   }
  },
  "dshape": {
-  "class_type": "VaeDecodeShapeTrellis",
+  "class_type": "VGACTrellisShapeDecode",
   "inputs": {
    "samples": [
     "k3",
@@ -322,7 +322,7 @@
   }
  },
  "dtex": {
-  "class_type": "VaeDecodeTextureTrellis",
+  "class_type": "VGACTrellisTextureDecode",
   "inputs": {
    "samples": [
     "k4",
