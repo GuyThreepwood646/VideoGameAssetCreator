@@ -27,7 +27,6 @@ Coordinates: glTF (Y up, the character faces +Z), texture rows as face.uv_pixels
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -41,35 +40,12 @@ K_LAB = np.array([0.5, 1.0, 1.0])  # Lab distances count lightness half, as face
 # --- cameras with pitch -----------------------------------------------------------------------------------------
 
 
-@dataclass
-class ViewCam:
-    """An orthographic camera like face.Camera, with pitch: positive pitch looks down from above."""
-    target: np.ndarray
-    yaw_deg: float
-    scale: float
-    size: int
-    pitch_deg: float = 0.0
-
-    @property
-    def basis(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        a, b = math.radians(self.yaw_deg), math.radians(self.pitch_deg)
-        back = np.array([math.sin(a) * math.cos(b), math.sin(b), math.cos(a) * math.cos(b)])
-        right = np.array([math.cos(a), 0.0, -math.sin(a)])
-        up = np.cross(back, right)
-        return right, up, -back
-
-    def project(self, p: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        right, up, fwd = self.basis
-        d = p - self.target
-        s = self.size / self.scale
-        return np.stack([(d @ right) * s + self.size / 2, -(d @ up) * s + self.size / 2], axis=1), d @ fwd
-
-
-def hair_camera(head: face.Head, yaw: float = 0.0, pitch: float = 0.0, size: int = 512, reach: float = 0.42) -> ViewCam:
-    """A camera framing the top `reach` of the figure's height (long hair down the back included)."""
+def hair_camera(head: face.Head, yaw: float = 0.0, pitch: float = 0.0, size: int = 512, reach: float = 0.42) -> face.Camera:
+    """A camera framing the top `reach` of the figure's height (long hair down the back included). Pitch is the
+    camera's tilt: positive looks down from above. An orthographic face.Camera, so every face.py helper reads it."""
     scale = reach * head.height
     target = np.array([head.centre[0], head.top - 0.5 * scale + 0.02 * head.height, head.centre[2]])
-    return ViewCam(target=target, yaw_deg=yaw, scale=scale, size=size, pitch_deg=pitch)
+    return face.Camera(target=target, yaw_deg=yaw, scale=scale, size=size, tilt_deg=pitch)
 
 
 # The vote's views: (name, yaw, pitch, picture key). Pictures: the turnaround's cut-outs; the concept for the front.
@@ -1307,11 +1283,11 @@ SHEET_VIEWS = (("From the front", 0.0, 0.0), ("Left side", 90.0, 0.0), ("Right s
                ("From above", 0.0, 70.0))
 
 
-def head_view_cam(head: face.Head, yaw: float, pitch: float, size: int) -> ViewCam:
-    """The head with its hair, framed a little wider than face.head_camera."""
+def head_view_cam(head: face.Head, yaw: float, pitch: float, size: int) -> face.Camera:
+    """The head with its hair, framed a little wider than face.head_camera (orthographic, tilt = pitch)."""
     scale = max(head.width * 2.0, 0.15 * head.height)
     target = head.centre + np.array([0.0, 0.0, 0.0])
-    return ViewCam(target=target, yaw_deg=yaw, scale=scale, size=size, pitch_deg=pitch)
+    return face.Camera(target=target, yaw_deg=yaw, scale=scale, size=size, tilt_deg=pitch)
 
 
 def render_lit(mesh: dict[str, np.ndarray], base: np.ndarray, normal: np.ndarray | None, rough: np.ndarray | None,
