@@ -14,6 +14,8 @@ topology: quad
 # The step 1 wording below asks for a level, square-on front (vgac/picture_view.py).
 picture_view: front
 input_view_default: quarter
+# The 3D builder step 3 uses when none is chosen: all four step 2 pictures (Pixal3D) with a fall back to one (stages/mesh.py default_builder).
+builder_default: pixal3d
 # Hair-friendly pictures (vgac/hairpic.py): head means the concept prompt gets the look's hair sentence.
 hair: head
 motion: legs

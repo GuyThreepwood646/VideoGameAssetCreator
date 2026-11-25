@@ -517,7 +517,9 @@ def _schema(stage: str) -> list[dict[str, Any]]:
         if stage == "mesh" and entry["name"] == "builder":
             from . import pixal3d
 
-            entry = {**entry, "options": [b for b in entry["options"] if b != "pixal3d" or pixal3d.available()]}
+            entry = {**entry, "options": [b for b in entry["options"] if b != "pixal3d" or pixal3d.available()],
+                     # What each category builds with when none is chosen (the category's builder_default); the knob shows it.
+                     "by_category": {cid: {"default": c.get("builder_default") or entry["default"]} for cid, c in _data()["categories"].items()}}
         if stage == "prep" and entry["name"] == "size_m":
             entry = {**entry, "by_category": {cid: size_spec(cid) for cid in entry.get("categories") or []}}
         out.append(entry)
