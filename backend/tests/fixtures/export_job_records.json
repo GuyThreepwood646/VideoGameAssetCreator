@@ -1,0 +1,80 @@
+{
+ "note": "Model ids, versions and stage kinds from the job records of one finished prop export. Nothing else.",
+ "chain": [
+  {
+   "stage": "concept",
+   "models": [
+    {
+     "id": "zturbo",
+     "version": "1.0"
+    },
+    {
+     "id": "birefnet",
+     "version": "1.0"
+    }
+   ],
+   "step": "v1"
+  },
+  {
+   "stage": "turnaround",
+   "models": [
+    {
+     "id": "qwen_edit",
+     "version": "2511"
+    },
+    {
+     "id": "qwen_lightning_lora",
+     "version": "1.0"
+    },
+    {
+     "id": "qwen_angles_lora",
+     "version": "1.0"
+    },
+    {
+     "id": "birefnet",
+     "version": "1.0"
+    }
+   ],
+   "step": "v2"
+  },
+  {
+   "stage": "mesh",
+   "models": [
+    {
+     "id": "trellis2",
+     "version": "2"
+    }
+   ],
+   "step": "v3"
+  },
+  {
+   "stage": "prep",
+   "models": [
+    {
+     "id": "blender",
+     "version": "5.2.3"
+    }
+   ],
+   "step": "v4"
+  },
+  {
+   "stage": "rig",
+   "models": [],
+   "step": "v5"
+  },
+  {
+   "stage": "export",
+   "models": [
+    {
+     "id": "blender",
+     "version": "5.2.3"
+    },
+    {
+     "id": "unity",
+     "version": "6000.4.3f1"
+    }
+   ],
+   "step": "v6"
+  }
+ ]
+}

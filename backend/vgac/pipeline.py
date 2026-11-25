@@ -13,8 +13,9 @@ from typing import Any
 from sqlalchemy import select as sql_select
 from sqlalchemy.orm import Session
 
-from . import firstrun, lora_defaults, reference
+from . import firstrun, guidance, lora_defaults, reference
 from .db import Asset, Job, Version, job_to_dict, version_to_dict
+from . import jobs
 from .jobs import JobQueue, active_queue, job_kind
 from .reference import STAGE_ORDER
 
@@ -104,7 +105,14 @@ def submit(db: Session, asset: Asset, v: Version, op: str, payload: dict[str, An
     "Waiting for ... to be turned back on" message and the version stays queued."""
     q = queue()
     kind = job_kind(v.stage, op, asset.category)
-    instance, message = q.place(v.stage, asset.category)
+    instance, message = q.place(v.stage, asset.category, payload.get("params"))
+    if v.stage == "rig" and message is not None and not jobs.configured_card_can("rig", q.settings):
+        # No configured card can rig at all, so waiting would never end: fail now. Cards that are only off still
+        # queue the rig, as every other step does.
+        text = guidance.NO_RIG_CARD
+        v.status, v.error = "error", text
+        db.commit()
+        raise Conflict(text)
     found = firstrun.blockers(q.settings, v.stage, asset.category, instance, q.supervisor, disabled=q.disabled)
     if found:
         text = firstrun.sentence(found)
