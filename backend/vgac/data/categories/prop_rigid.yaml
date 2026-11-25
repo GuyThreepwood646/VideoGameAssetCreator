@@ -17,9 +17,6 @@ picture_view: front
 # the end (vgac/stages/concept.py).
 view_lead: "Straight-on front view, flat front elevation at eye level, camera directly in front, symmetrical, only the front face visible:"
 input_view_default: front
-# Texture sampler steps when the version does not choose (mesh.tex_steps_for): 12 gives about half the 3D step time,
-# with the app's checks no worse on this category.
-tex_steps_default: 12
 motion: none
 clips: []
 lod_ratios: [0.5, 0.25]

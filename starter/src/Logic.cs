@@ -153,6 +153,7 @@ namespace Vgac.Starter
     public class RestartRequest
     {
         public string Id = "";
+        public bool Quit;                     // kind "quit": close the app as Quit does; false: restart the backend
         public long Time;                     // seconds since 1970 (UTC), when the backend wrote it
         public bool KeepEngines = true;       // true: the engines the app started keep running; false: the whole tree is stopped
         public bool Force;
@@ -161,6 +162,18 @@ namespace Vgac.Starter
     }
 
     public enum RequestVerdict { Act, Wait, Drop }
+
+    // What a start with --start may go through without a person: only the screens' build, which downloads nothing the
+    // person has not already accepted by having the project. Any step that fetches a tool or packages (uv, venv, packages,
+    // node) stays behind the Start button, which is also the consent to contact those hosts.
+    public static class UnattendedStart
+    {
+        public static bool Allowed(List<string> steps)
+        {
+            foreach (string s in steps) if (s != "screens") return false;
+            return true;
+        }
+    }
 
     public static class RestartRequests
     {
@@ -178,6 +191,9 @@ namespace Vgac.Starter
                 object v;
                 if (d.TryGetValue("id", out v) && v != null) r.Id = Convert.ToString(v);
                 if (d.TryGetValue("time", out v) && v != null) r.Time = Convert.ToInt64(v);
+                string kind = d.TryGetValue("kind", out v) && v != null ? Convert.ToString(v) : "";
+                if (kind != "restart" && kind != "quit") return null;
+                r.Quit = kind == "quit";
                 string engines = d.TryGetValue("engines", out v) && v != null ? Convert.ToString(v) : "keep";
                 if (engines != "keep" && engines != "restart") return null;
                 r.KeepEngines = engines == "keep";

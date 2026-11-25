@@ -64,6 +64,28 @@ def test_refused_when_no_launcher_can_act_on_it(client, root, monkeypatch):
     assert not (root / "local" / "restart-request.json").exists()
 
 
+def test_quit_writes_a_quit_request_with_the_same_guards(client, root, monkeypatch):
+    r = client.post("/api/quit", json={})
+    assert r.status_code == 200
+    on_disk = _request_file(root)
+    assert on_disk["kind"] == "quit" and on_disk["id"] == r.json()["id"]
+    assert client.post("/api/quit", json={}).status_code == 409  # one at a time
+    (root / "local" / "restart-request.json").unlink()
+    monkeypatch.setattr(restart, "work_in_flight", lambda status: 1)
+    r = client.post("/api/quit", json={})
+    assert r.status_code == 409 and "working on 1 step" in r.json()["detail"] and "Closing" in r.json()["detail"]
+    assert client.post("/api/quit", json={"force": True}).status_code == 200
+    assert client.post("/api/quit", json={}, headers={"Origin": "http://evil.example"}).status_code == 403
+    monkeypatch.delenv("VGAC_LAUNCHER_RESTART")
+    (root / "local" / "restart-request.json").unlink()
+    assert client.post("/api/quit", json={}).status_code == 409
+
+
+def test_a_restart_request_says_it_is_one(client, root):
+    client.post("/api/restart", json={})
+    assert _request_file(root)["kind"] == "restart"
+
+
 def test_unknown_engines_choice_is_refused(client):
     assert client.post("/api/restart", json={"engines": "maybe"}).status_code == 422
 
