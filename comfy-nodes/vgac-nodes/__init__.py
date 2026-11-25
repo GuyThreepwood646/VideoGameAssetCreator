@@ -14,6 +14,11 @@
 VGACLoadTrimesh: load a GLB/OBJ/PLY from the ComfyUI input directory as a trimesh.Trimesh (type TRIMESH), with an
 optional quadric decimation to a target face count. Exists so native 3D outputs (TRELLIS.2, Hunyuan3D) can feed
 nodes that expect TRIMESH, such as SkinToken Rig.
+
+VGACTrellisShapeDecode, VGACTrellisTextureDecode: the TRELLIS.2 shape and texture decodes, sized to the card they run
+on (trellis_decode.py).
+
+VGACThinMesh: a vertex-clustered copy of a mesh, the texture bake's reference (mesh_thin.py).
 """
 import os
 
@@ -80,3 +85,11 @@ class VGACSaveTrimesh:
 
 NODE_CLASS_MAPPINGS = {"VGACLoadTrimesh": VGACLoadTrimesh, "VGACSaveTrimesh": VGACSaveTrimesh}
 NODE_DISPLAY_NAME_MAPPINGS = {"VGACLoadTrimesh": "VGAC Load Trimesh", "VGACSaveTrimesh": "VGAC Save Trimesh"}
+
+from . import mesh_thin, trellis_decode  # noqa: E402
+
+NODE_CLASS_MAPPINGS.update(trellis_decode.NODE_CLASS_MAPPINGS)
+NODE_DISPLAY_NAME_MAPPINGS.update(trellis_decode.NODE_DISPLAY_NAME_MAPPINGS)
+
+NODE_CLASS_MAPPINGS.update(mesh_thin.NODE_CLASS_MAPPINGS)
+NODE_DISPLAY_NAME_MAPPINGS.update(mesh_thin.NODE_DISPLAY_NAME_MAPPINGS)

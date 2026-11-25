@@ -1,6 +1,9 @@
 """TRELLIS.2 shape + texture + native post chain: RGBA image -> textured low-poly GLB with PBR maps.
 
-bakeoff/convert.py node for node. RemeshMesh takes dotted sub-inputs "sign_mode.fill" and "sign_mode.qef".
+bakeoff/convert.py node for node, except the two decodes: dshape and dtex are VGAC's own nodes
+(comfy-nodes/vgac-nodes/trellis_decode.py), which clear the card for the decode's real size and decode a subject too
+large for the card in windows. RemeshMesh takes dotted sub-inputs "sign_mode.fill" and
+"sign_mode.qef".
 Output nodes: glb (SaveGLB) and SaveImage nodes s_base, s_met, s_rough, s_nrm, s_ao, s_in.
 
 padding (G03) is UnwrapMesh's texel gap between charts; the node accepts 0 to 16. The bake nodes have no margin input;
@@ -20,6 +23,13 @@ IMAGE_NODES = {"s_base": "base_color", "s_met": "metallic", "s_rough": "roughnes
 
 
 UNWRAP_PADDING_MAX = 16  # UnwrapMesh's input limit
+# RemeshMesh thins a mesh with more vertices than this before it works on it. ComfyUI's own default is 20 million; a mesh
+# just under that peaked at 9.7 GB on the 10 GB card, so the cap is set lower.
+PRECLUSTER_MAX_VERTS = 16_000_000
+# BakeTextureFromVoxel searches the surface of its reference mesh, and its memory grows with that mesh. The decoded mesh is
+# clustered to about this many vertices for it (VGACThinMesh; ComfyUI's DecimateMesh ran out of memory on a 47-million-face
+# mesh on the 10 GB card).
+BAKE_REFERENCE_VERTS = 16_000_000
 
 
 def convert_graph(image_name: str, prefix: str, target_faces: int = 20000, tex: int = 2048, upsample: int = 1024, seed: int = 42,
@@ -49,23 +59,25 @@ def convert_graph(image_name: str, prefix: str, target_faces: int = 20000, tex: 
         "upst": {"class_type": "Trellis2UpsampleStage", "inputs": {"positive": ["ss", 0], "negative": ["ss", 1], "shape_latent": ["k2", 0], "vae": ["svae", 0], "target_resolution": upsample}},
         "k3": {"class_type": "KSampler", "inputs": {"model": ["rc2", 0], "positive": ["upst", 0], "negative": ["upst", 1], "latent_image": ["upst", 2],
                                                    "seed": seed, "steps": 12, "cfg": 7.5, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
-        "dshape": {"class_type": "VaeDecodeShapeTrellis", "inputs": {"samples": ["k3", 0], "vae": ["svae", 0]}},
+        "dshape": {"class_type": "VGACTrellisShapeDecode", "inputs": {"samples": ["k3", 0], "vae": ["svae", 0]}},
         "tex": {"class_type": "Trellis2TextureStage", "inputs": {"positive": ["upst", 0], "negative": ["upst", 1], "shape_latent": ["k3", 0]}},
         "k4": {"class_type": "KSampler", "inputs": {"model": ["unet", 0], "positive": ["tex", 0], "negative": ["tex", 1], "latent_image": ["tex", 2],
                                                    "seed": tseed, "steps": int(tex_steps), "cfg": 1.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
-        "dtex": {"class_type": "VaeDecodeTextureTrellis", "inputs": {"samples": ["k4", 0], "vae": ["tvae", 0], "shape_subdivides": ["dshape", 1]}},
+        "dtex": {"class_type": "VGACTrellisTextureDecode", "inputs": {"samples": ["k4", 0], "vae": ["tvae", 0], "shape_subdivides": ["dshape", 1]}},
         "info": {"class_type": "GetMeshInfo", "inputs": {"mesh": ["dshape", 0]}},
     }
     high = "info"
     if remesh:
         g["remesh"] = {"class_type": "RemeshMesh", "inputs": {"mesh": ["info", 0], "resolution": 768, "sign_mode": "solid", "sign_mode.fill": 20, "sign_mode.qef": False, "band": 1.0, "project_back": 0.0,
-                                                               "fix_poles": False, "smooth_iters": 20, "drop_small_components": 0.01, "precluster_max_verts": 20000000}}
+                                                               "fix_poles": False, "smooth_iters": 20, "drop_small_components": 0.01, "precluster_max_verts": PRECLUSTER_MAX_VERTS}}
         high = "remesh"
+    # the bake searches the surface of its reference mesh: a thinned copy of the decoded mesh keeps that within the 10 GB card
+    g["refdec"] = {"class_type": "VGACThinMesh", "inputs": {"mesh": ["info", 0], "max_vertices": BAKE_REFERENCE_VERTS}}
     g.update({
         "dec": {"class_type": "DecimateMesh", "inputs": {"mesh": [high, 0], "target_face_count": target_faces, "placement_mode": "midpoint"}},
         "sm": {"class_type": "MeshSmoothNormals", "inputs": {"mesh": ["dec", 0], "crease_angle": 180.0}},
         "unwrap": {"class_type": "UnwrapMesh", "inputs": {"mesh": ["sm", 0], "segmenter": "pec", "resolution": tex, "padding": max(0, min(UNWRAP_PADDING_MAX, int(padding))), "weld_distance": 0.0002}},
-        "bake": {"class_type": "BakeTextureFromVoxel", "inputs": {"mesh": ["unwrap", 0], "voxel_colors": ["dtex", 0], "reference_mesh": ["dshape", 0], "texture_size": tex}},
+        "bake": {"class_type": "BakeTextureFromVoxel", "inputs": {"mesh": ["unwrap", 0], "voxel_colors": ["dtex", 0], "reference_mesh": ["refdec", 0], "texture_size": tex}},
         "nrm": {"class_type": "BakeNormalMapFromMesh", "inputs": {"low_poly": ["unwrap", 0], "high_poly": [high, 0], "resolution": tex, "cage_distance": 0.05, "ignore_backfaces": True}},
         "ao": {"class_type": "BakeAmbientOcclusion", "inputs": {"low_poly": ["unwrap", 0], "high_poly": [high, 0], "resolution": max(512, tex // 2), "samples": 64, "max_distance": 0.71, "strength": 1.0, "bias": 0.01}},
         "apply": {"class_type": "ApplyTextureToMesh", "inputs": {"mesh": ["unwrap", 0], "base_color": ["bake", 0], "metallic": ["bake", 1], "roughness": ["bake", 2], "occlusion": ["ao", 0], "normal_map": ["nrm", 0]}},
