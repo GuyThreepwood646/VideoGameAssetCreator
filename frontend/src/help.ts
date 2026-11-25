@@ -131,6 +131,20 @@ export function stageTech(stage: StageId, info?: StageInfo | null): string {
 
 // The plain guidance under every upload box for a picture of the person's own (PL-48): where the item sits in the
 // picture and what background works. Shared by the step 1 "A picture I have" box and the "Your picture" box of step 1.
+// Restart button on the System page (HealthPanel.tsx; POST /api/restart).
+export const RESTART_TEXT = {
+  title: "Restart the app's engine",
+  explain:
+    'Loads changes to the app itself. Steps that are running or waiting stop first, so this asks before it goes ahead. ' +
+    'It needs VGAC.exe to be the one that started the app.',
+  alsoCards: 'Also restart the graphics engines (after a node pack or an engine setting changed)',
+  button: 'Restart now',
+  anyway: 'Restart anyway',
+  working: 'Restarting. This takes about a minute and the page comes back by itself.',
+  done: 'The app restarted.',
+  failed: 'The app did not come back within three minutes. Open VGAC.exe from the tray and look at the log.',
+} as const
+
 export const PICTURE_POSITION_GUIDE =
   'Best: the whole item in the picture, centred and not cropped, on a simple background that is neither cluttered nor plain white. For a person, a front view, standing, with the arms away from the sides. One item per picture.'
 

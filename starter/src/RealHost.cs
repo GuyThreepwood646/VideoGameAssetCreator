@@ -208,6 +208,11 @@ namespace Vgac.Starter
         readonly object gate = new object();
         IntPtr handle = IntPtr.Zero;
         volatile bool closing;
+        // Environment for the next backend start only (a restart request: its id and the engines to start again).
+        public Dictionary<string, string> NextEnv = new Dictionary<string, string>();
+        // Engines left running by a restart that kept them: they belong to the app, so they are stopped with it when this
+        // launcher stops the backend later (their identity is checked, so a reused id is never stopped).
+        readonly List<ProcInfo> keptEngines = new List<ProcInfo>();
 
         public BackendRunner(Layout layout, int port) { L = layout; Port = port; }
 
@@ -371,6 +376,9 @@ namespace Vgac.Starter
                 string args = "-m uvicorn vgac.main:app --host 127.0.0.1 --port " + Port;
                 var env = new Dictionary<string, string>();
                 env["PYTHONUNBUFFERED"] = "1";
+                env["VGAC_LAUNCHER_RESTART"] = "1";   // the backend may ask this launcher for a restart (backend/vgac/restart.py)
+                foreach (KeyValuePair<string, string> kv in NextEnv) env[kv.Key] = kv.Value;
+                NextEnv = new Dictionary<string, string>();
                 NativeProcess.Started s;
                 try { s = NativeProcess.Start(L.VenvPython, args, Path.Combine(L.ProjectRoot, "backend"), LogFile, env); }
                 catch (Exception e)
@@ -397,6 +405,37 @@ namespace Vgac.Starter
             lock (gate) { return StopLocked(log); }
         }
 
+        // Restart on the backend's own request with the engines left running: stops the backend and what it started except
+        // the engine trees the request named (still below the backend, checked now). The new backend takes the engines over
+        // from its own record. Returns the ids stopped.
+        public List<int> StopKeepingEngines(List<int> keepPids, SetupLog log)
+        {
+            lock (gate)
+            {
+                var done = new List<int>();
+                if (handle == IntPtr.Zero || CreatedTicks <= 0) return done;
+                List<ProcInfo> all;
+                try { all = Procs.List(); } catch (Exception) { all = new List<ProcInfo>(); }
+                List<ProcInfo> kept;
+                List<ProcInfo> stop = RestartRequests.StopKeeping(all, Pid, keepPids, out kept);
+                foreach (ProcInfo p in stop)
+                {
+                    if (p.Pid == Pid) continue;
+                    if (p.CreatedTicks <= 0) continue;
+                    if (Killer.Kill(p.Pid, p.CreatedTicks)) done.Add(p.Pid);
+                }
+                if (Killer.Kill(Pid, CreatedTicks)) done.Add(Pid);
+                if (done.Contains(Pid))
+                {
+                    keptEngines.AddRange(kept);
+                    ProcessIdentity.Close(handle); handle = IntPtr.Zero;
+                    Adoption.Delete(L.ProjectRoot);
+                }
+                else if (log != null) log.Line("could not stop the backend (pid " + Pid + "); it is still running and is still recorded as owned");
+                return done;
+            }
+        }
+
         // Quit: the same, and no backend can be started afterwards.
         public List<int> Shutdown(SetupLog log)
         {
@@ -404,6 +443,15 @@ namespace Vgac.Starter
         }
 
         List<int> StopLocked(SetupLog log)
+        {
+            var done = StopOwned(log);
+            // engines an earlier restart left running belong to the app: they go with it
+            foreach (ProcInfo k in keptEngines) done.AddRange(ProcessTree.Stop(Procs, Killer, k.Pid, k.CreatedTicks));
+            keptEngines.Clear();
+            return done;
+        }
+
+        List<int> StopOwned(SetupLog log)
         {
             var done = new List<int>();
             if (handle == IntPtr.Zero) return done;           // nothing owned: another starter's record is not ours to delete
