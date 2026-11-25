@@ -155,7 +155,7 @@ export default function ComfyInstall({ shareFrom, onChanged }: { shareFrom: Comf
         <div>
           {started ? (
             <button type="button" className="small-btn" disabled={busy} onClick={() => void begin(st?.choice === 'A' && shareFrom ? 'A' : 'C')}>
-              {state === 'failed' ? 'Try again' : 'Continue'}
+              {state === 'failed' ? 'Try again' : 'Resume install'}
             </button>
           ) : (
             <>

@@ -750,8 +750,13 @@ def bone_map(source_names, target_names) -> tuple[dict[str, str], list[str]]:
 
 
 # Bones the T-pose reference aims, with the direction each one points in that pose (+X is the character's left
-# when it faces -Y, the glTF front). Other bones keep their rest direction relative to their parent.
+# when it faces -Y, the glTF front). Other bones keep their rest direction relative to their parent. The back and
+# neck stand straight up, so a clip's lean carries over as the angle it has from upright and not as the angle it has
+# from each skeleton's own rest posture (a library back that rests leaning would otherwise hand its clips a lean
+# that a character with an upright rest back does not get, and the other way round).
 TPOSE_DIRS = {
+    "Hips": (0.0, 0.0, 1.0), "Spine": (0.0, 0.0, 1.0), "Spine1": (0.0, 0.0, 1.0), "Spine2": (0.0, 0.0, 1.0),
+    "Neck": (0.0, 0.0, 1.0),
     "LeftArm": (1.0, 0.0, 0.0), "LeftForeArm": (1.0, 0.0, 0.0), "LeftHand": (1.0, 0.0, 0.0),
     "RightArm": (-1.0, 0.0, 0.0), "RightForeArm": (-1.0, 0.0, 0.0), "RightHand": (-1.0, 0.0, 0.0),
     "LeftUpLeg": (0.0, 0.0, -1.0), "LeftLeg": (0.0, 0.0, -1.0), "RightUpLeg": (0.0, 0.0, -1.0), "RightLeg": (0.0, 0.0, -1.0),
