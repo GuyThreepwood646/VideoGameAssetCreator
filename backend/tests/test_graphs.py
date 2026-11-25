@@ -101,6 +101,12 @@ def test_trellis_matches_convert(bakeoff_dir):
         # The app decodes with its own nodes; they take the same inputs as the two ComfyUI nodes the script uses.
         assert theirs["dshape"]["class_type"] == "VaeDecodeShapeTrellis" and theirs["dtex"]["class_type"] == "VaeDecodeTextureTrellis"
         theirs["dshape"]["class_type"], theirs["dtex"]["class_type"] = "VGACTrellisShapeDecode", "VGACTrellisTextureDecode"
+        if remesh:  # the app thins a large mesh earlier than the script does
+            assert theirs["remesh"]["inputs"]["precluster_max_verts"] == 20_000_000
+            theirs["remesh"]["inputs"]["precluster_max_verts"] = trellis.PRECLUSTER_MAX_VERTS
+        theirs["refdec"] = ours["refdec"]  # the bake reads a thinned copy of the decoded mesh
+        assert ours["refdec"]["inputs"]["max_vertices"] == trellis.BAKE_REFERENCE_VERTS
+        theirs["bake"]["inputs"]["reference_mesh"] = ["refdec", 0]
         assert ours == theirs
     g = trellis.convert_graph("in.png", "x")
     assert g["remesh"]["inputs"]["sign_mode.fill"] == 20 and g["remesh"]["inputs"]["sign_mode.qef"] is False
@@ -159,3 +165,10 @@ def test_workflow_json_files_match_builders():
     for name, builder in DEFAULTS.items():
         saved = json.loads((wf / f"{name}.json").read_text(encoding="utf-8"))
         assert saved == builder(), name
+
+
+def test_trellis_memory_settings_of_the_later_stages():
+    g = trellis.convert_graph("in.png", "x")
+    assert g["remesh"]["inputs"]["precluster_max_verts"] == trellis.PRECLUSTER_MAX_VERTS < 20_000_000
+    assert g["bake"]["inputs"]["reference_mesh"] == ["refdec", 0] and g["refdec"]["class_type"] == "VGACThinMesh"
+    assert g["refdec"]["inputs"]["mesh"] == ["info", 0]

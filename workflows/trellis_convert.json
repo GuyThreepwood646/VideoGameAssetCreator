@@ -363,7 +363,17 @@
    "fix_poles": false,
    "smooth_iters": 20,
    "drop_small_components": 0.01,
-   "precluster_max_verts": 20000000
+   "precluster_max_verts": 16000000
+  }
+ },
+ "refdec": {
+  "class_type": "VGACThinMesh",
+  "inputs": {
+   "mesh": [
+    "info",
+    0
+   ],
+   "max_vertices": 16000000
   }
  },
  "dec": {
@@ -412,7 +422,7 @@
     0
    ],
    "reference_mesh": [
-    "dshape",
+    "refdec",
     0
    ],
    "texture_size": 2048

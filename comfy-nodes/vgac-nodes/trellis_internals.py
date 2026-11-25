@@ -241,3 +241,14 @@ def voxel_type():
 
 def pack_meshes(vertices: list, faces: list):
     return _need(_module("comfy_extras.nodes_mesh_postprocess"), "pack_variable_mesh_batch", "ComfyUI's mesh nodes")(vertices, faces)
+
+
+def cluster_decimate():
+    """ComfyUI's vertex-clustering thinning, the function RemeshMesh applies to a mesh above its vertex cap."""
+    return _need(_module("comfy_extras.mesh3d.postprocess.qem_decimate"), "qem_cluster_decimate", "ComfyUI's mesh decimation")
+
+
+def mesh_item():
+    """ComfyUI's accessor for one mesh of a batch: returns vertices, faces, colours and two more values."""
+    return _need(_module("comfy_extras.nodes_save_3d"), "get_mesh_batch_item", "ComfyUI's mesh saving")
+

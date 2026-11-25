@@ -19,6 +19,11 @@ def _digest(g: dict) -> str:
     # graph is hashed with the old names in their place and everything else as it is.
     assert g["dshape"]["class_type"] == "VGACTrellisShapeDecode" and g["dtex"]["class_type"] == "VGACTrellisTextureDecode"
     g = {**g, "dshape": {**g["dshape"], "class_type": "VaeDecodeShapeTrellis"}, "dtex": {**g["dtex"], "class_type": "VaeDecodeTextureTrellis"}}
+    if "remesh" in g:  # the remesh thins large meshes at a lower vertex count than the hashed graph did
+        g = {**g, "remesh": {**g["remesh"], "inputs": {**g["remesh"]["inputs"], "precluster_max_verts": 20_000_000}}}
+    if "refdec" in g:  # the bake reads a thinned copy of the decoded mesh instead of the whole of it
+        g = {k: v for k, v in g.items() if k != "refdec"}
+        g["bake"] = {**g["bake"], "inputs": {**g["bake"]["inputs"], "reference_mesh": ["dshape", 0]}}
     return hashlib.sha256(json.dumps(g, sort_keys=True).encode()).hexdigest()
 
 
