@@ -348,7 +348,9 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   concept_model: H('Picture model (checkpoint)', 'The AI image model that draws the first picture of this asset.', 'We suggest one that suits the look and platform; pick another if you prefer its style. You can change it later under Fine-tune.', 'concept_model'),
   stage: H('Step', 'One of the six steps every asset goes through: describe, check all sides, build the 3D model, clean up, make it move, hand off.', 'Each step builds on the version you kept in the step before it.', 'stage'),
   // Image generation
-  seed: H('Seed', 'A number that picks which of many possible pictures you get.', 'Same seed, same picture; change it to get a different one.', 'seed'),
+  seed: H('Seed', 'A number that picks which of many possible pictures you get.', 'Same seed, same picture on the same graphics card; change it to get a different one. Another card gives a different result from the same seed, so a repeat goes back to the card that made the version when it can.', 'seed'),
+  cards: H('Built on', 'The graphics card or cards that made this version.', 'The same seed gives a different result on a different card, so a repeat goes back to the card that made the version.', 'metrics.cards'),
+  seed_card_note: H('Different card', 'The card that made the version this repeats could not be used, so another card made this one.', 'Another card gives a different result from the same seed.', 'metrics.seed_card_note'),
   steps: H('Steps', 'How many passes the model takes.', 'More passes can add detail but take longer; the default is usually right.', 'steps'),
   cfg: H('How closely it follows the words (CFG)', 'A number for how closely the model sticks to your description.', 'Too high looks forced, too low wanders off.', 'classifier-free guidance scale'),
   width: H('Width', 'Picture width in pixels.', 'Bigger pictures hold more detail and take longer.', 'width'),
