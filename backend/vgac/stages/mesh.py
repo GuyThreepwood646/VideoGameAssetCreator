@@ -303,6 +303,13 @@ DEFAULT_TEX_STEPS = 24  # the texture sampler's steps (graphs/trellis.py); 12 on
 DEFAULT_BUILDER = "trellis2"
 
 
+def tex_steps_for(params: dict[str, Any] | None, category: dict[str, Any] | None) -> int:
+    """The texture sampler's steps: the version's own value (a choice the person made, or a build's saved value), else the
+    category's tex_steps_default, else DEFAULT_TEX_STEPS. Solid props, articulated props and scenery default to 12: about
+    half the 3D step time, with the app's checks no worse on those categories."""
+    return int((params or {}).get("tex_steps") or (category or {}).get("tex_steps_default") or DEFAULT_TEX_STEPS)
+
+
 def builder_of(params: dict[str, Any] | None) -> str:
     """The version's builder: "trellis2" unless it names another of reference.MESH_BUILDERS."""
     b = (params or {}).get("builder") or DEFAULT_BUILDER
@@ -359,7 +366,7 @@ async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
     target_faces, tex = targets["target_faces"], targets["texture_size"]
     keep_normal = bool(rec["mesh"]["normal_map"])
     upsample = int(params.get("upsample") or rec["mesh"].get("upsample") or 1024)
-    tex_steps = int(params.get("tex_steps") or DEFAULT_TEX_STEPS)
+    tex_steps = tex_steps_for(params, sc.category)
     # The first build's seed: the one given (the person's, or a Resume's), else a new one. Builds again after a too-dark
     # base colour take the seeds that follow from it (texcolour.try_seed); the kept build's seed replaces it at the end.
     first_seed = int(params.get("seed") or random_seed())
