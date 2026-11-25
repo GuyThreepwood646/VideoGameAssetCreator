@@ -35,6 +35,9 @@ clips_libraries:
   # Pack 2 (CC0, License.txt checked): Unreal mannequin bone names, mapped by blender/gait.py; "Add a move" offers it.
   ual2: "data/animations/ual2/Universal Animation Library 2[Standard]/Unity/UAL2_Standard.fbx"
 
+# CC0 creature clips (Mesh2Motion), one .glb per clip under <animal>/animations/; fetched by setup\Setup-Extras.ps1 -Packs.
+creature_clips_dir: "data/animations/mesh2motion"
+
 # A job is not dispatched to any instance while free system RAM is below this.
 min_free_ram_gb: 24
 

@@ -529,6 +529,29 @@
    "check_file": "UAL2_Standard.fbx"
   }
  },
+ "creature_clip_packs": {
+  "mesh2motion": {
+   "name": "Mesh2Motion animal clips",
+   "what": "Ready-made walk, run, attack and other moves for four-legged creatures.",
+   "author": "Mesh2Motion",
+   "licence": "CC0 1.0",
+   "page": "https://github.com/Mesh2Motion/mesh2motion-app",
+   "licence_note": "The repository README says: The art assets (3d models, rigs, animations) are all licensed under CC0. Read 2026-11-24.",
+   "base_url": "https://raw.githubusercontent.com/Mesh2Motion/mesh2motion-app/2609e0345371763c4c390f751d79021285da04b1/static/assets/",
+   "dest": "data/animations/mesh2motion",
+   "size_mb": 1,
+   "check_file": "fox/animations/walk.glb",
+   "files": [
+    {"path": "fox/animations/idle.glb", "size": 51788, "sha256": "984b1c44b6ab6399e7f602692daf76c095aacfad9c636f11f7bfaaf2b2e21038"},
+    {"path": "fox/animations/walk.glb", "size": 50468, "sha256": "4ae1ada4c1f5a31168539e6f53de9546121689320c9432121d20154a2542c6e7"},
+    {"path": "fox/animations/run.glb", "size": 49428, "sha256": "01afc506c2a74c5be2573d326b356d97e4d2a46f22bdef25019aab8d5685cf3f"},
+    {"path": "fox/animations/bite.glb", "size": 51092, "sha256": "cbf12c8dfb855ddbc6061ab04f4211d96362a7cfb0154d012ea49751991560b6"},
+    {"path": "fox/animations/death.glb", "size": 54740, "sha256": "1848ac3b7010822e6b362b610a8962f71ff1ce88112f2b4e8b5ef65e312ac83a"},
+    {"path": "horse/animations/turn-left.glb", "size": 72444, "sha256": "0ae51f6ca643fe3315297bfb47c6a56089066cdc204b8ac51bdd80fedc5258b5"},
+    {"path": "horse/animations/turn-right.glb", "size": 72396, "sha256": "7e09ed5583e9f02f0020a96a5b2513dfb75a8073a59182bf9eff6e7d12efe0df"}
+   ]
+  }
+ },
  "animation_note": "Both packs are on itch.io (linked from quaternius.com). itch.io hands the file over after a click-through, so the helper does not fetch it: you download the zip, and the helper unpacks it into data/animations/<id>, keeping the folder names backend/config.yaml expects.",
  "hair_sources": [
   {

@@ -70,6 +70,7 @@ Files that come with the app. Moves can end up inside your characters.
 |---|---|---|---|---|---|
 | [Universal Animation Library (Standard)](https://quaternius.com) | The ready-made moves (walk, run, idle and more) your rigged characters can use. | Quaternius | CC0 1.0 | no | yes |
 | [Universal Animation Library 2 (Standard)](https://quaternius.com) | More ready-made moves for rigged characters. | Quaternius | CC0 1.0 | no | yes |
+| [Mesh2Motion animal clips](https://github.com/Mesh2Motion/mesh2motion-app) | The ready-made walk, run, attack and other moves for four-legged creatures. | Mesh2Motion | CC0 1.0 | no | yes |
 | Files copied into your Unity project (VgacSpringBones.cs, VgacHair.shader, VgacHairCutout.shader, VgacImport.cs) | The importer, the spring-bone script and the hair shaders the app puts in your Unity project so the character moves and looks right. | Runtime Forge LLC | MIT (not GPL, on purpose) (Keep the copyright notice at the top of each file. Copies already in a project before 2026-11-06 carry no notice; they are covered by the same MIT terms.) | yes | yes |
 | [Light picture: Outdoors (kloofendal_48d_partly_cloudy)](https://polyhaven.com/a/kloofendal_48d_partly_cloudy) | The Outdoors lighting choice in the 3D viewer, the preview picture and the Unity showcase. | Greg Zaal (Poly Haven) | CC0 1.0 | no | no |
 | [Light picture: Overcast (overcast_soil)](https://polyhaven.com/a/overcast_soil) | The Overcast lighting choice in the viewer and previews. | Sergej Majboroda (Poly Haven) | CC0 1.0 | no | no |

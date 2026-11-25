@@ -127,6 +127,8 @@ class Settings(BaseModel):
     # entry, and ComfyUI reads the LoRAs in place. Saved as given; the app never copies or links them.
     lora_folders: list[Path] = Field(default_factory=list)
     clips_libraries: dict[str, Path] = Field(default_factory=dict)
+    # Folder of the hand-made creature clips (CC0 Mesh2Motion .glb files, fetched by setup\Setup-Extras.ps1 -Packs).
+    creature_clips_dir: Path | None = None
     min_free_ram_gb: float = Field(default=24, ge=0)
     # How many clean-ups (and other long host jobs) run at once on this computer. 1: one at a time, as measured safe.
     # More only after a measurement on this machine (memory, Blender, the cards a clean-up borrows).
@@ -191,7 +193,7 @@ def resolve_paths(settings: Settings, project_dir: Path = PROJECT_DIR) -> Settin
     """Make every path setting absolute: relative ones are relative to the project folder (an engine's python is
     relative to its comfy_dir). Changes `settings` in place and returns it."""
     s = settings
-    for key in ("library_path", "export_path", "blender_exe", "finder_python", "finder_models", "unity_exe", "unity_project", "comfy_input_dir"):
+    for key in ("library_path", "export_path", "blender_exe", "finder_python", "finder_models", "unity_exe", "unity_project", "comfy_input_dir", "creature_clips_dir"):
         setattr(s, key, _resolve(getattr(s, key), project_dir))
     s.clips_libraries = {k: _resolve(v, project_dir) for k, v in s.clips_libraries.items()}  # type: ignore[misc]
     for name, inst in s.instances.items():

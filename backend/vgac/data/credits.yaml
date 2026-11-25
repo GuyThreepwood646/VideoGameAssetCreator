@@ -56,6 +56,7 @@ models:
   unity: {skip: true}
   ual1: {skip: true}
   ual2: {skip: true}
+  mesh2motion: {skip: true}
   hair_library: {skip: true}
 
 addons:
@@ -71,6 +72,7 @@ addons:
 data:
   - {name: "Universal Animation Library (Standard)", does: "The ready-made moves (walk, run, idle and more) your rigged characters can use.", author: Quaternius, licence: "CC0 1.0", link: "https://quaternius.com", attribution_required: false, in_your_assets: true, confirmed: records}
   - {name: "Universal Animation Library 2 (Standard)", does: "More ready-made moves for rigged characters.", author: Quaternius, licence: "CC0 1.0", link: "https://quaternius.com", attribution_required: false, in_your_assets: true, confirmed: records}
+  - {name: "Mesh2Motion animal clips", does: "The ready-made walk, run, attack and other moves for four-legged creatures.", author: Mesh2Motion, licence: "CC0 1.0", link: "https://github.com/Mesh2Motion/mesh2motion-app", attribution_required: false, in_your_assets: true, confirmed: records}
   - {name: "Files copied into your Unity project (VgacSpringBones.cs, VgacHair.shader, VgacHairCutout.shader, VgacImport.cs)", does: "The importer, the spring-bone script and the hair shaders the app puts in your Unity project so the character moves and looks right.", author: "Runtime Forge LLC", licence: "MIT (not GPL, on purpose)", link: "", attribution_required: true, in_your_assets: true, note: "Keep the copyright notice at the top of each file. Copies already in a project before 2026-11-06 carry no notice; they are covered by the same MIT terms.", confirmed: records}
   - {name: "Light picture: Outdoors (kloofendal_48d_partly_cloudy)", does: "The Outdoors lighting choice in the 3D viewer, the preview picture and the Unity showcase.", author: "Greg Zaal (Poly Haven)", licence: "CC0 1.0", link: "https://polyhaven.com/a/kloofendal_48d_partly_cloudy", attribution_required: false, in_your_assets: false, confirmed: records}
   - {name: "Light picture: Overcast (overcast_soil)", does: "The Overcast lighting choice in the viewer and previews.", author: "Sergej Majboroda (Poly Haven)", licence: "CC0 1.0", link: "https://polyhaven.com/a/overcast_soil", attribution_required: false, in_your_assets: false, confirmed: records}
