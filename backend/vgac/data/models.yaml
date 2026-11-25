@@ -12,33 +12,33 @@
 # Add a concept model by adding an entry here plus its builder function; nothing else lists them.
 models:
   zturbo: {name: Z-Image Turbo, file: z_image_turbo_int8_convrot.safetensors, licence: Apache-2.0, version: "1.0",
-    concept: true, label: Z-Image Turbo, description: fast painted look, default_steps: 8, builder: zimage_graph, save_node: "8", negative: false}
+    concept: true, label: Z-Image Turbo, description: fast painted look, default_steps: 8, builder: zimage_graph, save_node: "8", negative: false, source: "https://huggingface.co/Comfy-Org/z_image_turbo"}
   zbase: {name: Z-Image base, file: z_image_base_int8_convrot.safetensors, licence: Apache-2.0, version: "1.0",
-    concept: true, label: Z-Image Base, description: "higher quality, slower", default_steps: 30, builder: zbase_graph, save_node: "9", negative: true}
+    concept: true, label: Z-Image Base, description: "higher quality, slower", default_steps: 30, builder: zbase_graph, save_node: "9", negative: true, source: "https://huggingface.co/Comfy-Org/z_image"}
   klein: {name: FLUX.2 Klein 4B, file: flux-2-klein-4b-fp8.safetensors, licence: Apache-2.0, version: "4B",
-    concept: true, label: FLUX.2 Klein 4B, description: quick drafts, default_steps: 4, builder: klein_graph, save_node: "12", negative: false}
+    concept: true, label: FLUX.2 Klein 4B, description: quick drafts, default_steps: 4, builder: klein_graph, save_node: "12", negative: false, source: "https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8"}
   anima: {name: Anima turbo, file: anima-turbo-v1.1.safetensors, licence: "Non-commercial model, outputs usable commercially", version: "1.1",
-    concept: true, label: Anima Turbo, description: anime line art, default_steps: 10, builder: anima_graph, save_node: "9", negative: false}
+    concept: true, label: Anima Turbo, description: anime line art, default_steps: 10, builder: anima_graph, save_node: "9", negative: false, source: "https://huggingface.co/circlestone-labs/Anima"}
   chroma: {name: Chroma1-HD, file: Chroma1-HD-fp8mixed.safetensors, licence: Apache-2.0, version: "1.0",
-    concept: true, label: Chroma1-HD, description: loose painterly, default_steps: 30, builder: chroma_graph, save_node: "9", negative: true}
-  qwen_edit: {name: Qwen-Image-Edit-2511, file: qwen_image_edit_2511_fp8mixed.safetensors, licence: Apache-2.0, version: "2511"}
-  qwen_angles_lora: {name: Qwen-Image-Edit-2511 multiple-angles LoRA, file: qwen-image-edit-2511-multiple-angles-lora.safetensors, licence: Apache-2.0, version: "1.0"}
-  qwen_sheet_lora: {name: Qwen-Image-Edit-2511 character turnaround sheet LoRA (tarn59), file: qie2511_turnaround_sheet_tarn59.safetensors, licence: Apache-2.0, version: "1.0"}
-  qwen_camera_lora: {name: Qwen-Image-Edit-2511 camera-angle LoRA (berkerdooo), file: qie2511_camera_angle_berkerdooo.safetensors, licence: Apache-2.0, version: "1.0"}
-  qwen_lightning_lora: {name: Qwen-Image-Edit-2511 Lightning 4 steps, file: Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors, licence: Apache-2.0, version: "1.0"}
-  birefnet: {name: BiRefNet, file: birefnet.safetensors, licence: MIT, version: "1.0"}
-  upscale_photo: {name: 4xRealWebPhoto v4 (DAT2), file: 4xRealWebPhoto_v4_dat2.pth, licence: CC-BY-4.0, version: "4"}
-  upscale_art: {name: Real-ESRGAN x2plus, file: RealESRGAN_x2plus.pth, licence: BSD-3-Clause, version: "0.2.1"}
-  upscale_wood: {name: 4x-PBRify UpscalerV4 (wood upscaler), file: 4x-PBRify_UpscalerV4.pth, licence: CC0-1.0, version: "4"}
-  trellis2: {name: TRELLIS.2, file: trellis_2_int8_convrot.safetensors, licence: MIT, version: "2"}
-  pixal3d_mv: {name: Pixal3D multi-view, file: pixal3d_multiview_int8_convrot.safetensors, licence: MIT, version: "1.0"}
-  hy3d_mv: {name: Hunyuan3D-2mv, file: Hunyuan3D-2mv.fp16.safetensors, licence: Tencent Hunyuan Community Licence, version: "2.0"}
-  skintoken: {name: SkinToken, file: grpo_1400.ckpt, licence: MIT, version: grpo_1400}
-  blender: {name: Blender, file: "", licence: GPL (tool), version: "5.2.3"}
-  unity: {name: Unity Editor (sandbox import), file: "", licence: Unity Personal/Pro (tool), version: "6000.4.3f1"}
-  ual1: {name: Universal Animation Library Standard (CC0), file: UAL1_Standard.fbx, licence: CC0, version: "3.0"}
-  ual2: {name: Universal Animation Library 2 Standard (CC0), file: UAL2_Standard.fbx, licence: CC0, version: "1"}
-  hair_library: {name: "VGAC hair library (Quaternius Universal Base Characters, MakeHuman hair, rule-built styles)", file: "", licence: CC0, version: "1"}
+    concept: true, label: Chroma1-HD, description: loose painterly, default_steps: 30, builder: chroma_graph, save_node: "9", negative: true, source: "https://huggingface.co/Comfy-Org/Chroma1-HD"}
+  qwen_edit: {name: Qwen-Image-Edit-2511, file: qwen_image_edit_2511_fp8mixed.safetensors, licence: Apache-2.0, version: "2511", source: "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI"}
+  qwen_angles_lora: {name: Qwen-Image-Edit-2511 multiple-angles LoRA, file: qwen-image-edit-2511-multiple-angles-lora.safetensors, licence: Apache-2.0, version: "1.0", source: "https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA"}
+  qwen_sheet_lora: {name: Qwen-Image-Edit-2511 character turnaround sheet LoRA (tarn59), file: qie2511_turnaround_sheet_tarn59.safetensors, licence: Apache-2.0, version: "1.0", source: "https://huggingface.co/tarn59/character_turnaround_sheet_qwen_edit_2511"}
+  qwen_camera_lora: {name: Qwen-Image-Edit-2511 camera-angle LoRA (berkerdooo), file: qie2511_camera_angle_berkerdooo.safetensors, licence: Apache-2.0, version: "1.0", source: "https://huggingface.co/berkerdooo/qwen-image-edit-2511-camera-angle-lora"}
+  qwen_lightning_lora: {name: Qwen-Image-Edit-2511 Lightning 4 steps, file: Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors, licence: Apache-2.0, version: "1.0", source: "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning"}
+  birefnet: {name: BiRefNet, file: birefnet.safetensors, licence: MIT, version: "1.0", source: "https://huggingface.co/Comfy-Org/BiRefNet"}
+  upscale_photo: {name: 4xRealWebPhoto v4 (DAT2), file: 4xRealWebPhoto_v4_dat2.pth, licence: CC-BY-4.0, version: "4", source: "https://huggingface.co/Phips/4xRealWebPhoto_v4_dat2"}
+  upscale_art: {name: Real-ESRGAN x2plus, file: RealESRGAN_x2plus.pth, licence: BSD-3-Clause, version: "0.2.1", source: "https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.1"}
+  upscale_wood: {name: 4x-PBRify UpscalerV4 (wood upscaler), file: 4x-PBRify_UpscalerV4.pth, licence: CC0-1.0, version: "4", source: "https://github.com/Kim2091/Kim2091-Models/releases/tag/4x-PBRify_UpscalerV4"}
+  trellis2: {name: TRELLIS.2, file: trellis_2_int8_convrot.safetensors, licence: MIT, version: "2", source: "https://huggingface.co/Comfy-Org/TRELLIS.2"}
+  pixal3d_mv: {name: Pixal3D multi-view, file: pixal3d_multiview_int8_convrot.safetensors, licence: MIT, version: "1.0", source: "https://github.com/TencentARC/Pixal3D", note: "Repository README: MIT. Third-party components keep their own terms (NOTICE file, not read 2026-11-24)."}
+  hy3d_mv: {name: Hunyuan3D-2mv, file: Hunyuan3D-2mv.fp16.safetensors, licence: Tencent Hunyuan Community Licence, version: "2.0", source: "https://huggingface.co/tencent/Hunyuan3D-2mv"}
+  skintoken: {name: SkinToken, file: grpo_1400.ckpt, licence: MIT, version: grpo_1400, source: "https://huggingface.co/VAST-AI/SkinTokens", note: "Code MIT (repository licence). A collaborator, not a maintainer, said only the michelangelo subfolder is GPL. Weights and training-data rights are unanswered (SkinTokens issue 9, open). Risk accepted by the owner 2026-11-23."}
+  blender: {name: Blender, file: "", licence: GPL (tool), version: "5.2.3", source: "https://www.blender.org/about/license/"}
+  unity: {name: Unity Editor (sandbox import), file: "", licence: Unity Personal/Pro (tool), version: "6000.4.3f1", source: "https://unity.com/legal"}
+  ual1: {name: Universal Animation Library Standard (CC0), file: UAL1_Standard.fbx, licence: CC0, version: "3.0", source: "https://quaternius.itch.io/universal-animation-library"}
+  ual2: {name: Universal Animation Library 2 Standard (CC0), file: UAL2_Standard.fbx, licence: CC0, version: "1", source: "https://quaternius.itch.io/universal-animation-library-2"}
+  hair_library: {name: "VGAC hair library (Quaternius Universal Base Characters, MakeHuman hair, rule-built styles)", file: "", licence: CC0, version: "1", source: "backend/vgac/data/hairlib/CREDITS.txt"}
 #
 # Companions: files a graph loads next to the models above (text encoders, VAEs, the DINOv3 image encoder, the
 # SkinToken skin VAE, the optional face model and the picture judge's text encoder). They are not concept painters or
@@ -46,24 +46,24 @@ models:
 # that runs the stage, and setup/downloads.json says where each comes from. `used_by` names the models that need it.
 # A test (tests/test_model_list.py) fails when a graph names a model file that neither this file nor downloads.json lists.
 companions:
-  qwen_te: {name: Qwen 2.5 VL 7B text encoder (fp8 scaled), file: qwen_2.5_vl_7b_fp8_scaled.safetensors, licence: Apache-2.0, version: "2.5", used_by: [qwen_edit]}
-  qwen_vae: {name: Qwen image VAE, file: qwen_image_vae.safetensors, licence: Apache-2.0, version: "1.0", used_by: [qwen_edit, anima]}
-  trellis2_dino: {name: DINOv3 ViT-L image encoder (TRELLIS.2), file: dino_v3_vit_l.safetensors, licence: MIT, version: "1.0", used_by: [trellis2]}
-  pixal3d_dino: {name: DINOv3 ViT-L image encoder with NAF weights (Pixal3D), file: dino_v3_L_naf_fp32.safetensors, licence: "DINOv3 License (Meta); NAF code Apache-2.0", version: "1.0", used_by: [pixal3d_mv]}
-  moge2: {name: MoGe-2 ViT-L (camera angle for Pixal3D), file: moge_2_vitl_normal_fp16.safetensors, licence: MIT, version: "2", used_by: [pixal3d_mv]}
-  trellis2_shape_vae: {name: TRELLIS.2 shape VAE, file: trellis_2_shape_vae_bf16.safetensors, licence: MIT, version: "2", used_by: [trellis2]}
-  trellis2_texture_vae: {name: TRELLIS.2 texture VAE, file: trellis_2_texture_vae_bf16.safetensors, licence: MIT, version: "2", used_by: [trellis2]}
-  zimage_te: {name: Qwen 3 4B text encoder, file: qwen_3_4b.safetensors, licence: Apache-2.0, version: "3", used_by: [zturbo, zbase, klein]}
-  flux_ae: {name: FLUX autoencoder (ae), file: ae.safetensors, licence: Apache-2.0, version: "1.0", used_by: [zturbo, zbase, chroma]}
-  flux2_vae: {name: FLUX.2 VAE, file: flux2-vae.safetensors, licence: Apache-2.0, version: "2", used_by: [klein]}
-  chroma_te: {name: T5-XXL text encoder (fp8 scaled), file: t5xxl_fp8_e4m3fn_scaled.safetensors, licence: Apache-2.0, version: "1.1", used_by: [chroma]}
-  anima_te: {name: Qwen 3 0.6B base text encoder, file: qwen_3_06b_base.safetensors, licence: "Non-commercial model, outputs usable commercially", version: "3", used_by: [anima]}
-  skintoken_vae: {name: SkinToken skin VAE, file: last.ckpt, licence: MIT, version: skin_vae_2_10_32768, used_by: [skintoken]}
-  gemma3_12b: {name: Gemma 3 12B text encoder (picture judge), file: gemma_3_12B_it.safetensors, licence: Gemma Terms of Use, version: "3", used_by: [judge]}
-  face_model: {name: MediaPipe face landmarker (ComfyUI route), file: mediapipe_face_fp32.safetensors, licence: Apache-2.0, version: "1.0", used_by: [lip points]}
-  face_landmarker: {name: MediaPipe face landmarker (eyes and mouth, runtime/models), file: face_landmarker.task, licence: Apache-2.0, version: "1", used_by: [lip points]}
-  pose_landmarker: {name: MediaPipe pose landmarker heavy (pose check, runtime/models), file: pose_landmarker_heavy.task, licence: Apache-2.0, version: "1", used_by: [pose check]}
-  hand_landmarker: {name: MediaPipe hand landmarker (pose check, runtime/models), file: hand_landmarker.task, licence: Apache-2.0, version: "1", used_by: [pose check]}
+  qwen_te: {name: Qwen 2.5 VL 7B text encoder (fp8 scaled), file: qwen_2.5_vl_7b_fp8_scaled.safetensors, licence: Apache-2.0, version: "2.5", used_by: [qwen_edit], source: "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI"}
+  qwen_vae: {name: Qwen image VAE, file: qwen_image_vae.safetensors, licence: Apache-2.0, version: "1.0", used_by: [qwen_edit, anima], source: "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI"}
+  trellis2_dino: {name: DINOv3 ViT-L image encoder (TRELLIS.2), file: dino_v3_vit_l.safetensors, licence: "DINOv3 License (Meta)", version: "1.0", used_by: [trellis2], source: "https://huggingface.co/Comfy-Org/TRELLIS.2", note: "Meta's DINOv3 License covers the DINOv3 model weights (its definitions list trained model weights). The Comfy-Org repackage page says MIT for its own files; that does not change Meta's terms. Checked 2026-11-24 from the licence text on GitHub. The licence text has no commercial-use clause and never uses the word commercial; whether it allows commercial use is an open question for the owner (read 2026-11-24)."}
+  pixal3d_dino: {name: DINOv3 ViT-L image encoder with NAF weights (Pixal3D), file: dino_v3_L_naf_fp32.safetensors, licence: "DINOv3 License (Meta); NAF code Apache-2.0", version: "1.0", used_by: [pixal3d_mv], source: "https://github.com/TencentARC/Pixal3D"}
+  moge2: {name: MoGe-2 ViT-L (camera angle for Pixal3D), file: moge_2_vitl_normal_fp16.safetensors, licence: MIT, version: "2", used_by: [pixal3d_mv], source: "https://github.com/microsoft/MoGe", note: "Code MIT; the DINOv2 code it includes is Apache-2.0 (README of microsoft/MoGe, read 2026-11-24; LICENSE file not read)."}
+  trellis2_shape_vae: {name: TRELLIS.2 shape VAE, file: trellis_2_shape_vae_bf16.safetensors, licence: MIT, version: "2", used_by: [trellis2], source: "https://huggingface.co/Comfy-Org/TRELLIS.2"}
+  trellis2_texture_vae: {name: TRELLIS.2 texture VAE, file: trellis_2_texture_vae_bf16.safetensors, licence: MIT, version: "2", used_by: [trellis2], source: "https://huggingface.co/Comfy-Org/TRELLIS.2"}
+  zimage_te: {name: Qwen 3 4B text encoder, file: qwen_3_4b.safetensors, licence: Apache-2.0, version: "3", used_by: [zturbo, zbase, klein], source: "https://huggingface.co/Comfy-Org/z_image_turbo"}
+  flux_ae: {name: FLUX autoencoder (ae), file: ae.safetensors, licence: Apache-2.0, version: "1.0", used_by: [zturbo, zbase, chroma], source: "https://huggingface.co/Comfy-Org/z_image_turbo"}
+  flux2_vae: {name: FLUX.2 VAE, file: flux2-vae.safetensors, licence: Apache-2.0, version: "2", used_by: [klein], source: "https://huggingface.co/Comfy-Org/flux2-klein-4b"}
+  chroma_te: {name: T5-XXL text encoder (fp8 scaled), file: t5xxl_fp8_e4m3fn_scaled.safetensors, licence: Apache-2.0, version: "1.1", used_by: [chroma], source: "https://huggingface.co/comfyanonymous/flux_text_encoders"}
+  anima_te: {name: Qwen 3 0.6B base text encoder, file: qwen_3_06b_base.safetensors, licence: "Non-commercial model, outputs usable commercially", version: "3", used_by: [anima], source: "https://huggingface.co/circlestone-labs/Anima"}
+  skintoken_vae: {name: SkinToken skin VAE, file: last.ckpt, licence: MIT, version: skin_vae_2_10_32768, used_by: [skintoken], source: "https://huggingface.co/VAST-AI/SkinTokens"}
+  gemma3_12b: {name: Gemma 3 12B text encoder (picture judge), file: gemma_3_12B_it.safetensors, licence: Gemma Terms of Use, version: "3", used_by: [judge], source: "https://huggingface.co/Comfy-Org/ltx-2"}
+  face_model: {name: MediaPipe face landmarker (ComfyUI route), file: mediapipe_face_fp32.safetensors, licence: Apache-2.0, version: "1.0", used_by: [lip points], source: "https://huggingface.co/Comfy-Org/mediapipe"}
+  face_landmarker: {name: MediaPipe face landmarker (eyes and mouth, runtime/models), file: face_landmarker.task, licence: Apache-2.0, version: "1", used_by: [lip points], source: "https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker"}
+  pose_landmarker: {name: MediaPipe pose landmarker heavy (pose check, runtime/models), file: pose_landmarker_heavy.task, licence: Apache-2.0, version: "1", used_by: [pose check], source: "https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker"}
+  hand_landmarker: {name: MediaPipe hand landmarker (pose check, runtime/models), file: hand_landmarker.task, licence: Apache-2.0, version: "1", used_by: [pose check], source: "https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker"}
 #
 # Finders: the models the suggested worn item finder runs (item_suggest.py, finder_worker.py), in its own Python
 # environment under local/finder (setup/Setup-ItemFinder.ps1). Not concept painters, not graph files and not credits;

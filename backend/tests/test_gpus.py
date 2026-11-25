@@ -72,30 +72,32 @@ def test_route_preferences_and_fallbacks(settings):
     # Everything on: the stage tables.
     assert [r(s, "humanoid", settings) for s in ("concept", "turnaround", "mesh", "prep", "rig", "export")] == ["b", "b", "a", "host", "b", "host"]
     assert r("judge", "humanoid", settings) == "b"
-    # b off: pictures, judge and material move to a; rig has nowhere to go.
+    # b off: pictures, judge, material and rig move to a (a can rig too).
     off_b = {"b"}
     assert r("concept", "humanoid", settings, off_b) == "a"
     assert r("turnaround", "humanoid", settings, off_b) == "a"
     assert r("judge", "humanoid", settings, off_b) == "a"
     assert r("mesh", "material", settings, off_b) == "a"
-    assert r("rig", "humanoid", settings, off_b) is None
+    assert r("rig", "humanoid", settings, off_b) == "a"
     # a off: mesh moves to b.
     assert r("mesh", "humanoid", settings, {"a"}) == "b"
     # Both off: nothing on a card runs; the host still does.
     assert r("concept", "humanoid", settings, {"a", "b"}) is None
+    assert r("rig", "humanoid", settings, {"a", "b"}) is None
     assert r("prep", "humanoid", settings, {"a", "b"}) == "host"
     assert r("rig", "material", settings, {"a", "b"}) == "host"
-    # Allowed kinds: b may not make pictures -> a; neither may -> None; a may never rig, whatever is ticked.
+    # Allowed kinds: b may not make pictures -> a; neither may -> None; rig goes to whichever card may rig.
     assert r("concept", "humanoid", settings, (), {"b": ["model", "rigging", "review"]}) == "a"
     assert r("concept", "humanoid", settings, (), {"a": ["model"], "b": ["model"]}) is None
-    assert r("rig", "humanoid", settings, (), {"b": ["pictures"], "a": ["pictures", "model", "rigging", "review"]}) is None
+    assert r("rig", "humanoid", settings, (), {"b": ["pictures"], "a": ["pictures", "model", "rigging", "review"]}) == "a"
+    assert r("rig", "humanoid", settings, (), {"b": ["pictures"], "a": ["pictures"]}) is None
     assert r("judge", "humanoid", settings, (), {"b": ["pictures"]}) == "a"
     assert r("mesh", "humanoid", settings, {"b"}, {"a": ["pictures"]}) is None
     # Capabilities: config intersected with allowed kinds.
-    assert jobs.capabilities("a", settings) == ["concept", "turnaround", "mesh", "material", "judge"]
+    assert jobs.capabilities("a", settings) == ["concept", "turnaround", "mesh", "rig", "material", "judge"]
     assert jobs.capabilities("host", settings) == []
     assert jobs.effective_capabilities("b", settings, {"b": ["rigging"]}) == ["rig"]
-    assert jobs.possible_kinds("a", settings) == ["pictures", "model", "review"]
+    assert jobs.possible_kinds("a", settings) == ["pictures", "model", "rigging", "review"]
     # An instance missing from instance_capabilities can run what the stage tables give it.
     bare = settings.model_copy(update={"instance_capabilities": {}})
     assert set(jobs.capabilities("a", bare)) == {"mesh"}
@@ -106,9 +108,9 @@ def test_notes_name_the_card(settings):
     named = settings.model_copy(update={"instances": {
         "a": InstanceConfig(url="http://127.0.0.1:9", gpu="RTX 3060"),
         "b": InstanceConfig(url="http://127.0.0.1:10", gpu="RTX 3080")}})
-    assert jobs.gpu_note("b", named) == "Rigging only runs on this card."
+    assert jobs.gpu_note("b", named) == "The other card can take over everything this card does."
     assert jobs.gpu_note("a", named) == "The other card can take over everything this card does."
-    assert jobs.kind_notes("a", named) == {"rigging": "Rigging only runs on the RTX 3080's instance."}
+    assert jobs.kind_notes("a", named) == {}
     assert jobs.kind_notes("b", named) == {}
     assert jobs.waiting_message("b", named) == "Waiting for RTX 3080 to be turned back on"
 
@@ -130,16 +132,12 @@ def test_disable_moves_queued_jobs_and_parks_rig(client, fake_execute):
         assert j["status"] == "done" and j["instance"] == "a"
         assert client.get(f"/api/versions/{o['version']['id']}").json()["status"] == "done"
     assert {c["instance"] for c in fake_execute} == {"a"}
-    parked = client.get(f"/api/jobs/{rig.id}").json()
-    assert parked["status"] == "queued" and parked["instance"] == "b"
-    assert parked["message"] == "Waiting for test to be turned back on"
+    # The queued rig moved to a, the card that can rig now; it does not wait on b.
+    moved = client.get(f"/api/jobs/{rig.id}").json()
+    assert moved["instance"] == "a"
     b = _gpu(client.get("/api/gpus").json(), "b")
-    assert b["queued"] == 1 and b["current_job_id"] is None and b["note"] == "Rigging only runs on this card."
-    # A new concept goes straight to a while b is off; a new rig job waits on b with the message.
-    nxt = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={}).json()
-    assert nxt["job"]["instance"] == "a"
-    wait_job(client, nxt["job"]["id"])
-    # Turning b back on clears the message on the parked job; new pictures go to b again.
+    assert b["current_job_id"] is None and b["note"] == "The other card can take over everything this card does."
+    # Turning b back on: new pictures go to b again.
     client.post(f"/api/jobs/{rig.id}/cancel")
     client.post("/api/queue/b/pause", params={"paused": False})
     rows = client.put("/api/gpus/b", json={"enabled": True}).json()
@@ -204,11 +202,11 @@ def test_allowed_kinds_reroute_and_park(client, fake_execute):
     assert wait_job(client, jid)["status"] == "done"
     pj = wait_job(client, parked["job"]["id"])
     assert pj["status"] == "done" and pj["instance"] == "a"
-    # a cannot rig whatever is ticked: rigging stays out of its effective kinds, with the note.
+    # a can rig: rigging is in its effective kinds once ticked, with no note.
     rows = client.put("/api/gpus/a", json={"allowed_kinds": ["pictures", "model", "rigging", "review"]}).json()
     ga = _gpu(rows, "a")
-    assert ga["effective_kinds"] == ["pictures", "model", "review"] and ga["possible_kinds"] == ["pictures", "model", "review"]
-    assert ga["kind_notes"] == {"rigging": "Rigging only runs on the test's instance."}
+    assert ga["effective_kinds"] == ["pictures", "model", "rigging", "review"] and ga["possible_kinds"] == ["pictures", "model", "rigging", "review"]
+    assert ga["kind_notes"] == {}
     assert client.put("/api/gpus/a", json={"allowed_kinds": ["nope"]}).status_code == 400
     assert client.put("/api/gpus/z", json={"enabled": False}).status_code == 404
 
@@ -304,7 +302,7 @@ def test_route_tries_the_default_card_first(settings):
     assert jobs.route("concept", "humanoid", settings) == "b"
     assert jobs.route("concept", "humanoid", settings, default="a") == "a"
     assert jobs.route("mesh", "humanoid", settings, default="b") == "b"
-    assert jobs.route("rig", "humanoid", settings, default="a") == "b"  # only b can rig
+    assert jobs.route("rig", "humanoid", settings, default="a") == "a"  # a is the default and can rig
     assert jobs.route("prep", "humanoid", settings, default="a") == jobs.HOST
     assert jobs.route("concept", "humanoid", settings, {"a"}, default="a") == "b"  # the default is off
     assert jobs.route("concept", "humanoid", settings, (), {"a": ["model"]}, default="a") == "b"  # not allowed pictures
@@ -352,7 +350,7 @@ def test_idle_card_takes_work_from_a_busy_one_only_when_sharing_is_on(client, fa
     moved = next(j for j in done if j["instance"] == "a")
     assert all(j["status"] == "done" for j in done)
     assert prefs.load(settings)["share_when_busy"] is True
-    # A rig job is never taken by a: only b can rig.
+    # Card a can rig, so a rig job may be taken by a as well.
     q = jobs.active_queue()
-    assert q._can_take("a", "rig.run") is False and q._can_take("a", "concept.run") is True
+    assert q._can_take("a", "rig.run") is True and q._can_take("a", "concept.run") is True
     assert moved["id"] in {c["job_id"] for c in fake_execute if c["instance"] == "a"}

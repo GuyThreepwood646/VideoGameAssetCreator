@@ -231,11 +231,11 @@ def test_manifest_names_the_hair_material_and_its_files(tmp_path: Path):
     block = export._hair_manifest(sc, {"hairMaterial": "Assets/VGAC/K/K_Hair.mat", "hairShader": "VGAC/Hair"})
     assert block["materials"] == ["K_Body", "K_Hair"] and block["texels_per_cm"] == 21.5 and block["draw_calls_added"] == 1
     assert block["flow_map"] == "hair_flow.png" and block["files"]["hair_orm"] == "hair_orm.png"
-    assert block["unity"]["shader"] == "VGAC/Hair" and "not verified" in block["unreal"] and "not verified" in block["godot"]
+    assert block["unity"]["shader"] == "VGAC/Hair" and "not verified" in block["godot"]
     none = fake_export_sc(tmp_path, {"use": False}, {"hair_material": None}, files)
     assert export._hair_manifest(none, None) is None
     text = export.hair_readme("K", {"tex": 1024}, block["files"])
-    assert "Unreal" in text and "Godot" in text and "Shading Model to Hair" in text and "Anisotropy" in text
+    assert "Unreal" not in text and "Godot" in text and "Anisotropy" in text
     assert "Not tried here" in text
 
 

@@ -390,10 +390,9 @@ function baseFinishLines(asset: Asset): FinishLine[] {
 
   // 6. Engine files.
   const files: string[] = []
-  if (exp.files.fbx) files.push('FBX (Unity, Unreal, Godot)')
+  if (exp.files.fbx) files.push('FBX (Unity, Godot)')
   if (exp.files.glb) files.push('GLB (web)')
   if (exp.files.prefab || exp.files.unitypackage || rep?.prefab) files.push('a ready Unity prefab')
-  if (exp.files.fbx_unreal) files.push('an Unreal FBX with collision shapes')
   if (files.length) lines.push({ id: 'files', text: `Files: ${joinAnd(files)}.`, state: 'ok', term: 'formats' })
 
   // Six lines as the backend writes them, seven when the lighting line is there too.

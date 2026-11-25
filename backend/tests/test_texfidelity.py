@@ -93,10 +93,21 @@ def test_checks_pass_and_fail_report_only(base):
     ok = texfidelity.fidelity_checks(_score(glb, pic))
     assert {c["id"] for c in ok} == {"texture_sharp", "texture_colour_matches_picture"}
     assert all(c["ok"] and c["severity"] == "warn" and c.get("help") for c in ok)
+    # a hue shift blurred hard enough to lose the detail its texels hold (a milder blur keeps most of it, see the density test)
     bad_glb = _glb(d / "bad.glb", face.blur(tex[..., [2, 0, 1]], 3.0))
-    bad = texfidelity.fidelity_checks(_score(bad_glb, pic))
-    assert all(not c["ok"] and c["severity"] == "warn" and c.get("help") for c in bad) and len(bad) == 2
-    assert not quality.summarise(bad)["gate_ok"] or all(c["severity"] == "warn" for c in bad)
+    bad = {c["id"]: c for c in texfidelity.fidelity_checks(_score(bad_glb, pic))}
+    # the hue shift is what the colour check guards: its colour difference is far above the limit
+    colour = bad["texture_colour_matches_picture"]
+    assert not colour["ok"] and colour["severity"] == "warn" and colour.get("help")
+    assert not quality.summarise(list(bad.values()))["gate_ok"] or all(c["severity"] == "warn" for c in bad.values())
+
+
+def test_copy_blurred_past_its_texel_size_fails_the_sharpness_check(base):
+    d, tex, glb, pic = base
+    # blurred twice as hard: it loses detail its texels could hold, so the density measure fails it
+    soft = texfidelity.fidelity_checks(_score(_glb(d / "soft.glb", face.blur(tex[..., [2, 0, 1]], 6.0)), pic))
+    sharp = {c["id"]: c for c in soft}["texture_sharp"]
+    assert not sharp["ok"] and sharp["severity"] == "warn" and sharp.get("help")
 
 
 def test_not_measured_checks_when_the_fit_is_poor(base):
@@ -133,3 +144,44 @@ def test_atlas_detail_is_lower_for_detailed_textures():
     smooth = face.blur(noisy, 4.0)
     cover = np.ones((128, 128), bool)
     assert texfidelity.real_detail_db(noisy, cover) < texfidelity.real_detail_db(smooth, cover)
+
+
+def _texel_blur(img: np.ndarray, k: float) -> np.ndarray:
+    """The image box-filtered to 1/k of its size and back up: detail finer than k pixels is gone."""
+    s = img.shape[0]
+    small = Image.fromarray(face.to_uint8(img)).resize((max(8, int(round(s / k))),) * 2, Image.BOX)
+    return np.asarray(small.resize((s, s), Image.BICUBIC), dtype=np.float64) / 255.0
+
+
+def test_density_sharpness_passes_the_texel_reference_and_fails_a_softer_copy():
+    rng = np.random.default_rng(3)
+    pic = rng.random((256, 256, 3))
+    mask = np.ones((256, 256), bool)
+    # two render pixels per texel: the reference is the picture blurred to that texel size
+    ref = _texel_blur(pic, 2.0)
+    matched = texfidelity.density_sharpness(ref, mask, pic, mask, px_per_metre=2.0, texel_m=1.0)
+    softer = texfidelity.density_sharpness(_texel_blur(ref, 2.0), mask, pic, mask, px_per_metre=2.0, texel_m=1.0)
+    assert matched is not None and matched >= 0.95
+    assert softer is not None and softer < texfidelity.SHARP_RATIO_MIN
+
+
+def test_density_sharpness_is_capped_at_one_and_none_without_overlap():
+    rng = np.random.default_rng(4)
+    pic = rng.random((256, 256, 3))
+    mask = np.ones((256, 256), bool)
+    assert texfidelity.density_sharpness(pic, mask, pic, mask, px_per_metre=2.0, texel_m=1.0) == 1.0
+    empty = np.zeros((256, 256), bool)
+    assert texfidelity.density_sharpness(pic, empty, pic, mask, px_per_metre=2.0, texel_m=1.0) is None
+
+
+def test_sharp_check_reads_the_density_ratio_not_the_raw_one():
+    base = {"fit_ok": True, "ssim": 0.9, "silhouette_iou": 0.95, "sharpness_ratio": 0.04,
+            "density_sharpness_ratio": 0.9, "delta_e": 3.0, "delta_l": 0.0, "delta_chroma": 1.0}
+    sharp = {c["id"]: c for c in texfidelity.fidelity_checks(base)}["texture_sharp"]
+    assert sharp["ok"] and sharp["value"] == 0.9
+    soft = {c["id"]: c for c in texfidelity.fidelity_checks({**base, "density_sharpness_ratio": 0.24})}["texture_sharp"]
+    assert not soft["ok"] and soft["value"] == 0.24
+    # a stored result from before the density measure is not judged on the raw ratio
+    old = {k: v for k, v in base.items() if k != "density_sharpness_ratio"}
+    got = {c["id"]: c for c in texfidelity.fidelity_checks(old)}["texture_sharp"]
+    assert got["vars"]["measured"] is False and not got["passed"]
