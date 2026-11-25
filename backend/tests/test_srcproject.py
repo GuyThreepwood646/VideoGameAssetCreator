@@ -527,3 +527,29 @@ def test_with_the_facing_decided_the_drawn_front_view_is_fitted_at_the_front_onl
     asked.clear()
     srcproject.paint(mesh, soft_base(), picture(), front_view=picture(), size=256, mode="off")
     assert asked["front"] == [float(y) for y in srcproject.FRONT_YAWS]   # facing not decided: searched as before
+
+
+def stretched_model() -> dict[str, np.ndarray]:
+    """The quad plus a 2 m triangle squeezed into a few texels of the layout (its texels are far apart on the surface)."""
+    v, f, uv = grid_quad(0.0, True, 0.05, 0.1)
+    v2 = np.array([[0.0, 0, 3.0], [2.0, 0, 3.0], [2.0, 2.0, 3.0]])
+    uv2 = np.array([[0.7, 0.7], [0.74, 0.7], [0.74, 0.74]])
+    f = np.concatenate([f, [[len(v), len(v) + 1, len(v) + 2]]])
+    v, uv = np.concatenate([v, v2]), np.concatenate([uv, uv2])
+    return {"verts": v, "faces": f, "uv": uv, "vnormals": face.smooth_normals(v, f)}
+
+
+def gutter_spans(atlas: srcproject.Atlas) -> np.ndarray:
+    g = atlas.is_gut
+    return np.linalg.norm(atlas.pos[g] - atlas.pos[atlas.src[g]], axis=1)
+
+
+def test_gutter_texels_stay_within_reach_of_the_island_texel_they_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A gutter texel's position continues the border triangle's plane. Beside a triangle squeezed into few texels that
+    runs metres from the texel it copies, and the dense grids of the paint step grow with it; those texels get no
+    position, so every kept gutter texel is within a few texels' reach."""
+    atlas = srcproject.Atlas(stretched_model(), 256)
+    reach = srcproject.GUTTER_REACH_TEXELS * srcproject.GUTTER_PX * atlas.pitch_m
+    assert atlas.is_gut.any() and gutter_spans(atlas).max() <= reach + 1e-9
+    monkeypatch.setattr(srcproject, "GUTTER_REACH_TEXELS", 1e9)
+    assert gutter_spans(srcproject.Atlas(stretched_model(), 256)).max() > reach
