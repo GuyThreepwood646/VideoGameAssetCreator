@@ -309,3 +309,19 @@ def test_spill_fills_edge_texels_from_the_hair_and_leaves_other_texels_alone():
     out = hair.spill(img, written, covered, px=2)
     assert out[3, 5] == 1.0 and out[2, 5] == 1.0 and out[5, 9] == 1.0  # edge and gutter texels take the hair's value
     assert out[5, 8] == 0.0 and out[0, 0] == 0.0
+
+
+def test_hair_views_are_orthographic_face_cameras_that_render():
+    # The hair pass's views go through face.render_view, which reads is_ortho and cos_to_camera of its camera.
+    mesh = cap()
+    tex = maps()["base_color"]
+    head = face.find_head(mesh["verts"])
+    assert head is not None
+    views = hair.render_views(mesh, tex, head, size=32)
+    assert set(views) == {name for name, *_ in hair.VOTE_VIEWS}
+    for v in views.values():
+        assert isinstance(v["cam"], face.Camera) and v["cam"].is_ortho
+        assert v["image"].shape == (32, 32, 3)
+    top = hair.head_view_cam(head, 0.0, 70.0, 32)
+    assert top.is_ortho and top.tilt_deg == 70.0
+    assert face.render_view(mesh, tex, top)["image"].shape == (32, 32, 3)
