@@ -473,7 +473,7 @@ export const TERM_HELP: Record<string, HelpEntry> = {
   // Creature moves (3.7)
   motion: H('How it moves', 'Whether the creature walks, flies or slithers.', 'Decides which animations it gets; change it for a bird that cannot fly or a fish shaped like a snake.', 'Procedural locomotion mode: legs, wings, wave'),
   moves: H('Moves (animation clips)', 'The animations made for this creature: standing still, walking, running, turning, attacking, getting hit and so on.', 'Leave out moves your game will never use to keep the file smaller.', 'Procedural clip set (procanim.py)'),
-  clips_source: H('Where the moves come from', 'Human-shaped characters can use the library of ready-made moves; every other skeleton gets moves built for it.', 'The library moves look natural. The built-in ones work on any skeleton and need nothing installed.', 'CC0 Quaternius Universal Animation Library retargeted in Blender, else procedural clips'),
+  clips_source: H('Where the moves come from', 'Human-shaped characters and four-legged animals can use ready-made moves; every other skeleton gets moves built for it.', 'The library moves look natural. The built-in ones work on any skeleton and need nothing installed.', 'CC0 Quaternius Universal Animation Library (humans) or Mesh2Motion animal clips (four-legged), retargeted in Blender, else procedural clips'),
   move_size: H('How big the moves are', 'How far the legs, body and wings swing in each move.', 'Small suits heavy or calm creatures; big suits lively ones.', 'Amplitude 0.7, 1.0 or 1.3'),
   move_speed: H('How fast', 'How quickly the moves play.', 'Match the creature\'s size and mood: big animals move slower.', 'Clip speed 0.8, 1.0 or 1.25'),
   // Add a move (rig step)

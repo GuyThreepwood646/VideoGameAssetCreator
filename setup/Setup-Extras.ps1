@@ -523,6 +523,27 @@ if ($Packs -and $dl) {
         } catch { Write-Host "  [fail] $($_.Exception.Message)" }
     }
     ''
+    '== Creature clips (CC0, by Mesh2Motion) =='
+    foreach ($p in $dl.creature_clip_packs.PSObject.Properties) {
+        $cp = $p.Value
+        $cdir = Join-Path $Root ($cp.dest -replace '/', '\')
+        $missing = @($cp.files | Where-Object { -not (Test-Path -LiteralPath (Join-Path $cdir ($_.path -replace '/', '\'))) })
+        ''
+        "- $($cp.name): $($cp.what)  ($($cp.files.Count) small files, about $($cp.size_mb) MB, $($cp.licence))"
+        if ($missing.Count -eq 0) { Add-Row "Creature clips $($p.Name)" 'Ready' "$($cp.files.Count) clips in $($cp.dest)"; Write-Host '  Already there.'; continue }
+        Add-Row "Creature clips $($p.Name)" 'Missing' "$($missing.Count) of $($cp.files.Count) clips not in $($cp.dest)" 'Run setup\Setup-Extras.ps1 -Packs -Install.'
+        $cpRow = $script:lastRow
+        Write-Host "  Source: $($cp.page) (direct links, each file checked against its SHA-256)"
+        if (-not $Install) { continue }
+        if ($DryRun) { Write-Host "  [dry run] would download $($missing.Count) files into $cdir"; continue }
+        $failed = 0
+        foreach ($f in $missing) {
+            try { [void](Save-Download ($cp.base_url + $f.path) (Join-Path $cdir ($f.path -replace '/', '\')) ([long]$f.size) $f.sha256) }
+            catch { $failed++; Write-Host "  [fail] $($f.path): $($_.Exception.Message)" }
+        }
+        if ($failed -eq 0) { Mark-Done $cpRow "$($cp.files.Count) clips in $($cp.dest)"; Write-Host "  [done] $($missing.Count) files in $cdir" }
+    }
+    ''
     '== Hair packs (all CC0 except the app''s own rule-built styles) =='
     'The hair library is not kept in the project. This step gets the free hairstyle packs you keep (the MakeHuman ones by direct link,'
     'the Quaternius one from a zip you download yourself, because itch.io needs a click-through) and builds the library on this PC into'

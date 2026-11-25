@@ -215,7 +215,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("moves", "multiselect", None, options=["idle", "walk", "run", "turn", "attack", "hit", "death", "jump", "crouch", "roll", "interact",
                                                       "flap", "glide", "takeoff", "land", "slither"],
                categories=["humanoid", "quadruped", "multileg", "winged", "serpent"], description="Every move of the category when empty"),
-        _param("clips_source", "select", "auto", options=["auto", "library", "procedural"], categories=["humanoid"],
+        _param("clips_source", "select", "auto", options=["auto", "library", "procedural"], categories=["humanoid", "quadruped"],
                description="Automatic uses the app's move library for human-shaped characters when it is installed"),
         _param("move_size", "select", "normal", options=["small", "normal", "big"], categories=["humanoid", "quadruped", "multileg", "winged", "serpent"]),
         _param("move_speed", "select", "normal", options=["slow", "normal", "fast"], categories=["humanoid", "quadruped", "multileg", "winged", "serpent"]),
