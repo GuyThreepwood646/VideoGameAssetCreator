@@ -200,6 +200,12 @@ styles:
     by_category:
       material:
         plain: a simple flat-coloured tile with little texture detail.
+      # Scenery holds signs, awnings and window frames that 1,500 triangles and 512 px cut away or blur: 3,000 triangles
+      # and 1,024 px keep them. A smaller platform's own budget still caps both.
+      environment:
+        plain: faceted shapes with one flat colour per face, at most 3,000 triangles, simple textures.
+        recipe:
+          mesh: {texture_cap: 1024, triangle_cap: 3000}
   - id: realistic_pbr
     delight_default: remove
     pbr_fix_default: true
