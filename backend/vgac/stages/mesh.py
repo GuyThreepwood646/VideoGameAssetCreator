@@ -333,8 +333,41 @@ def recipe_with_builder(rec: dict[str, Any], builder: str) -> dict[str, Any]:
     return out
 
 
+def default_builder(sc: StageContext, params: dict[str, Any]) -> tuple[str, str | None]:
+    """(builder, note) for a 3D step that names no builder. A builder named in the params (the person's choice, or the
+    one a version was built with) always wins. Otherwise the category's `builder_default` (data/categories) applies, and
+    when its needs are not met the build uses TRELLIS.2 and `note` says why in plain words: hair from the library (one
+    picture, the bald route, builds the head on its own), the Pixal3D files missing, or a step 2 picture missing or
+    flagged by Check all sides."""
+    if params.get("builder"):
+        return builder_of(params), None
+    want = sc.category.get("builder_default") or DEFAULT_BUILDER
+    if want == DEFAULT_BUILDER:
+        return DEFAULT_BUILDER, None
+    if want not in reference.MESH_BUILDERS:
+        raise ValueError(f"unknown 3D builder {want!r} in the {sc.asset.category} category data")
+    if hairlib.is_library(sc):
+        return DEFAULT_BUILDER, "The hair comes from the library, which is built from one picture, so the 3D model was built from one picture instead of all four sides."
+    from .. import pixal3d
+
+    if pixal3d.missing_files(fresh=True):
+        return DEFAULT_BUILDER, "The four-sides 3D builder is not installed, so the 3D model was built from one picture."
+    turn = sc.stage_version("turnaround")
+    flagged = [v for v in PIXAL3D_VIEWS if v in ((turn.metrics or {}).get("flagged_views") or [])] if turn is not None else []
+    if flagged:
+        return DEFAULT_BUILDER, ("The " + ", ".join(flagged) + " picture did not pass Check all sides, so the 3D model was built from one picture "
+                                 "instead of all four sides. Draw that side again to build from all four.")
+    try:
+        four_views(sc)
+    except (FileNotFoundError, ValueError):
+        return DEFAULT_BUILDER, "One of the four side pictures is missing, so the 3D model was built from one picture instead of all four sides."
+    return want, None
+
+
 async def _trellis(sc: StageContext, params: dict[str, Any]) -> None:
-    builder = builder_of(params)
+    builder, builder_note = default_builder(sc, params)
+    if builder_note:
+        sc.set_metrics(builder_note=builder_note)
     views: dict[str, Path] | None = None
     if builder == "pixal3d":
         from .. import pixal3d
