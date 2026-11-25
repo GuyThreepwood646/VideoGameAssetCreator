@@ -1,6 +1,6 @@
 # Building the VGAC .exe (the launcher)
 
-Written 2026-11-06. Everything here was checked against this PC on that day.
+Written 2026-11-06. Checked against the launcher code in `desktop\` on 2026-11-24.
 
 ## The short version
 
@@ -13,15 +13,15 @@ and the "VGAC" shortcut on your desktop points at it. Double-click the shortcut 
 ## What the .exe is, and what it is not
 
 - It is a launcher (a small program that starts the app's parts and opens its window). It is about 100 MB.
-- When you start it, it shows a status window, starts the second ComfyUI and the backend (the app's engine room) if they are not already running, and then opens the app in its own window. It also puts an icon in the tray (the row of small icons by the clock) with a Services menu.
-- It does not contain the app. The app itself lives in the project folder (the folder the project was cloned into, written `<project folder>` below), and the launcher reads it from there. So the .exe on its own, copied to another PC, will not work. That PC would also need the project folder and everything the app depends on (ComfyUI, the models, Blender, Unity). A separate guide for that is being written: `docs/FIRST-TIME-SETUP.md`.
+- When you start it, it shows a status window, starts ComfyUI B and the backend (the app's engine room) if they are not already running, and then opens the app in its own window. ComfyUI A is not started by the launcher: the backend starts it when a step needs it, and the launcher only marks it "Off in the app" when card A is turned off. It also puts an icon in the tray (the row of small icons by the clock) with a Services menu.
+- It does not contain the app. The app itself lives in the project folder (the folder the project was cloned into, written `<project folder>` below), and the launcher reads it from there. So the .exe on its own, copied to another PC, will not work. That PC would also need the project folder and everything the app depends on (ComfyUI, the models, Blender, Unity). The setup guide for another PC is `docs/FIRST-TIME-SETUP.md`.
 
 ## When you need to build it again
 
 Almost never.
 
 - Changes to the app's screens or its engine room do not need a new .exe. The launcher picks them up the next time it starts.
-- You need a new .exe only when a file inside the `desktop` folder changes (the launcher's own code or its icon). The last such change was on 13 November (the launcher reads this PC's values from `local\machine.json`). An .exe built before it keeps working with the settings file beside it; build a new one to pick the change up.
+- You need a new .exe only when a file inside the `desktop` folder changes (the launcher's own code or its icon). The last such change was on 24 November (the launcher stopped starting ComfyUI A; the backend starts it now). Before that, on 13 November, the launcher began reading this PC's values from `local\machine.json`. An .exe built before it keeps working with the settings file beside it; build a new one to pick the change up.
 
 ## Before you start (one time only)
 
