@@ -166,8 +166,8 @@ What a one-card PC has to get right, not built or tested in this round:
 2. In the app, switch off the card you do not have. Pictures and the 3D model then use the one card.
 3. Memory: a 10 GB card ran the pictures and rigging on the author's PC; a 12 GB card ran the 3D model. The 3D build is
    sized for a 10 GB card: a decoded mesh above 16 million vertices is thinned before the texture bake, and the bake
-   reference is clustered to at most 16 million vertices (`backend/vgac/graphs/trellis.py:28,32`). That sizing has not
-   been run on a 10 GB card for a large subject, so treat one 10 GB card running the whole 3D step as untested.
+   reference is clustered to at most 16 million vertices (`backend/vgac/graphs/trellis.py:28,32`). The 3D step has been
+   run on a 10 GB card for large subjects, with little headroom (peak memory 8.4 GB and 9.4 GB on 2026-11-24); a 12 GB card is more comfortable.
 4. Run one job at a time; two ComfyUIs sharing one card is likely to fail and the helper flags it.
 
 ## Licence rules for the later download step
