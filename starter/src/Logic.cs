@@ -148,6 +148,81 @@ namespace Vgac.Starter
         }
     }
 
+    // A request from the backend (POST /api/restart) to be restarted by this launcher, written to local/restart-request.json
+    // (backend/vgac/restart.py). The launcher is the only reader.
+    public class RestartRequest
+    {
+        public string Id = "";
+        public long Time;                     // seconds since 1970 (UTC), when the backend wrote it
+        public bool KeepEngines = true;       // true: the engines the app started keep running; false: the whole tree is stopped
+        public bool Force;
+        public List<int> KeepPids = new List<int>();               // engine roots to leave running (keep)
+        public List<string> RestartEngines = new List<string>();   // engines the new backend starts again (restart)
+    }
+
+    public enum RequestVerdict { Act, Wait, Drop }
+
+    public static class RestartRequests
+    {
+        public const int MaxAgeSeconds = 60;
+
+        public static string FilePath(string projectRoot) { return Path.Combine(projectRoot, "local", "restart-request.json"); }
+
+        // null when the text is not a usable request (no id, no time, an unknown engines word).
+        public static RestartRequest Parse(string text)
+        {
+            try
+            {
+                var d = Json.ParseObject(text);
+                var r = new RestartRequest();
+                object v;
+                if (d.TryGetValue("id", out v) && v != null) r.Id = Convert.ToString(v);
+                if (d.TryGetValue("time", out v) && v != null) r.Time = Convert.ToInt64(v);
+                string engines = d.TryGetValue("engines", out v) && v != null ? Convert.ToString(v) : "keep";
+                if (engines != "keep" && engines != "restart") return null;
+                r.KeepEngines = engines == "keep";
+                if (d.TryGetValue("force", out v) && v is bool) r.Force = (bool)v;
+                if (d.TryGetValue("keep_pids", out v) && v is System.Collections.IEnumerable && !(v is string))
+                    foreach (object o in (System.Collections.IEnumerable)v) r.KeepPids.Add(Convert.ToInt32(o));
+                if (d.TryGetValue("restart_engines", out v) && v is System.Collections.IEnumerable && !(v is string))
+                    foreach (object o in (System.Collections.IEnumerable)v) r.RestartEngines.Add(Convert.ToString(o));
+                if (r.Id.Length == 0 || r.Time <= 0) return null;
+                return r;
+            }
+            catch (Exception) { return null; }
+        }
+
+        // Drop: unusable, older than a minute (or dated in the future), or already acted on. Wait: the launcher cannot act
+        // right now (busy, closing); the request stays for the next look until it is too old. Act: go.
+        public static RequestVerdict Judge(RestartRequest r, long nowSeconds, HashSet<string> handled, bool busy)
+        {
+            if (r == null) return RequestVerdict.Drop;
+            if (handled.Contains(r.Id)) return RequestVerdict.Drop;
+            if (nowSeconds - r.Time > MaxAgeSeconds || r.Time - nowSeconds > MaxAgeSeconds) return RequestVerdict.Drop;
+            return busy ? RequestVerdict.Wait : RequestVerdict.Act;
+        }
+
+        // The processes to stop for a restart that leaves the engines running: the backend and what it started, children
+        // before parents, except the trees rooted at the engine ids the backend named (only those still below it).
+        public static List<ProcInfo> StopKeeping(List<ProcInfo> all, int backendPid, List<int> keepPids, out List<ProcInfo> kept)
+        {
+            List<ProcInfo> tree = ProcessTree.TargetInfos(all, backendPid);
+            var inTree = new HashSet<int>();
+            foreach (ProcInfo p in tree) inTree.Add(p.Pid);
+            var protect = new HashSet<int>();
+            kept = new List<ProcInfo>();
+            foreach (int k in keepPids)
+            {
+                if (k == backendPid || !inTree.Contains(k)) continue;
+                foreach (ProcInfo p in ProcessTree.TargetInfos(all, k)) protect.Add(p.Pid);
+                foreach (ProcInfo p in tree) if (p.Pid == k) kept.Add(p);
+            }
+            var stop = new List<ProcInfo>();
+            foreach (ProcInfo p in tree) if (!protect.Contains(p.Pid)) stop.Add(p);
+            return stop;
+        }
+    }
+
     // What the starter wrote down about the backend it started, so a later start (after a crash) can tell whether the
     // backend still running is the same process. Only the backend is ever recorded, never an engine.
     public class OwnedRecord

@@ -33,6 +33,8 @@ The **System** page shows each card, lets you switch one off, and picks a defaul
 
 The backend starts either ComfyUI itself, from its `engine` settings, when a step needs it and nothing answers. On quit, the launcher stops only the processes it started, and the backend stops only the ComfyUI copies it started. **Restart backend** in the launcher, for a backend the launcher started, stops the backend's whole process tree, so a ComfyUI the backend started stops too; the app starts it again when a step needs it. If the backend process ends by itself, the app does not stop those copies: they keep running and stay recorded as the app's (`engines.json` in the library folder). A ComfyUI the app did not start is never stopped by the app.
 
+**Restart from the System page.** The button "Restart the app's engine" (and `POST /api/restart`, see `docs/API.md`) asks the launcher to restart the backend, so the new backend is the launcher's own and the tray keeps working. By default the ComfyUI copies the app started keep running and the new backend takes them over; ticking "Also restart the graphics engines" stops them with the backend and the new backend starts them again. It is refused while steps are running or waiting unless you choose "Restart anyway". It needs a `VGAC.exe` built after this was added (`starteruild.cmd`); with an older one the page says so. The launcher reads the request from `local/restart-request.json`, ignores one that is over a minute old or was there before it started, and acts on each request once.
+
 ---
 
 ## Settings files
@@ -75,7 +77,7 @@ values out of the older tracked files. The previous copy is kept as `machine.jso
 | `instance_capabilities` | Which steps each card can take over when the other is switched off. Rigging prefers `b`; by default `a` also takes a rig when `b` is off |
 
 Relative paths are relative to the project folder. Restart the backend after editing either file. From the launcher:
-**Services > Restart backend**. Closing the app window is not enough if the backend was started outside the launcher.
+**Services > Restart backend** (or the System page, "Restart the app's engine"). Closing the app window is not enough if the backend was started outside the launcher.
 
 ### `desktop/config.json`
 

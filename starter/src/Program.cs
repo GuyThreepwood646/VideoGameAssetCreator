@@ -349,6 +349,9 @@ namespace Vgac.Starter
             try
             {
                 foreach (string n in Recovery.AtStart(lay, Application.ExecutablePath)) log.Line("start: " + n);
+                // a restart request left from before this launcher started is never acted on
+                try { if (File.Exists(RestartRequests.FilePath(root))) { File.Delete(RestartRequests.FilePath(root)); log.Line("start: an old restart request was deleted unread"); } }
+                catch (Exception ex) { log.Line("start: could not delete an old restart request: " + ex.Message); }
                 // a move that switched needed this restart: from here the new place is the one in use
                 if (MoveRules.ClearRestartAtStart(root)) log.Line("start: restarted after a move of the big files");
                 // the screens or the Python may have been put right by the recovery: look again
@@ -545,6 +548,8 @@ namespace Vgac.Starter
             sup = new Supervisor(backend, desk, log);
             sup.StartTried = true;
             sup.Changed += OnState;
+            sup.RestartBusy = delegate { return engineBusy || quitting || setupRunning || backend == null; };
+            sup.RestartAsked += RestartOnRequest;
             sup.BackendCameUp += delegate { BeginInvokeSafe(delegate { if (appWindow != null) appWindow.Reload(); }); };
             sup.Start();
             ShowStatusView();
@@ -753,6 +758,40 @@ namespace Vgac.Starter
                 finally { engineBusy = false; }
             });
             return true;
+        }
+
+        // The backend asked to be restarted (POST /api/restart). The launcher does it, so the new backend is the launcher's.
+        // Work still running stops the restart unless the request says to go on. "keep" leaves the engines the app started
+        // running (the new backend takes them over); "restart" stops everything below the backend and the new backend
+        // starts the listed engines again. The request file is already deleted. A failed start is logged and shown in the
+        // status rows; the tray's Restart backend still works.
+        void RestartOnRequest(RestartRequest r)
+        {
+            if (quitting || backend == null) return;
+            if (!backend.Owned) { log.Line("restart request " + r.Id + ": the running backend is not this launcher's; not acting"); return; }
+            if (!r.Force && sup != null && sup.Jobs > 0) { log.Line("restart request " + r.Id + ": " + sup.Jobs + " job(s) running or waiting; not acting"); return; }
+            engineBusy = true;
+            Background(delegate
+            {
+                try
+                {
+                    log.Line("restart request " + r.Id + ": engines " + (r.KeepEngines ? "keep" : "restart") + (r.Force ? ", forced" : ""));
+                    List<int> stopped = r.KeepEngines ? backend.StopKeepingEngines(r.KeepPids, log) : backend.StopIfOurs(log);
+                    if (backend.Owned) throw new StarterError("The app's engine could not be stopped.", "Close it from Task Manager, then try again.");
+                    log.Line("restart request " + r.Id + ": stopped [" + string.Join(", ", stopped.ConvertAll<string>(delegate(int p) { return p.ToString(); }).ToArray()) + "]");
+                    for (int i = 0; i < 30 && BackendRunner.HealthOk(port, 500); i++) Thread.Sleep(500);
+                    backend.NextEnv["VGAC_RESTART_ID"] = r.Id;
+                    if (!r.KeepEngines) backend.NextEnv["VGAC_RESTART_ENGINES"] = string.Join(",", r.RestartEngines.ToArray());
+                    backend.StartAndWait(120, log);
+                    if (sup != null) sup.TickNow();
+                }
+                catch (StarterError e)
+                {
+                    log.Line("restart request " + r.Id + " failed: " + e.Message);
+                    if (!quitting) Ui(delegate { MessageBox.Show(e.Message + (e.Fix != null ? "\r\n\r\n" + e.Fix : ""), "VGAC"); });
+                }
+                finally { backend.NextEnv = new Dictionary<string, string>(); engineBusy = false; }
+            });
         }
 
         // "Build again": run the screens' build, then restart the backend so it serves the new build.
