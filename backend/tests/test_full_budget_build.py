@@ -28,7 +28,7 @@ def test_the_clean_up_step_reduces_it_to_the_looks_budget():
     t = mesh_stage.resolve_targets(r, {}, B, "environment")
     params = {"target_faces": t["target_faces"], "target_faces_source": t["target_faces_source"], "full_budget": True}
     limit = prep_stage.prep_triangle_limit(r, params, B)
-    assert limit == {"limit": 1500, "source": "recipe"}
+    assert limit == {"limit": 3000, "source": "recipe"}
 
 
 def test_the_checks_of_the_3d_step_measure_against_the_platform():
@@ -37,9 +37,9 @@ def test_the_checks_of_the_3d_step_measure_against_the_platform():
     assert mesh_stage.triangle_target(r, params, B) == (15000, None)
     assert mesh_stage.texture_target(r, B, baked=True, full_budget=True) == (2048, None)
     # the same look built the old way still measures against its own, smaller budget
-    limit, vars_ = mesh_stage.triangle_target(r, {"target_faces": 1470, "target_faces_source": "recipe"}, B)
-    assert limit == 1500 and vars_["recipe"]
-    assert mesh_stage.texture_target(r, B, baked=True)[0] == 512
+    limit, vars_ = mesh_stage.triangle_target(r, {"target_faces": 2940, "target_faces_source": "recipe"}, B)
+    assert limit == 3000 and vars_["recipe"]
+    assert mesh_stage.texture_target(r, B, baked=True)[0] == 1024
 
 
 def test_other_looks_and_categories_keep_their_route():
@@ -55,11 +55,11 @@ def test_other_looks_and_categories_keep_their_route():
 
 def test_a_chosen_count_or_size_is_kept():
     r = rec("lowpoly_flat")
-    chosen = mesh_stage.resolve_targets(r, {"target_faces": 3000, "texture_size": 1024}, B, "environment")
-    assert chosen["target_faces"] == 3000 and chosen["texture_size"] == 1024
+    chosen = mesh_stage.resolve_targets(r, {"target_faces": 4000, "texture_size": 512}, B, "environment")
+    assert chosen["target_faces"] == 4000 and chosen["texture_size"] == 512
     assert "full_budget" not in chosen
-    only_size = mesh_stage.resolve_targets(r, {"texture_size": 1024}, B, "environment")
-    assert only_size["texture_size"] == 1024 and only_size["full_budget"] is True
+    only_size = mesh_stage.resolve_targets(r, {"texture_size": 512}, B, "environment")
+    assert only_size["texture_size"] == 512 and only_size["full_budget"] is True
 
 
 def test_a_new_run_follows_the_route_again():
@@ -67,3 +67,19 @@ def test_a_new_run_follows_the_route_again():
                                  "texture_source": "recipe", "full_budget": True}, {})
     assert "target_faces" not in merged and "texture_size" not in merged
     assert mesh_stage.resolve_targets(rec("lowpoly_flat"), merged, B, "environment")["target_faces"] == 14700
+
+
+def test_lowpoly_scenery_has_a_larger_budget_than_other_categories():
+    env = reference.recipe("lowpoly_flat", "environment", "pc_mid")["mesh"]
+    assert env["triangles"] == 3000 and env["texture"] == 1024
+    assert reference.recipe("lowpoly_flat", "humanoid", "pc_mid")["mesh"]["triangles"] == 1500
+    assert reference.recipe("lowpoly_flat", "humanoid", "pc_mid")["mesh"]["texture"] == 512
+    assert reference.recipe("lowpoly_flat", "prop_rigid", "pc_mid")["mesh"]["texture"] == 512
+    assert reference.recipe("lowpoly_flat", "environment", "high")["mesh"]["triangles"] == 3000
+
+
+def test_a_smaller_platform_still_caps_the_scenery_budget():
+    mobile = reference.recipe("lowpoly_flat", "environment", "mobile_low")["mesh"]
+    assert mobile["triangles"] <= 3000 and mobile["texture"] <= 1024
+    assert mobile["triangles"] <= reference.budget("environment", "mobile_low")["triangles"]
+    assert mobile["texture"] <= reference.budget("environment", "mobile_low")["texture"]
