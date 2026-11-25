@@ -309,3 +309,56 @@ def test_a_picture_of_the_side_is_found_when_the_front_turn_does_not_match(tmp_p
     pic, pm = texfidelity.load_picture(picture)
     lp = colourmatch.lightness_plan(mesh, tex, pic, pm, "front")
     assert lp["yaw"] in (90.0, 270.0)
+
+
+# --- the chroma and hue stage (four-view humanoid builds only) -----------------------------------------------------
+
+
+def _tinted(tex, a, b):
+    """tex with a and b added to a* and b* (a colour cast), L* kept."""
+    lab = face.to_lab(tex)
+    lab[..., 1] += a
+    lab[..., 2] += b
+    return colourmatch.from_lab(lab)
+
+
+def test_apply_chroma_keeps_lightness_and_neutral_texels():
+    rgb = np.array([[0.5, 0.5, 0.5], [0.6, 0.3, 0.2]])
+    out = colourmatch.apply_chroma(rgb, {"mode": "chroma", "scale": 1.3, "rotate": 10.0})
+    assert np.abs(out[0] - rgb[0]).max() < 0.01  # a neutral texel stays neutral
+    assert abs(face.to_lab(out)[1, 0] - face.to_lab(rgb)[1, 0]) < 1.0
+    assert colourmatch.apply_chroma(rgb, {"mode": "none"}) is rgb
+
+
+def test_the_chroma_stage_pulls_a_colour_cast_towards_the_picture(tmp_path):
+    from vgac import texfidelity
+
+    glb, png, tex = _box_glb(tmp_path, level=0.45)
+    from PIL import Image
+
+    picture = _picture_of(glb, _tinted(tex, 8.0, -4.0), tmp_path, l_shift=0.0)  # the picture's own, milder tint
+    Image.fromarray(face.to_uint8(_tinted(tex, 18.0, 6.0))).save(png)  # the build has a red cast the picture does not
+    pic, pm = texfidelity.load_picture(picture)
+    mesh = face.load_mesh(glb)
+
+    def cast():
+        lp = colourmatch.lightness_plan(mesh, face.read_rgb(png), pic, pm, "front")
+        return colourmatch.chroma_plan(mesh, face.read_rgb(png), pic, pm, lp["yaw"], lp["iou"])
+
+    before = cast()
+    assert before["mode"] == "chroma" and before["scale"] < 1.0 and abs(before["rotate"]) > 2.0
+    rec = colourmatch.match_base_colour(glb, picture, png, chroma=True)
+    assert rec["chroma"]["mode"] == "chroma" and rec["applied"]
+    after = cast()
+    assert after["render_chroma"] < before["render_chroma"]
+
+
+def test_the_chroma_stage_is_off_unless_asked_for(tmp_path):
+    glb, png, tex = _box_glb(tmp_path, level=0.45)
+    from PIL import Image
+
+    picture = _picture_of(glb, tex, tmp_path, l_shift=0.0)
+    Image.fromarray(face.to_uint8(_tinted(tex, 18.0, 6.0))).save(png)
+    before = png.read_bytes()
+    rec = colourmatch.match_base_colour(glb, picture, png)
+    assert "chroma" not in rec and not rec["applied"] and png.read_bytes() == before
