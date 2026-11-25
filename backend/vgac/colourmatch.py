@@ -8,8 +8,8 @@ needed, so it runs down to an outline IoU of L_IOU_MIN; the move is capped at L_
 chroma kept, so a neutral grey stays neutral), tapered near black and white so detail is not flattened.
 
 When the build-view picture's own lightness differs from the step-1 picture's by more than DRIFT_MAX (the step-2 redraw
-changed the tone), nothing is moved ("step2_tone_drift"): matching the build view would carry the redraw's drift into
-the texture and move the model away from step 1.
+changed the tone), the target becomes the step-1 picture itself: its mean L* over its own cut-out, measured at the front
+turn that fits step 1. The same global L*-only shift is applied, so the model lands on step 1, not on the drifted view.
 
 The corrected base colour is written to base_color.png AND into the GLB's own base colour image, because the clean-up
 re-bakes from the GLB (a correction in the PNG alone never reached a shipped model).
@@ -41,7 +41,7 @@ L_COARSE = tuple(float(t) for t in range(0, 360, 45))  # coarse turns: a picture
 FINE_STEP = 15.0      # the fine turns are this far either side of each of the best coarse turns
 FINE_TOP = 2          # how many coarse turns are refined
 TURN_IOU_NEAR = 0.02  # turns whose outline fit is within this of the best are told apart by the picture's colours
-DRIFT_MAX = 4.0       # build view against step-1 picture, mean L* over each cut-out: past this the lightness stage is skipped
+DRIFT_MAX = 4.0       # build view against step-1 picture, mean L* over each cut-out: past this the target is step 1
 ROOF_ROUTE = "buildings"  # the only route the roof lift runs for
 ROOF_UP_MIN = 0.35        # an island whose UV-area-weighted face normal points up by at least this much is a roof
 ROOF_TEXEL_UP = 0.2       # inside a roof island only texels of faces that point up by at least this much are lifted
@@ -294,29 +294,30 @@ def apply_roof_lift(tex: np.ndarray, uvmesh: dict[str, np.ndarray], plan: dict[s
 def match_base_colour(glb: Path | str, picture: Path | str, base_png: Path | str, view: str | None = None,
                       step1: Path | str | None = None, route: str | None = None) -> dict[str, Any]:
     """Measure the model's lightness against its picture at the build view `view`'s turn and, when it is off, shift
-    base_png and the GLB's own base colour image by the same move. Nothing is moved when the build view's tone drifted
-    from the step-1 picture `step1` by more than DRIFT_MAX. -> metrics {applied, lightness: {...}, reason}."""
+    base_png and the GLB's own base colour image by the same move. When the build view's tone drifted from the step-1
+    picture `step1` by more than DRIFT_MAX, the target is the step-1 picture instead, measured at the front turn.
+    -> metrics {applied, lightness: {...}, reason}."""
     rec: dict[str, Any] = {"applied": False}
     drift = step2_drift(picture, step1)
-    if drift is not None and abs(drift) > DRIFT_MAX:
-        rec["lightness"] = {"mode": "none", "reason": "step2_tone_drift", "drift": drift}
-        rec["reason"] = "step2_tone_drift"
-        return rec
+    drifted = drift is not None and abs(drift) > DRIFT_MAX
     mesh = face.load_mesh(glb)
     if mesh is None:
         return {**rec, "reason": "no_texture_layout"}
     tex = face.read_rgb(base_png)
-    pic, pic_mask = texfidelity.load_picture(picture)
-    lp = lightness_plan(mesh, tex, pic, pic_mask, view)
+    ref, ref_view = (step1, "front") if drifted else (picture, view)
+    pic, pic_mask = texfidelity.load_picture(ref)
+    lp = lightness_plan(mesh, tex, pic, pic_mask, ref_view)
     if drift is not None:
         lp["drift"] = drift
+    if drifted:
+        lp["target"] = "step1"
     rec["lightness"] = lp
     rec["reason"] = lp.get("reason")
     out = apply(tex, lp) if lp.get("mode") == "l_shift" else tex
     if route == ROOF_ROUTE:  # buildings only: any other route is the global shift alone, exactly as before
         uvmesh = imaging.load_uv_mesh(glb)
         if uvmesh is not None and lp.get("iou", 0.0) >= L_IOU_MIN:
-            rp = roof_lift_plan(mesh, uvmesh, out, pic, pic_mask, view, yaw=lp.get("yaw"))
+            rp = roof_lift_plan(mesh, uvmesh, out, pic, pic_mask, ref_view, yaw=lp.get("yaw"))
             rec["roof_lift"] = rp
             out = apply_roof_lift(out, uvmesh, rp)
     if lp.get("mode") != "l_shift" and rec.get("roof_lift", {}).get("mode") != "roof_lift":
