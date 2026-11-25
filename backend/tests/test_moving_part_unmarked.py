@@ -51,8 +51,8 @@ from pathlib import Path  # noqa: E402
 from vgac.stages import rig  # noqa: E402
 
 
-def _sc(tmp: Path, parts, blender):
-    return SimpleNamespace(asset=SimpleNamespace(parts=parts), set_params=lambda **k: None, set_metrics=lambda **k: None,
+def _sc(tmp: Path, parts, blender, category="prop_articulated"):
+    return SimpleNamespace(asset=SimpleNamespace(parts=parts, category=category), set_params=lambda **k: None, set_metrics=lambda **k: None,
                            progress=lambda *a, **k: None, dir=tmp, register=lambda *a, **k: None,
                            settings=SimpleNamespace(blender_timeout_seconds=1), blender=blender)
 
@@ -81,7 +81,48 @@ def test_a_point_that_finds_no_piece_is_still_likely(tmp_path, monkeypatch):
     assert checks[0]["passed"] is False and check_tiers.tier_of(checks[0]) == "likely"
 
 
-def test_an_unmarked_part_alone_is_only_the_likely_check(tmp_path, monkeypatch):
+def test_an_unmarked_slide_alone_is_only_the_likely_check(tmp_path, monkeypatch):
     monkeypatch.setattr(rig, "moving_points_for", lambda sc: [])
-    checks = asyncio.run(rig._cut_moving_parts(_sc(tmp_path, [{"name": "gate leaf", "kind": "hinge"}], None), tmp_path / "m.glb"))
+    checks = asyncio.run(rig._cut_moving_parts(_sc(tmp_path, [{"name": "drawer", "kind": "slide"}], None), tmp_path / "m.glb"))
     assert [c["name"] for c in checks] == ["moving_parts"] and check_tiers.tier_of(checks[0]) == "likely"
+
+
+def test_a_declared_part_with_no_points_reaches_the_pass_and_needs_no_click_when_found(tmp_path, monkeypatch):
+    seen = {}
+
+    async def blender(script, args, **kwargs):
+        parts = json.loads(Path(args[args.index("--parts") + 1]).read_text(encoding="utf-8"))["parts"]
+        seen["parts"] = parts
+        out_rig, anim = Path(args[1]), Path(args[2])
+        out_rig.write_bytes(b"g")
+        anim.write_bytes(b"g")
+        Path(args[args.index("--report") + 1]).write_text(json.dumps(
+            {"ok": True, "parts": [{"name": "lid", "kind": "hinge", "piece": 1, "pivot": [0, 0.3, -0.3], "axis": [-1, 0, 0]}], "clips": []}),
+            encoding="utf-8")
+
+    monkeypatch.setattr(rig, "moving_points_for", lambda sc: [])
+    sc = _sc(tmp_path, [{"name": "lid", "kind": "hinge"}, {"name": "drawer", "kind": "slide"}], blender)
+    checks = asyncio.run(rig._cut_moving_parts(sc, tmp_path / "m.glb"))
+    assert [(p["name"], p["locations"]) for p in seen["parts"]] == [("lid", [])]  # the slide is not sent: it needs points
+    assert checks[0]["name"] == "moving_parts" and checks[0]["vars"]["unplaced"] == ["drawer"]
+    assert checks[0]["vars"]["moved"] == ["lid"]
+
+
+def test_a_part_the_shape_search_misses_is_asked_for_by_hand(tmp_path, monkeypatch):
+    async def blender(script, args, **kwargs):
+        Path(args[args.index("--report") + 1]).write_text(json.dumps({"ok": True, "parts": [], "clips": []}), encoding="utf-8")
+
+    monkeypatch.setattr(rig, "moving_points_for", lambda sc: [])
+    checks = asyncio.run(rig._cut_moving_parts(_sc(tmp_path, [{"name": "wheels", "kind": "spin"}], blender), tmp_path / "m.glb"))
+    assert checks[0]["name"] == "moving_parts" and checks[0]["vars"]["unplaced"] == ["wheels"]
+
+
+def test_a_declared_door_or_a_hinge_on_a_building_stays_unplaced_and_never_reaches_the_pass(tmp_path, monkeypatch):
+    async def blender(script, args, **kwargs):
+        raise AssertionError("the pass must not run")
+
+    monkeypatch.setattr(rig, "moving_points_for", lambda sc: [])
+    for parts, category in (([{"name": "door", "kind": "hinge"}], "prop_articulated"), ([{"name": "gate leaf", "kind": "hinge"}], "vehicle"),
+                            ([{"name": "lid", "kind": "hinge"}], "environment")):
+        checks = asyncio.run(rig._cut_moving_parts(_sc(tmp_path, parts, blender, category), tmp_path / "m.glb"))
+        assert [c["name"] for c in checks] == ["moving_parts"] and checks[0]["vars"]["unplaced"] == [parts[0]["name"]]

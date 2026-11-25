@@ -61,6 +61,10 @@ NAME_KINDS = (("spin", ("wheel", "wheels", "tyre", "tyres", "tire", "tires", "pr
 SIDES = ("auto", "back", "front", "left", "right", "top", "bottom")
 ANGLE_RANGE = (5.0, 180.0)  # hinge: degrees the part turns when open
 DISTANCE_RANGE = (0.1, 1.0)  # slide: share of the piece's own depth it moves out
+# The shape search (for_shape) runs on these categories (props and vehicles: the ones CATEGORY_KINDS gives every moving
+# kind that are not scenery) and finds a hinge only for a lid on top: these names. A door, a gate or a flap is not on top.
+SHAPE_CATEGORIES = ("prop_rigid", "prop_articulated", "vehicle")
+LID_WORDS = ("lid", "lids", "hatch", "trapdoor", "cover")
 DOOR_WORDS = ("door", "doors", "gate")  # these open 90 degrees by default; anything else on a hinge 100
 DOOR_ANGLE = 90.0
 LID_ANGLE = 100.0
@@ -270,6 +274,21 @@ def for_moving(placed_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     open_at_rest, angle or distance}]."""
     keys = ("name", "kind", "locations", "side", "open_at_rest", "angle", "distance")
     return [{k: r[k] for k in keys if k in r} for r in placed_rows if r.get("kind") in MOVING_KINDS and r.get("locations")]
+
+
+def for_shape(declared: list[dict[str, str]], placed_rows: list[dict[str, Any]], category: str | None) -> list[dict[str, Any]]:
+    """The declared parts with no points on this version that the Blender pass finds by shape, as rows with no locations
+    (blender/moving_parts.py find_pieces), with the settings a placed part starts with: on a prop or a vehicle
+    (SHAPE_CATEGORIES), any spin part (a wheel) and a hinge named for a lid (LID_WORDS). Doors, gates, other hinges,
+    slides and every other category stay for the person to mark."""
+    if category not in SHAPE_CATEGORIES:
+        return []
+    have = {r["name"].lower() for r in for_moving(placed_rows)}
+    return [{"name": p["name"], "kind": p["kind"], "locations": [], "side": "auto", "open_at_rest": False,
+             **({"angle": default_angle(p["name"])} if p["kind"] == "hinge" else {})}
+            for p in declared
+            if p["name"].lower() not in have
+            and (p.get("kind") == "spin" or (p.get("kind") == "hinge" and any(w in LID_WORDS for w in _words(p["name"]))))]
 
 
 def unplaced_moving(declared: list[dict[str, str]], placed_rows: list[dict[str, Any]]) -> list[str]:

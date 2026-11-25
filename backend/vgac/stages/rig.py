@@ -211,15 +211,19 @@ async def _cut_moving_parts(sc: StageContext, src: Path | None) -> list[dict[str
     points = moving_points_for(sc)
     if not declared and not points:
         return None
-    sc.set_params(**{MOVING_PARAM: points or None})
+    # UNTESTED (the real pack stage and a full export with a shape-found part were not run): wheels and lids with no
+    # points are found by shape on props and vehicles (declared_parts.for_shape); every other part waits for points.
+    by_shape = declared_parts.for_shape(sc.asset.parts or [], points, sc.asset.category)
+    run = points + by_shape
+    sc.set_params(**{MOVING_PARAM: run or None})
     unplaced = declared_parts.unplaced_moving(sc.asset.parts or [], points)
     done: list[str] = []
     pass_failed: str | None = None  # why the Blender pass could not run (moving_cut), when it could not
-    if points and src is not None:
+    if run and src is not None:
         sc.progress(0.3, "cutting the moving parts free")
         rig_glb, anim_glb = sc.dir / "rig.glb", sc.dir / "anim.glb"
         out_rig, report_path = sc.dir / "rig_moving.glb", sc.dir / "moving_parts.json"
-        parts_file = declared_parts.write_placed(sc.dir / "moving_points.json", points)
+        parts_file = declared_parts.write_placed(sc.dir / "moving_points.json", run)
         t0 = time.time()
         try:
             await sc.blender("moving_parts.py", [src, out_rig, anim_glb, "--parts", parts_file, "--report", report_path],
@@ -246,9 +250,10 @@ async def _cut_moving_parts(sc: StageContext, src: Path | None) -> list[dict[str
         sc.set_metrics(moving_cut=cut)
         if rep.get("ok"):
             done = sorted({r["name"] for r in rep.get("parts", [])})
+            unplaced = [n for n in unplaced if n not in done]  # a part the shape search found needs no click
         else:
             pass_failed = str(rep.get("reason") or "the Blender pass did not finish")
-    elif points:
+    elif run:
         pass_failed = "there is no model to cut the parts from"
     # moving_parts (likely to show): a declared part with no points, or a point that found no piece when the pass ran.
     # moving_cut (worth a look): the Blender pass itself failed, so the points could not be tried; a retry may fix it.
@@ -258,7 +263,7 @@ async def _cut_moving_parts(sc: StageContext, src: Path | None) -> list[dict[str
         checks.append(quality.check("moving_parts", not unplaced and not missing, len(done), len(declared) or len(points),
                                     vars={"moved": done, "unplaced": unplaced, "not_found": missing}))
     if pass_failed:
-        checks.append(quality.check("moving_cut", False, 0, len(points), vars={"reason": pass_failed}))
+        checks.append(quality.check("moving_cut", False, 0, len(run), vars={"reason": pass_failed}))
     return checks
 
 
