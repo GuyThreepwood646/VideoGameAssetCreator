@@ -22,6 +22,7 @@ namespace Vgac.Starter
     public static class Program
     {
         public const int DefaultPort = 8765;
+        public static bool AutoStart;        // --start: go through the Welcome page without the button when only the screens' build is pending
         public static int OpenTab = -1;      // --open-maintenance <0..3>: for checking the window
 
         public static string FindProjectRoot(string start) { return ProjectFinder.Find(start); }
@@ -43,6 +44,7 @@ namespace Vgac.Starter
                 else if (args[i] == "--exit-after" && i + 1 < args.Length) int.TryParse(args[++i], out exitAfter);
                 else if (args[i] == "--state-out" && i + 1 < args.Length) stateOut = args[++i];
                 else if (args[i] == "--keep-status") keepStatus = true;
+                else if (args[i] == "--start") AutoStart = true;
                 else if (args[i] == "--open-maintenance" && i + 1 < args.Length) int.TryParse(args[++i], out OpenTab);
                 else if (args[i] == "--after" && i + 1 < args.Length) { int pid; if (int.TryParse(args[++i], out pid)) WaitForExit(pid); }
             }
@@ -341,6 +343,11 @@ namespace Vgac.Starter
             if (moveGate != null) { ShowMoveBlocked(moveGate); return; }
             if (steps.Count == 0) { StartBackend(); return; }
             ShowWelcome();
+            if (Program.AutoStart)
+            {
+                if (UnattendedStart.Allowed(steps)) { log.Line("start: --start, only the screens are to be built; going on without the button"); OnStart(); }
+                else log.Line("start: --start, but a step needs a person (" + string.Join(", ", steps.ToArray()) + "); waiting for the Start button");
+            }
         }
 
         // What an earlier, interrupted job may have left, and what to tell the person about it.
@@ -767,7 +774,15 @@ namespace Vgac.Starter
         // status rows; the tray's Restart backend still works.
         void RestartOnRequest(RestartRequest r)
         {
-            if (quitting || backend == null) return;
+            if (quitting) return;
+            if (r.Quit)
+            {
+                if (!r.Force && sup != null && sup.Jobs > 0) { log.Line("quit request " + r.Id + ": " + sup.Jobs + " job(s) running or waiting; not acting"); return; }
+                log.Line("quit request " + r.Id + ": closing, as Quit does");
+                BeginInvokeSafe(DoQuit);
+                return;
+            }
+            if (backend == null) return;
             if (!backend.Owned) { log.Line("restart request " + r.Id + ": the running backend is not this launcher's; not acting"); return; }
             if (!r.Force && sup != null && sup.Jobs > 0) { log.Line("restart request " + r.Id + ": " + sup.Jobs + " job(s) running or waiting; not acting"); return; }
             engineBusy = true;

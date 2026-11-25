@@ -1,4 +1,4 @@
-"""Asking the launcher (VGAC.exe) to restart this backend.
+"""Asking the launcher (VGAC.exe) to restart this backend, or to close (kind "quit").
 
 The backend cannot restart itself without leaving the new copy owned by whoever asked, so it only writes a request
 file, local/restart-request.json. The launcher that started this backend reads it, stops this process and starts a new
@@ -27,6 +27,7 @@ from .config import PROJECT_DIR
 
 REQUEST_FILE = Path("local") / "restart-request.json"
 ENGINE_CHOICES = ("keep", "restart")
+KIND_CHOICES = ("restart", "quit")
 REQUEST_MAX_AGE_SECONDS = 60  # the launcher ignores and deletes an older request (starter Supervisor.cs)
 STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -77,29 +78,34 @@ def work_in_flight(status: dict[str, Any]) -> int:
 
 
 def write_request(engines: str, force: bool, in_flight: int, owned_engines: dict[str, int | None],
-                  project_dir: Path | None = None, now: float | None = None) -> dict[str, Any]:
+                  project_dir: Path | None = None, now: float | None = None, kind: str = "restart") -> dict[str, Any]:
     """Check the call and write the request file. `owned_engines`: engine name -> pid, for the engines this backend
-    started and that are running now. Returns {id, engines, restart_engines}."""
+    started and that are running now. `kind` "quit" asks the launcher to stop the backend, the engines it started and
+    itself, as its Quit does. Returns {id, engines, restart_engines}."""
+    if kind not in KIND_CHOICES:
+        raise RestartRefused(f"kind must be one of {', '.join(KIND_CHOICES)}.", 422)
+    verb = "Closing" if kind == "quit" else "Restarting"
     if engines not in ENGINE_CHOICES:
         raise RestartRefused(f"engines must be one of {', '.join(ENGINE_CHOICES)}.", 422)
     if not launched_by_launcher():
-        raise RestartRefused("This copy of the app was not started by a VGAC.exe that can restart it. Use Restart backend "
-                             "in the VGAC tray menu, or close VGAC.exe, rebuild it with starter\\build.cmd and start it again.")
+        raise RestartRefused("This copy of the app was not started by a VGAC.exe that can " + ("close" if kind == "quit" else "restart") + " it. Use "
+                             "the VGAC tray menu, or close VGAC.exe, rebuild it with starter\\build.cmd and start it again.")
     if in_flight and not force:
         raise RestartRefused(f"The app is working on {in_flight} step{'s' if in_flight != 1 else ''} (running or waiting). "
-                             "Restarting now would stop them. Wait for them to finish, or restart anyway.")
+                             f"{verb} now would stop them. Wait for them to finish, or go ahead anyway.")
     root = Path(project_dir) if project_dir is not None else PROJECT_DIR
     when = int(now if now is not None else time.time())
     try:
         earlier = json.loads((root / REQUEST_FILE).read_text(encoding="utf-8"))
         if when - int(earlier.get("time", 0)) < REQUEST_MAX_AGE_SECONDS:
-            raise RestartRefused("A restart is already on its way. Wait a moment and look again.")
+            raise RestartRefused("A restart or close is already on its way. Wait a moment and look again.")
     except (OSError, ValueError, TypeError, AttributeError):
         pass
     rid = secrets.token_hex(8)
     body = {
         "id": rid,
         "time": when,
+        "kind": kind,
         "engines": engines,
         "force": force,
         # engines to bring back after the tree is stopped; for "keep" the pids the launcher must leave running
