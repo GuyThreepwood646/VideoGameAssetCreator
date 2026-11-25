@@ -206,9 +206,42 @@ namespace Vgac.Starter
 
         public bool InFront { get { return Form.ActiveForm == this; } }
 
+        // The web view's data folder can still be held for a moment by a copy that just closed (HRESULT 0x800700AA, "resource
+        // in use"). That one failure gets a second try after a short wait; any other failure, or a second one, closes the window.
+        public int RetryDelayMs = 2000;
+        public Action<int> StartProbe;   // called with the try number (1, 2) before each start; may throw (tests)
+
         async System.Threading.Tasks.Task Init()
         {
-            try
+            for (int attempt = 1; ; attempt++)
+            {
+                Exception failure = null;
+                try
+                {
+                    if (StartProbe != null) StartProbe(attempt);
+                    await StartView();
+                    return;
+                }
+                catch (Exception e) { failure = e; }
+                if (LauncherRules.WebViewStartRetry(failure.HResult, attempt))
+                {
+                    log.Line("app window: the web view's data folder is in use (" + failure.Message + "); trying again in " + (RetryDelayMs / 1000.0).ToString("0.#") + " s");
+                    await System.Threading.Tasks.Task.Delay(RetryDelayMs);
+                    if (IsDisposed) return;
+                    continue;
+                }
+                Problem = failure.Message;
+                log.Line("app window failed: " + failure.Message);
+                // This close is the window giving up, not the person's X: let it through instead of asking to quit,
+                // which would leave an empty window behind a question nobody asked.
+                Quitting = true;
+                Close();
+                return;
+            }
+        }
+
+        async System.Threading.Tasks.Task StartView()
+        {
             {
                 Directory.CreateDirectory(userData);
                 var env = await CoreWebView2Environment.CreateAsync(null, userData);
@@ -238,12 +271,6 @@ namespace Vgac.Starter
                 core.PermissionRequested += delegate(object s, CoreWebView2PermissionRequestedEventArgs e) { e.State = CoreWebView2PermissionState.Deny; };
                 core.Navigate(url);
                 log.Line("app window open at " + url);
-            }
-            catch (Exception e)
-            {
-                Problem = e.Message;
-                log.Line("app window failed: " + e.Message);
-                Close();
             }
         }
 

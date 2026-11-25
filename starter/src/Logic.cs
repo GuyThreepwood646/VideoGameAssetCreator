@@ -449,6 +449,12 @@ namespace Vgac.Starter
             return appWindowOpen ? CloseOutcome.Hide : CloseOutcome.AskQuit;
         }
 
+        // A failed web view start is tried once more only for "resource in use" (0x800700AA) on the first try.
+        public static bool WebViewStartRetry(int hresult, int attempt)
+        {
+            return attempt == 1 && hresult == unchecked((int)0x800700AA);
+        }
+
         // The app window's X always means "quit" (asked first), never a plain close, unless quitting is already under way.
         public static CloseOutcome AppWindowClosing(bool quitting, bool hasQuitHandler)
         {
