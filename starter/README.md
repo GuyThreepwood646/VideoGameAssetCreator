@@ -46,8 +46,8 @@ backend, which checks it. `VGAC.exe --window <url>` opens only the window on a p
 After the app opens the starter stays in the tray (the V icon). It does what the Electron launcher in `desktop/` does:
 
 - Status window: the four services (ComfyUI A, ComfyUI B, the backend, the screens) with a plain line each, checked every
-  two seconds, and the buttons that fit (Restart, Start, Build again, Open ComfyUI Desktop). Tray menu: open the app, the
-  status window, restart the backend, open the logs or exports folder, open ComfyUI Desktop, open the settings file, Quit.
+  two seconds, and the buttons that fit (Restart, Start, Build again). Tray menu: open the app, the
+  status window, restart the backend, open the logs or exports folder, open the settings file, Quit.
   Left click on the tray icon brings the app forward; the tray tooltip says how many services are up.
 - Taskbar badge and notifications for the app's pages (`window.vgacDesktop`: `setWork`, `notify`, `startEngine`, the same
   three calls the Electron window gave). A notification is shown only while the app window is not in front.

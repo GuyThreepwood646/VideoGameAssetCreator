@@ -8,7 +8,9 @@ needs it and nothing answers its /system_stats. ensure_running(name):
    `process_match` exists, or something listens on its port: someone is starting it, so wait for it to answer;
 3. otherwise start it detached and hidden, output to runtime/logs/comfy-<name>.out.log and .err.log: with an
    `engine`, the ComfyUI command built from the settings (engine_command(): CUDA_DEVICE_ORDER=PCI_BUS_ID and
-   SKINTOKEN_BLENDER_BIN set); otherwise the start script (powershell -NoProfile -ExecutionPolicy Bypass -File).
+   SKINTOKEN_BLENDER_BIN set, and a temp folder of its own, because ComfyUI empties its temp folder at every start
+   and several engines may run from one install); otherwise the start script (powershell -NoProfile
+   -ExecutionPolicy Bypass -File).
    Record that the backend owns it (the pid, also saved in <library_path>/engines.json so a backend restart still
    knows), and wait until it answers or start_timeout_seconds pass.
 
@@ -96,9 +98,8 @@ def conflict_message(settings: Settings, name: str, url: str, devices: str) -> s
     owner = owner_of(settings, devices, name)
     if owner is not None:
         oi = owner[1]
-        who = oi.external_owner or "Another copy of ComfyUI"
-        return (f"{who} is using {where} on the {oi.gpu or 'other card'}; close it or change its port so the "
-                f"{gpu} can use {where}.")
+        return (f"Another copy of ComfyUI is using {where} on the {oi.gpu or 'other card'}; close it or change its "
+                f"port so the {gpu} can use {where}.")
     return (f"The graphics engine on {where} runs on another card ({devices or 'unknown'}), not the {gpu}; close "
             f"it or change its port so the {gpu} can use {where}.")
 
@@ -198,8 +199,11 @@ def engine_command(settings: Settings, name: str, keep_loaded: bool = False) -> 
         argv += ["--cuda-device", str(e.cuda_device)]
     input_dir = e.input_dir if e.input_dir is not None else settings.comfy_input_dir
     output_dir = e.output_dir if e.output_dir is not None else inst.output_dir
+    # UNTESTED ON A CARD: --temp-directory (each engine its own, so one engine starting does not empty the folder
+    # another is working in) has tests but has not yet been seen on a running engine.
     for flag, value in (("--extra-model-paths-config", e.extra_model_paths), ("--input-directory", input_dir),
-                        ("--user-directory", e.user_dir), ("--output-directory", output_dir)):
+                        ("--user-directory", e.user_dir), ("--output-directory", output_dir),
+                        ("--temp-directory", e.temp_dir)):
         if value is not None:
             argv += [flag, str(value)]
     argv += [str(a) for a in e.extra_args]

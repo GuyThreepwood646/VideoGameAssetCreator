@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from vgac import comfy_find, comfy_install as ci, config, db, downloader, firstrun, hardware_setup, instances
+from vgac import comfy_find, comfy_install as ci, config, db, downloader, firstrun, guidance, hardware_setup, instances, pack_update
 from vgac.downloader import DownloadError, Stopped
 from vgac.hardware_setup import Card, Hardware
 
@@ -1650,3 +1650,47 @@ def test_the_marker_is_replaced_not_half_written(box, monkeypatch):
         ci._write_marker(box["root"], dict(m, install_id="changed"))
     monkeypatch.setattr(os, "replace", real_replace)
     assert ci.read_marker(box["root"]) == m  # the old marker is whole
+
+
+def test_setup_replaces_an_old_vgac_nodes_with_a_backup_and_asks_for_a_restart(box):
+    # An older copy of VGAC's own pack is backed up under VGAC's folder, its files are replaced, the person's own
+    # file in the folder is kept, and the job asks for a ComfyUI restart. A current copy is then left alone.
+    from vgac import guidance, pack_update
+
+    install(box)
+    root = box["root"]
+    target = root / "ComfyUI" / "custom_nodes" / "vgac-nodes"
+    (target / "__init__.py").write_text("# older\n", encoding="utf-8")
+    (target / "own_notes.txt").write_text("kept\n", encoding="utf-8")
+    (target / pack_update.MANIFEST).write_text(json.dumps({"version": "older", "files": ["__init__.py"]}), encoding="utf-8")
+    job = ci.Install()
+    ci.step_packs(job, box["ops"], ci.fence_for(box["ops"]))
+    assert (target / "__init__.py").read_text(encoding="utf-8") == "# ours\n"
+    assert (target / "own_notes.txt").read_text(encoding="utf-8") == "kept\n"
+    backups = list((root / "backups" / "packs").iterdir())
+    assert len(backups) == 1 and (backups[0] / "__init__.py").read_text(encoding="utf-8") == "# older\n"
+    assert job.warnings == [guidance.NODE_PACK["updated"]]
+    again = ci.Install()
+    ci.step_packs(again, box["ops"], ci.fence_for(box["ops"]))
+    assert again.warnings == [] and len(list((root / "backups" / "packs").iterdir())) == 1
+
+
+def test_the_install_panel_offers_the_update_when_the_pack_is_outdated(box):
+    # The panel reads packs_outdated from the offer, and the update button runs the packs step on VGAC's own install.
+    install(box)
+    target = box["root"] / "ComfyUI" / "custom_nodes" / "vgac-nodes"
+    assert ci.offer()["packs_outdated"] == []
+    (target / "__init__.py").write_text("# older\n", encoding="utf-8")
+    (target / pack_update.MANIFEST).write_text(json.dumps({"version": "older", "files": ["__init__.py"]}), encoding="utf-8")
+    assert ci.offer()["packs_outdated"] == ["vgac-nodes (this project)"]
+    out = ci.update_packs(box["ops"])
+    assert (target / "__init__.py").read_text(encoding="utf-8") == "# ours\n"
+    assert out["warnings"] == [guidance.NODE_PACK["updated"]] and out["packs_outdated"] == []
+    assert ci.offer()["packs_outdated"] == []
+
+
+def test_the_update_button_is_refused_while_an_install_is_running(box, monkeypatch):
+    install(box)
+    monkeypatch.setattr(ci, "_current", ci.Install(state="working"))
+    with pytest.raises(DownloadError):
+        ci.update_packs(box["ops"])

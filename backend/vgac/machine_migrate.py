@@ -292,7 +292,9 @@ def compare_commands(after: config.Settings, scripts: dict[str, Path]) -> tuple[
         parsed = parse_start_script(script.read_text(encoding="utf-8-sig"))
         want = script_argv(parsed)
         argv, cwd, env = engine_command(after, name)
-        same_argv = [x.lower() for x in argv] == [x.lower() for x in want]
+        # The engine's own temp folder is new with the engine settings; a script never named one.
+        t = argv.index("--temp-directory") if "--temp-directory" in argv and "--temp-directory" not in want else None
+        same_argv = [x.lower() for x in (argv if t is None else argv[:t] + argv[t + 2:])] == [x.lower() for x in want]
         same_cwd = _same_path(str(cwd), parsed["cwd"])
         sk = parsed["env"].get("SKINTOKEN_BLENDER_BIN")
         same_env = sk is None or _same_path(env.get("SKINTOKEN_BLENDER_BIN"), sk)

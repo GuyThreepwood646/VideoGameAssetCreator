@@ -13,11 +13,12 @@ The system supports the following predefined views:
 - `back`: Back view
 - `right`: Right side view
 - `quarter`: Three-quarter view
+- `quarter2`: The other three-quarter view (the second picture of the pair)
 - `top`: Top-down view
 
 These views are defined in the backend reference data:
 ```python
-TURNAROUND_VIEWS = ("front", "left", "back", "right", "quarter", "top")
+TURNAROUND_VIEWS = ("front", "left", "back", "right", "quarter", "quarter2", "top")
 ```
 
 ## Frontend Integration

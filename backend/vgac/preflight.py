@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -461,6 +462,54 @@ def check_skintoken_blender(settings: Settings, project_dir: Path = PROJECT_DIR)
 # --- storage -------------------------------------------------------------------------------------------------------
 
 
+def comfy_apps(settings: Any) -> list[tuple[str, Path]]:
+    """Every ComfyUI the app uses, as (name, app folder): VGAC's own install, then each instance's linked engine (the
+    one the setup card's "Use this one" writes, comfy_dir plus main). Each folder is listed once."""
+    from . import comfy_install
+
+    out: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+
+    def add(name: str, app: Path) -> None:
+        key = os.path.normcase(str(app))
+        if key not in seen:
+            seen.add(key)
+            out.append((name, app))
+
+    add("VGAC's own ComfyUI", comfy_install.install_root() / "ComfyUI")
+    for name, inst in (getattr(settings, "instances", None) or {}).items():
+        e = getattr(inst, "engine", None)
+        if e is not None:
+            add(f"linked ComfyUI ({name})", (Path(e.comfy_dir) / e.main).parent)
+    return out
+
+
+def check_node_pack(settings: Any, project_dir: Path = PROJECT_DIR) -> list[dict[str, Any]]:
+    """vgac-nodes in every ComfyUI the app uses. A copy that is an older version is a warning: the rig step's
+    VGACLoadTrimesh node (graphs/skintoken.py) comes from the pack, and setup or the Add the node packs step replaces the
+    old files (pack_update). A ComfyUI without vgac-nodes is not reported here (the packs step adds it)."""
+    from . import guidance, pack_update
+
+    out: list[dict[str, Any]] = []
+    src = project_dir / "comfy-nodes" / "vgac-nodes"
+    for name, app in comfy_apps(settings):
+        try:
+            target = app / "custom_nodes" / "vgac-nodes"
+            if not target.is_dir():
+                continue
+            outdated = pack_update.state(target, src) == pack_update.OUTDATED
+        except Exception:  # noqa: BLE001
+            continue
+        tech = f"{target}: {name}; manifest {pack_update.MANIFEST} missing or another version"
+        if outdated:
+            out.append(item("node_pack." + str(len(out)), "tools", guidance.NODE_PACK["label"], "warn", guidance.NODE_PACK["detail"],
+                            guidance.NODE_PACK["fix"], ["mesh", "rig"], tech))
+        else:
+            out.append(item("node_pack." + str(len(out)), "tools", "Node pack up to date", "ok", guidance.NODE_PACK["current"], "",
+                            [], str(target)))
+    return out
+
+
 def _existing(p: Path) -> Path | None:
     p = Path(p)
     for q in [p, *p.parents]:
@@ -784,6 +833,7 @@ async def run_checks(settings: Settings, clients: dict[str, Any], disabled: set[
     sk = check_skintoken_blender(settings)
     if sk is not None:
         items.append(sk)
+    items.extend(check_node_pack(settings))
     for name in settings.instances:
         client = clients.get(name)
         can_start = supervisor.can_start(name) if supervisor is not None else None

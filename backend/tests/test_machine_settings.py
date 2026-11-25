@@ -172,12 +172,45 @@ def test_engine_command_from_settings(defaults: Path, tmp_path: Path):
                     "--port", "8189", "--listen", "127.0.0.1", "--cuda-device", "0",
                     "--extra-model-paths-config", str(Path("D:/paths.yaml")), "--input-directory", str(Path("D:/in")),
                     "--user-directory", str(config.PROJECT_DIR / "runtime/comfy-b-user"),
-                    "--output-directory", str(config.PROJECT_DIR / "runtime/comfy-b-output"), "--lowvram"]
+                    "--output-directory", str(config.PROJECT_DIR / "runtime/comfy-b-output"),
+                    "--temp-directory", str(config.PROJECT_DIR / "runtime/comfy-b-temp"), "--lowvram"]
     # The launcher and ComfyUI Desktop recognise a running B by this piece of its command line.
     assert f"{os.path.join('ComfyUI', 'main.py')} --port 8189" in " ".join(argv)
     assert env == {"CUDA_DEVICE_ORDER": "PCI_BUS_ID", "SKINTOKEN_BLENDER_BIN": str(Path("D:/Blender/blender.exe"))}
     with pytest.raises(ValueError):
         engine_command(s, "a")
+
+
+def test_two_cards_start_from_one_install_and_share_only_what_they_may(defaults: Path, tmp_path: Path):
+    """Both cards' engines run from the same ComfyUI folder at once. Their commands differ only in the port, the card
+    and the folders each must have to itself (user, output, temp), plus a card's own extra arguments; the model paths
+    file and the input folder are shared on purpose."""
+    comfy = tmp_path / "Comfy Install"
+    shared = {"comfy_dir": str(comfy), "extra_model_paths": "D:/paths.yaml"}
+    m = _machine(tmp_path, {"backend": {
+        "blender_exe": "D:/Blender/blender.exe", "comfy_input_dir": "D:/in",
+        "instances": {
+            "a": {"gpu": "RTX 3060", "engine": {**shared, "cuda_device": 1, "user_dir": "runtime/comfy-a-user",
+                                                "output_dir": "runtime/comfy-a-output"}},
+            "b": {"gpu": "RTX 3080", "engine": {**shared, "cuda_device": 0, "user_dir": "runtime/comfy-b-user",
+                                                "extra_args": ["--reserve-vram", "1.5"]}}}}})
+    s = load_settings(defaults, machine=m, create_library=False)
+    (a, a_cwd, a_env), (b, b_cwd, b_env) = engine_command(s, "a"), engine_command(s, "b")
+    assert a_cwd == b_cwd == comfy and a_env == b_env
+    assert a[:3] == b[:3] == [str(comfy / "ComfyUI/.venv/Scripts/python.exe"), "-s", os.path.join("ComfyUI", "main.py")]
+
+    def options(argv: list[str]) -> dict[str, str]:
+        return {flag: value for flag, value in zip(argv[3::2], argv[4::2])}
+
+    oa, ob = options(a), options(b)
+    assert oa["--port"] == "8188" and oa["--cuda-device"] == "1"
+    assert ob["--port"] == "8189" and ob["--cuda-device"] == "0"
+    own = {"--port", "--cuda-device", "--user-directory", "--output-directory", "--temp-directory"}
+    assert {f for f in oa.keys() | ob.keys() if oa.get(f) != ob.get(f)} == own | {"--reserve-vram"}
+    for flag in own:
+        assert oa[flag] != ob[flag]
+    assert oa["--temp-directory"] == str(config.PROJECT_DIR / "runtime/comfy-a-temp")
+    assert oa["--input-directory"] == ob["--input-directory"] == str(Path("D:/in"))
 
 
 # --- the migration --------------------------------------------------------------------------------------------------

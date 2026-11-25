@@ -191,7 +191,7 @@ OWNER = {
     "schema": 1,
     "backend": {
         "instances": {
-            "a": {"gpu": "RTX 3060", "process_match": "--cuda-device 1", "external_owner": "ComfyUI Desktop",
+            "a": {"gpu": "RTX 3060", "process_match": "--cuda-device 1",
                   "discover": {"gpu_match": "3060", "ports": [8188, 8189, 8190, 8191, 8000]},
                   "engine": {"comfy_dir": "{c}", "cuda_device": 1, "user_dir": "runtime/comfy-a-user",
                              "output_dir": "runtime/comfy-a-output"}},

@@ -169,7 +169,6 @@ def test_off_and_not_running_are_unknown(settings, tmp_path):
 def test_b_port_held_by_the_other_card_fails_with_a_fix(settings):
     inst = {
         "a": settings.instances["a"].model_copy(update={"url": "http://127.0.0.1:8188", "gpu": "RTX 3060",
-                                                        "external_owner": "ComfyUI Desktop",
                                                         "discover": DiscoverConfig(gpu_match="3060", ports=[8188, 8189])}),
         "b": settings.instances["b"].model_copy(update={"url": "http://127.0.0.1:8189", "gpu": "RTX 3080",
                                                         "discover": DiscoverConfig(gpu_match="3080")}),
@@ -183,7 +182,7 @@ def test_b_port_held_by_the_other_card_fails_with_a_fix(settings):
     items = asyncio.run(preflight.check_instance(s, "b", b, set(), probe=probe))
     eng = items[0]
     assert eng["state"] == "fail"
-    assert eng["detail"] == "ComfyUI Desktop is using port 8189 on the RTX 3060, so the app will not send the RTX 3080's work to it."
+    assert eng["detail"] == "Another copy of ComfyUI is using port 8189 on the RTX 3060, so the app will not send the RTX 3080's work to it."
     assert eng["fix"] == "Close it or change its port so the RTX 3080 can use port 8189."
     assert b.asked == []  # nothing is asked of the wrong card
     # Instance a (configured 8188, silent) is found on 8189 by its card.

@@ -253,12 +253,8 @@ def start_moved_message(source: str, target: str, settings: Settings | None = No
     return f"Moved to {gpu_name(target, settings)}: could not start the graphics engine on {gpu_name(source, settings)}"
 
 
-def owner_note(instance: str, settings: Settings | None = None) -> str:
-    """The sentence for an engine the backend did not start: it is never stopped by the app."""
-    settings = settings or get_settings()
-    inst = settings.instances.get(instance)
-    who = inst.external_owner if inst is not None and inst.external_owner else ""
-    return f"Started by {who}; the app leaves it running." if who else "Started outside the app; the app leaves it running."
+# The sentence for an engine the backend did not start: it is never stopped by the app.
+OWNER_NOTE = "Started outside the app; the app leaves it running."
 
 
 def kind_notes(instance: str, settings: Settings | None = None) -> dict[str, str]:
@@ -1979,7 +1975,7 @@ class JobQueue:
         gpu = gpu_name(instance, self.settings)
         if sup is None or not sup.owned(instance):
             raise ValueError(f"The graphics engine on {gpu} was not started by the app, so the app will not stop it. "
-                             f"{owner_note(instance, self.settings)}")
+                             f"{OWNER_NOTE}")
         w = self.workers.get(instance)
         if w is not None and (w.current_job_id is not None or w.lent_to is not None):
             raise ValueError(f"{gpu} is busy with a step. Wait for it to finish, or turn the card off to hand the step "
@@ -2165,7 +2161,7 @@ class JobQueue:
                 "last_error": (sup.last_error(name) if sup is not None and state == "failed" else "") or "",
             })
             if reachable and not owned and can_start:
-                entry["note"] = f"{entry['note']} {owner_note(name, self.settings)}"
+                entry["note"] = f"{entry['note']} {OWNER_NOTE}"
             if reachable:
                 dev = (summary.get("devices") or [{}])[0] or {}
                 total, free = dev.get("vram_total"), dev.get("vram_free")

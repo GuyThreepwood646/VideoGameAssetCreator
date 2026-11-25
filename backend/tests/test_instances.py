@@ -198,7 +198,7 @@ def settings_path(tmp_path: Path) -> Path:
     cfg = {
         "instances": {
             "a": {"url": "http://127.0.0.1:9", "gpu": GPU, "role": "3d", "start_script": str(script),
-                  "start_timeout_seconds": 30, "process_match": "--port-of-a", "external_owner": "ComfyUI Desktop"},
+                  "start_timeout_seconds": 30, "process_match": "--port-of-a"},
             "b": {"url": "http://127.0.0.1:10", "gpu": GPU, "role": "images", "output_dir": str(tmp_path / "comfy_out"),
                   "start_script": str(script), "start_timeout_seconds": 30, "process_match": "--port-of-b"},
         },
@@ -301,7 +301,7 @@ def test_failed_start_reroutes_or_parks_with_reason(client, world):
     ops, up = world["ops"], world["up"]
     q = jobs.active_queue()
     q.settings.instances["b"].start_timeout_seconds = 0.3
-    up["a"] = True  # a is running (ComfyUI Desktop); b never comes up
+    up["a"] = True  # a is running, started outside the app; b never comes up
     a = _asset(client)
     out = client.post(f"/api/assets/{a['id']}/stages/concept/run", json={}).json()
     jid = out["job"]["id"]
@@ -323,7 +323,7 @@ def test_failed_start_reroutes_or_parks_with_reason(client, world):
     # a stays running and is not ours: its note says so.
     ga = _gpu(client, "a")
     assert ga["state"] == "running" and ga["owned"] is False
-    assert ga["note"].endswith("Started by ComfyUI Desktop; the app leaves it running.")
+    assert ga["note"].endswith("Started outside the app; the app leaves it running.")
     # Try again: b starts (its first copy is still ours and loading, so no second copy), comes up, the rig runs.
     q.settings.instances["b"].start_timeout_seconds = 30
     rows = client.post("/api/gpus/b/start").json()
@@ -492,6 +492,35 @@ def test_engine_settings_start_the_command_not_a_script(settings, tmp_path):
     assert run["argv"][run["argv"].index("--port") + 1] == "9"  # the port of the instance's url
     assert run["env"] == {"CUDA_DEVICE_ORDER": "PCI_BUS_ID", "SKINTOKEN_BLENDER_BIN": str(blender)}
     assert sup.owned("a") and sup.state("a") == "running"
+
+
+@pytest.mark.parametrize("name", ["a", "b"])
+def test_either_card_is_started_reported_and_stopped_the_same_way(settings, tmp_path, name):
+    """Start, state and stop are the same for every card that has engine settings: the command is launched with the
+    card's own temp folder, the engine is the app's (owned, running), and stop ends that process and nothing else."""
+    from vgac.config import EngineConfig
+
+    comfy_dir = tmp_path / "comfy"
+    py = comfy_dir / "ComfyUI" / ".venv" / "Scripts" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_text("", encoding="utf-8")
+    s = _unscripted(settings)
+    s = s.model_copy(update={"instances": {n: i.model_copy(update={"engine": EngineConfig(
+        comfy_dir=comfy_dir, python=py, cuda_device=k, temp_dir=tmp_path / f"temp-{n}")})
+        for k, (n, i) in enumerate(s.instances.items())}})
+    ops = LaunchOps()
+    sup = Supervisor(s, {n: FakeClient(up_after=3 if n == name else None) for n in s.instances}, ops=ops,
+                     poll_seconds=0.01, project_dir=tmp_path)
+    assert sup.can_start(name) and sup.state(name) == "stopped" and not sup.owned(name)
+    asyncio.run(sup.ensure_running(name))
+    assert len(ops.launched) == 1 and sup.state(name) == "running" and sup.owned(name)
+    argv = ops.launched[0]["argv"]
+    assert argv[argv.index("--temp-directory") + 1] == str(tmp_path / f"temp-{name}")
+    assert argv[argv.index("--port") + 1] == str(instances.port_of(s.instances[name].url))
+    sup.stop(name)
+    assert ops.killed == [ops.launched[0]["pid"]] and sup.state(name) == "stopped" and not sup.owned(name)
+    with pytest.raises(NotOwned):
+        sup.stop(name)
 
 
 def test_engine_with_a_missing_comfyui_fails_plainly(settings, tmp_path):

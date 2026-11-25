@@ -42,13 +42,14 @@ import time
 import uuid
 import zipfile
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import config, downloader, hardware_setup, lora_folders, setup_settings, skintoken_fix
+from . import config, downloader, guidance, hardware_setup, lora_folders, pack_update, setup_settings, skintoken_fix
 from . import state_lock as state_lock_mod
 from .state_lock import state_lock
 from .downloader import DownloadError, Spec, Stopped
@@ -788,12 +789,15 @@ def step_packs(job: Install, ops: Ops, fence: Fence) -> None:
         if target.is_dir() and any(target.iterdir()):
             if p["id"] == "skintoken":
                 _apply_skintoken_fix(job, target)   # a pack already here is checked and fixed in place (idempotent)
+            elif p.get("local") and pack_update.state(target, downloader.project_dir() / str(p["local"])) == pack_update.OUTDATED:
+                _update_local_pack(job, p, target, fence)
             continue
         job.text = f"Adding {p.get('name', p['id'])}"
         if p.get("local"):
             src = downloader.project_dir() / str(p["local"])
             g_rmtree(target, ops, fence)
             shutil.copytree(src, guard(target, fence), ignore=shutil.ignore_patterns("__pycache__"))
+            pack_update.write_manifest(target, src, lambda q: guard(q, fence))
             downloader.record(f"node pack {p.get('name', p['id'])}", target, "added", 0)   # the ledger says which folder is VGAC's
             continue
         z = guard(root / "downloads" / f"pack-{p['id']}.zip", fence)
@@ -809,6 +813,19 @@ def step_packs(job: Install, ops: Ops, fence: Fence) -> None:
         if p["id"] == "skintoken":
             _apply_skintoken_fix(job, target)
         downloader.record(f"node pack {p.get('name', p['id'])}", target, "added", 0)   # the ledger says which folder is VGAC's
+
+
+def _update_local_pack(job: Install, p: dict[str, Any], target: Path, fence: Fence) -> None:
+    """An older copy of VGAC's own pack: the old folder is backed up under VGAC's folder, then the pack's files are written
+    over it. Only the files the old manifest named that the pack no longer has are removed; the person's other files stay.
+    The job warns that ComfyUI must restart before the new nodes load."""
+    src = downloader.project_dir() / str(p["local"])
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backups = guard(install_root() / "backups" / "packs", fence)
+    job.text = f"Updating {p.get('name', p['id'])}"
+    pack_update.replace(guard(target, fence), src, backups, stamp, lambda q: guard(q, fence))
+    downloader.record(f"node pack {p.get('name', p['id'])}", target, "updated", 0)
+    job.warnings.append(guidance.NODE_PACK["updated"])
 
 
 def _apply_skintoken_fix(job: Install, target: Path) -> None:
@@ -922,7 +939,7 @@ def step_engines(job: Install, ops: Ops, fence: Fence, p: hardware_setup.Plan) -
             insts = data.setdefault("backend", {}).setdefault("instances", {})
             for name, e in engines.items():
                 inst = insts.get(name) if isinstance(insts.get(name), dict) else {}
-                for k in ("process_match", "external_owner", "start_script", "discover"):
+                for k in ("process_match", "start_script", "discover"):
                     inst.pop(k, None)  # discover comes back from the hardware plan, without another ComfyUI's ports
                 inst["url"] = f"http://127.0.0.1:{e['port']}"
                 inst["output_dir"] = e["output_dir"]  # where SkinToken's files are looked for: VGAC's own
@@ -1043,6 +1060,19 @@ def status() -> dict[str, Any]:
             "warnings": [], "engines": [], "steps": plan(root)}
 
 
+def packs_outdated() -> list[str]:
+    """Names of VGAC's own local node packs whose copy in its ComfyUI is an older version (pack_update.state)."""
+    app = install_root() / "ComfyUI"
+    out: list[str] = []
+    for p in shipped_packs():
+        if not p.get("local"):
+            continue
+        target = app / "custom_nodes" / str(p.get("folder") or p["id"])
+        if pack_update.state(target, downloader.project_dir() / str(p["local"])) == pack_update.OUTDATED:
+            out.append(str(p.get("name", p["id"])))
+    return out
+
+
 def offer() -> dict[str, Any]:
     """What the panel shows before anything starts."""
     e = entry()
@@ -1051,7 +1081,21 @@ def offer() -> dict[str, Any]:
     return {"version": e.get("version", ""), "goes_to": str(root), "hosts": ["github.com", "download.pytorch.org", "files.pythonhosted.org"],
             "download_bytes": total + _zip_bytes(e), "needs_bytes": space_needed(root),
             "licence": e.get("licence", ""), "needs_admin": False, "ready": not pins_missing(), "missing": pins_missing(),
-            "status": status()}
+            "packs_outdated": packs_outdated(), "status": status()}
+
+
+def update_packs(ops: Ops | None = None) -> dict[str, Any]:
+    """The Update the node pack button on VGAC's own install: the packs step runs again, which replaces only a pack whose
+    copy is an older version (step_packs). Refused while an install is running."""
+    with _lock:
+        if _current is not None and _current.state == "working":
+            raise DownloadError("busy", "The install is already running.", "Wait for it, or stop it first.")
+    root = install_root()
+    _require_own(root)
+    ops = ops or Ops()
+    job = Install(state="working")
+    step_packs(job, ops, fence_for(ops))
+    return {"warnings": list(job.warnings), "packs_outdated": packs_outdated()}
 
 
 # --- removing ------------------------------------------------------------------------------------------------------------
@@ -1494,7 +1538,7 @@ async def start_engines(supervisor: Any, saved: config.Settings | None = None) -
             out.append({"name": name, "state": "restart", "text": "It starts the next time the app starts."})
             continue
         live.url, live.engine, live.discover = inst.url, inst.engine, inst.discover
-        live.process_match, live.external_owner, live.start_script = None, "", None
+        live.process_match, live.start_script = None, None
         client = supervisor.clients.get(name)
         if client is not None and hasattr(client, "set_base_url"):
             client.set_base_url(inst.url)
@@ -1543,6 +1587,14 @@ def post_start(body: StartIn) -> dict[str, Any]:
                 raise DownloadError("choice", "Choice A needs your ComfyUI chosen in the list.", "")
             shared = str(find_by_id(body.id)["models"])
         return start(body.choice, shared).public()
+    except DownloadError as e:
+        raise _bad(e) from None
+
+
+@router.post("/update-packs")
+def post_update_packs() -> dict[str, Any]:
+    try:
+        return update_packs()
     except DownloadError as e:
         raise _bad(e) from None
 
