@@ -257,7 +257,7 @@ def test_the_shipped_sets_cover_every_file_once_and_gates_are_consistent():
     starter = next(s for s in d["sets"] if s["id"] == "starter")
     assert starter["required"]
     total = sum(d[{"model": "models", "addon": "addons", "project_file": "project_files"}[i.split(":")[0]]][i.split(":")[1]]["size"] for i in starter["items"])
-    assert 55e9 < total < 58e9  # "about 56 GB": the Z-Image diffusion file, text encoder and VAE are three files now
+    assert 62e9 < total < 65e9  # "about 63 GB": the Z-Image diffusion file, text encoder and VAE are three files, plus the 6.7 GB pose control file
     required = {f"model:{k}" for k, v in d["models"].items() if v.get("required")} | {f"project_file:{k}" for k, v in d["project_files"].items() if v.get("required")}
     assert required <= set(starter["items"])
     assert re.fullmatch(r"[0-9a-f]{64}", next(iter(d["models"].values()))["sha256"])

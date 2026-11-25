@@ -43,6 +43,8 @@ library_clips:
   - {name: interact, from: [Interact, PickUp_Table], move: interact, loop: false}
 lod_ratios: [0.5, 0.25, 0.1]
 views: [front, left, back, right, quarter]
+# Z-Image Turbo draws the first picture to a fixed A-pose skeleton (vgac/pose_control.py); strength and the share of steps it holds.
+pose_control: {strength: 0.8, end: 1.0}
 pose_block: >-
   The character stands in a relaxed A-pose, both arms straight and held out from the body at about 45 degrees,
   halfway between hanging down and straight out to the sides, with empty space between each arm and the body
