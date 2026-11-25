@@ -24,6 +24,9 @@ picture_view: front
 # the end (vgac/stages/concept.py).
 view_lead: "Straight-on front view, flat front elevation at eye level, camera directly in front, symmetrical, only the front wall visible:"
 input_view_default: quarter
+# Texture sampler steps when the version does not choose (mesh.tex_steps_for): 12 gives about half the 3D step time,
+# with the app's checks no worse on this category.
+tex_steps_default: 12
 # The square-on step 1 picture against the 3D step's renders places a building's front by quarter turns
 # (facing.by_picture): a box's outline cannot tell front from back, so the outline test never settles one.
 facing_by_picture: true
