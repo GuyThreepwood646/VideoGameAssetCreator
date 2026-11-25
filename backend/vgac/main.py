@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from . import restart as restart_mod
 from . import __version__, autopilot, cardmem, compose, estimates, fixes, library, lora_defaults, move_gate, own_images, paintsave, people, pipeline, reference, shape
 from .comfy import ComfyClient
 from .config import BACKEND_DIR, get_settings
@@ -56,6 +57,11 @@ async def lifespan(app: FastAPI):
     q = JobQueue(settings)  # registers itself as jobs.active_queue() for the API and the autopilot
     await q.start()
     autopilot.resume_all()
+    for name in restart_mod.engines_to_start_again():  # after a restart with engines "restart": bring back what was running
+        try:
+            q.start_engine(name)
+        except (KeyError, ValueError) as e:
+            log.warning("could not start the graphics engine %s again after the restart: %s", name, e)
     log.info("library at %s, db at %s", settings.library_path, settings.db_path)
     try:
         yield
@@ -409,6 +415,7 @@ async def health() -> dict[str, Any]:
     return {
         "ok": True,
         "version": __version__,
+        "backend": restart_mod.identity(),
         "instances": instances,
         "host": {
             "ram_total_bytes": vm.total,
@@ -1472,6 +1479,29 @@ async def start_gpu_engine(instance: str) -> list[dict[str, Any]]:
         raise HTTPException(409, str(e))
     await asyncio.sleep(0)  # let the start begin, so the answer already says "starting"
     return await _gpu_list(q)
+
+
+class RestartBody(BaseModel):
+    engines: str = "keep"  # "keep": the engines the app started keep running; "restart": they are stopped and started again
+    force: bool = False  # skips only the check for running or waiting steps
+
+
+@app.post("/api/restart")
+async def restart_backend(body: RestartBody, request: Request) -> dict[str, Any]:
+    """Ask the launcher to restart this backend (see vgac/restart.py). Returns before the backend stops, with the id;
+    after the restart GET /api/health `backend.restart_id` shows the same id. Loopback callers only; a browser page
+    from another origin is refused by the same check as every other changing call (_block_foreign_origins)."""
+    host = request.client.host if request.client else ""
+    if host not in ("127.0.0.1", "::1"):
+        raise HTTPException(403, "Only this computer can restart the app.")
+    q = _queue()
+    sup = q.supervisor
+    owned = {n: sup.engines[n].owned_pid for n in q.settings.instances
+             if sup is not None and n in sup.engines and sup.owned(n) and sup.engines[n].state in ("running", "starting")}
+    try:
+        return restart_mod.write_request(body.engines, body.force, restart_mod.work_in_flight(q.status()), owned)
+    except restart_mod.RestartRefused as e:
+        raise HTTPException(e.status, str(e))
 
 
 @app.post("/api/gpus/{instance}/stop")

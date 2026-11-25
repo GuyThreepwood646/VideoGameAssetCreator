@@ -105,6 +105,10 @@
 // lod_screen_heights, LOD0..LOD3). It is set on the LODGroup Unity builds from the _LODn names and on one the script builds.
 // Without a height for every level the group keeps Unity's own, and a warning says so; no LODGroup is built by script then.
 //
+// Version 26 (PL-37): the measured walk speed also applies to the shared library walk. The retarget step reads the planted toe
+// joints of the library walk as it stands on this character and writes speed_mps on that row (source "library"), so a short
+// character's walk plays at its own stride and not at the library's 1.4. A row without a speed keeps the default. The run keeps 3.5.
+//
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
 using System;
@@ -120,7 +124,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "25";
+    public const string Version = "26";
     public const string HairShaderName = "VGAC/Hair";
     public const string HairCutoutShaderName = "VGAC/HairCutout";
 
@@ -2122,12 +2126,14 @@ public static class VgacImport
     }
 
     // Version 22: the measured speed of a walk or run clip from the sidecar (planted feet), or null when the rig stage had none.
-    // The clip must come from the character's own FBX (asset path == ownFbx), the one the sidecar measured.
+    // The clip is the character's own (asset path == ownFbx, the one the sidecar measured) or the shared library clip of a row the
+    // sidecar marks "library" (Version 26: the retarget step measured that clip on this character).
     static float? MeasuredSpeed(Dictionary<string, SidecarClip> side, string clip, AnimationClip playing, string ownFbx)
     {
-        if (side == null || playing == null || ownFbx == null) return null;
-        if (AssetDatabase.GetAssetPath(playing) != ownFbx) return null;
+        if (side == null || playing == null) return null;
         if (!side.TryGetValue(clip, out var c)) return null;
+        var own = ownFbx != null && AssetDatabase.GetAssetPath(playing) == ownFbx;
+        if (!own && !string.Equals(c.source, "library", StringComparison.OrdinalIgnoreCase)) return null;
         if (!string.Equals(c.speed_method, "planted_feet", StringComparison.OrdinalIgnoreCase)) return null;
         return c.speed_mps > 0f ? (float?)c.speed_mps : null;
     }
@@ -2487,8 +2493,8 @@ public static class VgacImport
         var cycle = new List<(AnimationClip clip, float speed)>();
         if (idle) cycle.Add((idle, 0f));
         // Version 22: the walk and run speeds measured from the planted feet by the rig stage; the defaults when a clip has none.
-        // A measured speed applies only to the clip that plays: the one that came from the character's own FBX (the
-        // sidecar measured that one). A shared-library walk or run keeps its default.
+        // A measured speed applies to the clip that plays when the sidecar measured it: the character's own FBX clip, or
+        // (Version 26) a shared-library walk whose row says source "library". A run from the shared library keeps its default.
         var walkMeasured = MeasuredSpeed(side, "walk", walk, ownFbx);
         var runMeasured = MeasuredSpeed(side, "run", run, ownFbx);
         if (walk) cycle.Add((walk, (walkMeasured ?? 1.4f) * speedScale));
@@ -3185,7 +3191,7 @@ public static class VgacImport
         var view = (Quaternion.AngleAxis(-35f, Vector3.up) * fwd + Vector3.up * 0.15f).normalized;
         cam.transform.position = centre + view * dist;
         cam.transform.LookAt(centre);
-        var suns = UnityEngine.Object.FindObjectsByType<Light>(FindObjectsSortMode.None).Where(l => l.type == LightType.Directional && l.enabled).ToList();
+        var suns = UnityEngine.Object.FindObjectsByType<Light>().Where(l => l.type == LightType.Directional && l.enabled).ToList();
         var kept = suns.Select(l => l.transform.rotation).ToList();
         var lights = new[] { ("l1", (Quaternion.AngleAxis(-40f, Vector3.up) * fwd + Vector3.up * 1.0f).normalized),
                              ("l2", (Quaternion.AngleAxis(100f, Vector3.up) * fwd + Vector3.up * 0.6f).normalized) };
