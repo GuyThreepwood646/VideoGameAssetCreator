@@ -72,7 +72,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import creaturemetal, face, facing, guidance, hairlib, hairmat, headtris, imaging, library, lightfix, meshchecks, normalfix, quality, reference, skinmetal, srcproject, steptime, texcolour
+from .. import creaturemetal, face, facing, guidance, hairlib, hairmat, headtris, imaging, layoutspread, library, lightfix, meshchecks, normalfix, quality, reference, skinmetal, srcproject, steptime, texcolour
 from .. import hair as hairfind
 from ..blender import gridfit
 from . import face_detail, hair_detail
@@ -396,6 +396,18 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         link_textures(sc, keep_normal=keep_normal)
         if repaired:
             sc.register("normal", repaired["normal"])  # the flipped copy, not the 3D step's own map
+    moved_layout = False
+    if not rebaked and mesh_maps and not paint_first and await asyncio.to_thread(layout_gutter_short, out, tex):
+        # The gutter is too small and nothing was re-baked: move the islands apart unchanged (no bake, no filtering)
+        pad = imaging.unwrap_padding(tex)
+        with steptime.part(sc, "layout_spread"):
+            spread = await asyncio.to_thread(layoutspread.spread, out, maps, sc.dir, tex, math.ceil(PADDING_PASS_FRACTION * pad))
+        sc.set_metrics(layout_spread={k: v for k, v in spread.items() if k in ("moved", "reason", "islands", "gutter_before", "gutter_after")})
+        if spread["moved"]:
+            maps = spread["maps"]
+            for key, p in maps.items():
+                sc.register(key, p)
+            moved_layout = True  # the maps match the final layout by construction, as after a re-bake
     sc.set_metrics(triangles=report.get("triangles"), vertices=report.get("vertices"), dims=report.get("dims_m"),
                    size_extent_m=report.get("size_extent_m"),
                    non_manifold_edges=report.get("non_manifold_edges"), boundary_edges=report.get("boundary_edges"),
@@ -410,7 +422,7 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
             sc.register("tiling", Path(tiling))
     if maps.get("base_color"):
         sc.progress(0.7, "Checking the textures")
-        bake_glb = src if not rebaked else out
+        bake_glb = out if rebaked or moved_layout else src
         look = texture_look(rec)
         # A look that paints at a larger size than it ships (Retro 64: recipe mesh.bake_texture) keeps the bake size
         # through the painting and is shrunk to its size at the end (ship_late); every other look as before.
@@ -874,6 +886,21 @@ def prep_triangle_limit(rec: dict[str, Any], mesh_params: dict[str, Any] | None,
     return {"limit": platform, "source": "platform"}
 
 
+def gutter_short(gap: int, pad: int) -> bool:
+    """True when the gutter (empty texels between islands) is under what the texture_padding check asks for."""
+    return int(gap) < math.ceil(PADDING_PASS_FRACTION * pad)
+
+
+def layout_gutter_short(glb: Path, tex: int) -> bool:
+    """Whether the model's texture layout at `tex` has a gutter the texture_padding check would fail (measured the way
+    texture_pass measures it). A model without a readable layout is left alone."""
+    uv = imaging.load_uv_mesh(glb)
+    if uv is None:
+        return False
+    pad = imaging.unwrap_padding(tex)
+    return gutter_short(imaging.gutter_px(imaging.rasterise_uv(uv, tex)["labels"], pad // 2 + 2), pad)
+
+
 def texture_look(rec: dict[str, Any]) -> dict[str, Any]:
     """What texture_pass does to the maps for the recipe: {cap, normal_map, style}."""
     m = rec.get("mesh") or {}
@@ -1056,7 +1083,7 @@ def surface_checks(metrics: dict[str, Any], params: dict[str, Any] | None = None
     pad = int(m.get("texture_padding_target_px") or imaging.unwrap_padding(int(m.get("texture_size") or 2048)))
     gap = m.get("texture_padding_px")
     if gap is not None:
-        out.append(quality.check("texture_padding", int(gap) >= math.ceil(PADDING_PASS_FRACTION * pad), int(gap), pad))
+        out.append(quality.check("texture_padding", not gutter_short(gap, pad), int(gap), pad))
     if m.get("atlas_used") is not None:
         out.append(quality.check("atlas_used", float(m["atlas_used"]) >= ATLAS_USED_MIN, round(float(m["atlas_used"]), 4), ATLAS_USED_MIN,
                                  vars={"symmetric": bool(p.get("symmetric"))}))
