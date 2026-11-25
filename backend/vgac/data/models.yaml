@@ -26,6 +26,7 @@ models:
   qwen_sheet_lora: {name: Qwen-Image-Edit-2511 character turnaround sheet LoRA (tarn59), file: qie2511_turnaround_sheet_tarn59.safetensors, licence: Apache-2.0, version: "1.0", source: "https://huggingface.co/tarn59/character_turnaround_sheet_qwen_edit_2511"}
   qwen_camera_lora: {name: Qwen-Image-Edit-2511 camera-angle LoRA (berkerdooo), file: qie2511_camera_angle_berkerdooo.safetensors, licence: Apache-2.0, version: "1.0", source: "https://huggingface.co/berkerdooo/qwen-image-edit-2511-camera-angle-lora"}
   qwen_lightning_lora: {name: Qwen-Image-Edit-2511 Lightning 4 steps, file: Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors, licence: Apache-2.0, version: "1.0", source: "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning"}
+  pose_control: {name: Z-Image Turbo Fun ControlNet Union 2.1 (pose control), file: Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps.safetensors, licence: Apache-2.0, version: "2.1", source: "https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1"}
   birefnet: {name: BiRefNet, file: birefnet.safetensors, licence: MIT, version: "1.0", source: "https://huggingface.co/Comfy-Org/BiRefNet"}
   upscale_photo: {name: 4xRealWebPhoto v4 (DAT2), file: 4xRealWebPhoto_v4_dat2.pth, licence: CC-BY-4.0, version: "4", source: "https://huggingface.co/Phips/4xRealWebPhoto_v4_dat2"}
   upscale_art: {name: Real-ESRGAN x2plus, file: RealESRGAN_x2plus.pth, licence: BSD-3-Clause, version: "0.2.1", source: "https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.1"}

@@ -39,14 +39,32 @@ def zimage_loaders(unet: str) -> dict[str, Any]:
     }
 
 
-def zimage_graph(prompt: str, seed: int, prefix: str, width: int = 1024, height: int = 1024, steps: int = 8) -> dict[str, Any]:
+POSE_PATCH = "Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps.safetensors"
+
+
+def zimage_graph(prompt: str, seed: int, prefix: str, width: int = 1024, height: int = 1024, steps: int = 8,
+                 control: dict[str, Any] | None = None) -> dict[str, Any]:
+    """`control`: {image: the name of a skeleton picture in the engine's input folder, strength, end (share of the steps
+    it holds for)}; the pose control model then steers the sampler's model to follow that skeleton (vgac/pose_control.py)."""
+    model_out = ["2", 0]
+    extra: dict[str, Any] = {}
+    if control:
+        extra = {
+            "pc_img": {"class_type": "LoadImage", "inputs": {"image": control["image"]}},
+            "pc_patch": {"class_type": "ModelPatchLoader", "inputs": {"name": POSE_PATCH}},
+            "pc": {"class_type": "ZImageFunControlnet",
+                   "inputs": {"model": ["2", 0], "model_patch": ["pc_patch", 0], "vae": ["1v", 0], "strength": float(control["strength"]),
+                              "image": ["pc_img", 0], "end_percent": float(control.get("end", 1.0))}},
+        }
+        model_out = ["pc", 0]
     return {
         **zimage_loaders(ZTURBO_UNET),
         "2": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
+        **extra,
         "3": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1c", 0], "text": prompt}},
         "4": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["1c", 0], "text": ""}},
         "5": {"class_type": "EmptySD3LatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
-        "6": {"class_type": "KSampler", "inputs": {"model": ["2", 0], "positive": ["3", 0], "negative": ["4", 0],
+        "6": {"class_type": "KSampler", "inputs": {"model": model_out, "positive": ["3", 0], "negative": ["4", 0],
                                                   "latent_image": ["5", 0], "seed": seed, "steps": steps, "cfg": 1.0,
                                                   "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1.0}},
         "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["1v", 0]}},
@@ -187,14 +205,17 @@ def chain_addons(graph: dict[str, Any], addons: list[dict[str, Any]] | None) -> 
 
 
 def concept_graph(model: str, prompt: str, seed: int, prefix: str, width: int = 1024, height: int = 1024,
-                  steps: int | None = None, negative: str | None = None, addons: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+                  steps: int | None = None, negative: str | None = None, addons: list[dict[str, Any]] | None = None,
+                  control: dict[str, Any] | None = None) -> dict[str, Any]:
     """Dispatch to the builder for `model`. `negative` applies to models that use a real negative prompt. `addons` is
     reference.resolve_addons(...)["applied"]: each chained after the model loader at its strength, its trigger
-    appended to the prompt."""
+    appended to the prompt. `control` (zimage_graph only) is the pose control input."""
     fn = builder(model)
     kwargs: dict[str, Any] = {"width": width, "height": height, "steps": steps or default_steps(model)}
     if negative and _spec(model).get("negative"):
         kwargs["neg"] = negative
+    if control:
+        kwargs["control"] = control
     return chain_addons(fn(prompt_with_triggers(prompt, addons), seed, prefix, **kwargs), addons)
 
 

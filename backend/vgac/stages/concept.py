@@ -182,6 +182,24 @@ async def missing_look_addons(sc: StageContext, applied: list[dict[str, Any]]) -
     return [a for a in need if not has_file(choices, str(a["file"]))]
 
 
+async def _pose_control(sc: StageContext, model: str, params: dict[str, Any], width: int, height: int) -> dict[str, Any] | None:
+    """The pose control input (vgac/pose_control.py) for a category that sets `pose_control`, drawn by Z-Image Turbo with the
+    category's own pose wording; not for a picture whose character holds an item (the item sets the pose) and not
+    for the other painters. The skeleton is staged on the picture card under a name of its own and recorded in the metrics."""
+    from .. import items, pose_control
+
+    spec = pose_control.control_spec(sc.category)
+    held = items.concept_prompt_parts(sc.asset) or {}
+    if spec is None or model != "zturbo" or not params.get("readiness_block", True) or held.get("pose_block"):
+        return None
+    path = sc.dir / "pose_control.png"
+    pose_control.skeleton(width, height).save(path)
+    name = await sc.stage_input(path, f"vgac_{sc.version.id[:8]}_pose_control.png")
+    sc.set_params(pose_control=spec)
+    sc.use_model("pose_control")
+    return {"image": name, **spec}
+
+
 async def _generate(sc: StageContext, params: dict[str, Any]) -> None:
     rec = stage_recipe(sc)
     model = resolve_model(sc, params)
@@ -216,8 +234,9 @@ async def _generate(sc: StageContext, params: dict[str, Any]) -> None:
     sc.use_model(model)
     for a in applied:
         sc.models_used[f"addon:{a['id']}"] = reference.addon_record(a["id"])
+    control = await _pose_control(sc, model, params, width, height)
     graph = concept_graph(model, prompt, seed, sc.prefix("image"), width=width, height=height, steps=steps, negative=negative,
-                          addons=applied)
+                          addons=applied, control=control)
     entry = await sc.comfy(graph, message="concept image", base=0.05, span=0.6)
     image = await sc.download_image(entry, save_node(model), sc.dir / "image.png")
     sc.register("image", image)
