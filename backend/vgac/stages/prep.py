@@ -397,8 +397,9 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         if repaired:
             sc.register("normal", repaired["normal"])  # the flipped copy, not the 3D step's own map
     moved_layout = False
-    if not rebaked and mesh_maps and not paint_first and await asyncio.to_thread(layout_gutter_short, out, tex):
-        # The gutter is too small and nothing was re-baked: move the islands apart unchanged (no bake, no filtering)
+    if mesh_maps and not paint_first and await asyncio.to_thread(layout_gutter_short, out, tex):
+        # The gutter is too small (a reduction that kept the islands' places shrinks it, and so does a re-bake onto that
+        # layout): move the islands apart unchanged (no bake, no filtering)
         pad = imaging.unwrap_padding(tex)
         with steptime.part(sc, "layout_spread"):
             spread = await asyncio.to_thread(layoutspread.spread, out, maps, sc.dir, tex, math.ceil(PADDING_PASS_FRACTION * pad))

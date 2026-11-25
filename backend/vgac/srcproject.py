@@ -82,6 +82,11 @@ FRONT_PRIORITY = 0.4     # where a priority picture's own weight reaches this, t
                          # laid its own cheek outline there as a crease; at 0.4 it hands over at about 37 degrees.
 ALPHA_RAMP = (0.004, 0.06)
 GUTTER_PX = 3
+# A gutter texel's surface position continues the border triangle's plane outward. For a triangle that is a sliver in the
+# layout the continuation runs far past the model, and the dense grids of surface_correction are sized by the extent of
+# all positions. A gutter texel more than this many average texels (per gutter texel of distance) from the island texel
+# it copies gets no position and is left out.
+GUTTER_REACH_TEXELS = 8.0
 DETAIL_TEXELS = 2.0      # "detail" mode: the TRELLIS colour is kept below this many texels of surface
 BG = 0.5
 STRETCH = (2.0, 3.5)     # one picture pixel covering this many texels along the surface: weight falls from 1 to 0
@@ -955,7 +960,9 @@ class Atlas:
             lut = np.full(T * T, -1, dtype=np.int64)
             lut[isl] = np.arange(isl.size)
             srcflat = gy.ravel()[gi].astype(np.int64) * T + gx.ravel()[gi].astype(np.int64)
-            keep = ok & (lut[srcflat] >= 0)
+            own = lut[srcflat]
+            reach = GUTTER_REACH_TEXELS * gutter * self.pitch_m
+            keep = ok & (own >= 0) & (np.linalg.norm(gpos - pos[np.maximum(own, 0)], axis=1) <= reach)
             self.idx = np.concatenate([isl, gi[keep]])
             self.pos = np.concatenate([pos, gpos[keep]])
             self.nrm = np.concatenate([nrm, gn[keep]])
