@@ -76,7 +76,34 @@ def test_tpose_turns_level_the_arms_straighten_the_legs_and_carry_the_fingers():
     foot = gait.q_rotate(turns["LeftFoot"], dirs["LeftFoot"])
     assert abs(foot[0]) < 1e-9 and foot[1] < 0 and foot[2] == pytest.approx(dirs["LeftFoot"][2] / gait.v_len(dirs["LeftFoot"]), abs=0.2)
     assert turns["LeftHandIndex1"] == turns["LeftHand"] and turns["LeftToeBase"] == turns["LeftFoot"]
-    assert turns["Spine"] == (1.0, 0.0, 0.0, 0.0) and turns["LeftShoulder"] == (1.0, 0.0, 0.0, 0.0)
+    assert gait.q_rotate(turns["Spine"], dirs["Spine"]) == pytest.approx((0.0, 0.0, 1.0), abs=1e-9)
+    assert turns["LeftShoulder"] == turns["Spine"]  # a bone nothing aims inherits its parent's turn
+
+
+def test_a_clip_keeps_its_lean_whatever_either_skeletons_rest_back_leans():
+    # The back stands straight up in the reference pose, so a clip's lean from upright carries over: a library whose back
+    # rests leaning forward and a character whose back rests leaning slightly back end with the same absolute lean.
+    chain = ["Hips", "Spine", "Spine1", "Spine2", "Neck"]
+    parents = {"Hips": None, "Spine": "Hips", "Spine1": "Spine", "Spine2": "Spine1", "Neck": "Spine2"}
+    local = (0.0, 0.0, 1.0)
+
+    def lean_dir(deg):  # forward is -Y; positive leans forward
+        r = math.radians(deg)
+        return (0.0, -math.sin(r), math.cos(r))
+
+    def skeleton(rest_lean):
+        dirs = {b: lean_dir(rest_lean) for b in chain}
+        rest = {b: gait.q_from_to(local, dirs[b]) for b in chain}
+        turns = gait.tpose_turns(dirs, parents)
+        return {b: gait.q_mul(turns[b], rest[b]) for b in chain}, rest
+
+    src_ref, src_rest = skeleton(14.0)
+    tgt_ref, _ = skeleton(-4.0)
+    pitch = gait.q_axis_angle((1.0, 0.0, 0.0), math.radians(-9.0))  # the clip leans the back 9 degrees further forward
+    for b in chain:
+        posed = gait.q_mul(pitch, src_rest[b])
+        got = gait.q_rotate(gait.compensate(posed, src_ref[b], tgt_ref[b]), local)
+        assert got == pytest.approx(gait.q_rotate(posed, local), abs=1e-9), b
 
 
 def test_bone_map_reads_the_pack_bone_names_and_reports_missing_fingers():

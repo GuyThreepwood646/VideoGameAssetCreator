@@ -698,7 +698,12 @@ def clip_quality(frames, ik_moves, sank):
         for k, v in joint_bends(tshort).items():
             bends_t.setdefault(k, []).append(v)
         hips_turn = o[hips_name] @ (T.G @ t_rest_q[hips_name]).inverted()
-        if not knee_forward(tshort, hips_turn @ Vector((0, -1, 0))):
+        face = hips_turn @ Vector((0, -1, 0))
+        if abs(face.z) < 0.8:
+            # Hips not turned face-up or face-down: the way the body faces on the ground. A pitched pelvis (a lean or a
+            # crouch) tilts the hips' own forward, and a knee bent only slightly forward would read as bent back.
+            face = Vector((face.x, face.y, 0.0)).normalized()
+        if not knee_forward(tshort, face):
             knees_bad += 1
     fid = {k: {"max_deg": round(max(v), 1), "mean_deg": round(sum(v) / len(v), 2)} for k, v in angles.items()}
     bend_cmp = {k: {"source_max": round(max(bends_s[k]), 1), "target_max": round(max(bends_t.get(k, [0])), 1),
