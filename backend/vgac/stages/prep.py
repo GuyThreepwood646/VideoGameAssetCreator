@@ -893,8 +893,11 @@ def gutter_short(gap: int, pad: int) -> bool:
 
 def layout_gutter_short(glb: Path, tex: int) -> bool:
     """Whether the model's texture layout at `tex` has a gutter the texture_padding check would fail (measured the way
-    texture_pass measures it). A model without a readable layout is left alone."""
-    uv = imaging.load_uv_mesh(glb)
+    texture_pass measures it). A model whose layout cannot be read is left alone."""
+    try:
+        uv = imaging.load_uv_mesh(glb)
+    except Exception:  # not a readable GLB (trimesh raises several kinds of error): nothing to measure, nothing to move
+        return False
     if uv is None:
         return False
     pad = imaging.unwrap_padding(tex)

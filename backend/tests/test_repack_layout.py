@@ -70,3 +70,10 @@ def test_a_good_gutter_is_not_short(tmp_path):
     glb = tmp_path / "good.glb"
     _glb(glb, 12)
     assert not prep.layout_gutter_short(glb, TEX)
+
+
+def test_an_unreadable_model_is_left_alone(tmp_path):
+    bad = tmp_path / "stub.glb"
+    bad.write_bytes(b"not a glb at all, only a stand-in file")
+    assert prep.layout_gutter_short(bad, TEX) is False
+    assert prep.layout_gutter_short(tmp_path / "missing.glb", TEX) is False
