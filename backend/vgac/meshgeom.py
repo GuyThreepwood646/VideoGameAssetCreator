@@ -4,6 +4,10 @@ Blender (blender/mesh_health.py) joins the seam duplicates glTF makes at texture
 folded edges, sliver triangles and separate pieces, and draws the model grey with the texture off. This module reads that
 report, judges it per route (the families of plan section 5A) and makes the check (severity warn).
 
+Level share: the area share of faces within LEVEL_TOLERANCE degrees of straight up or flat (walls, level roofs, floors; round
+towers count). Melted or sheared buildings fall well below whole ones while keeping a good outline score and no folds; the
+limit sits under the lowest whole build measured. Buildings only: other routes have shapes that are not meant to be level.
+
 Why not the silhouette score: a model shattered into shards can still fill the drawn outline (the Nutra Pak building scored
 0.838). The folded-edge share is what separated it: folded edges are edges whose two faces face away from each other by
 more than 120 degrees, the look of torn paper.
@@ -39,22 +43,26 @@ ROUTE_WORDS = {"characters": "character", "creatures": "creature", "hard_objects
 # as whole, and the smallest share of the surface the biggest piece must have. None: the route may have it on purpose
 # (plants and open scenery have open edges and separate pieces by design, so only folds and slivers count there).
 LIMITS: dict[str, dict[str, float | None]] = {
-    "characters":   {"folded": 0.03, "open": 0.05, "bad_joins": 0.02, "slivers": 0.05, "largest_piece": 0.5},
-    "creatures":    {"folded": 0.05, "open": 0.05, "bad_joins": 0.02, "slivers": 0.05, "largest_piece": 0.5},
-    "hard_objects": {"folded": 0.03, "open": 0.05, "bad_joins": 0.02, "slivers": 0.05, "largest_piece": 0.5},
-    "buildings":    {"folded": 0.06, "open": 0.05, "bad_joins": 0.02, "slivers": 0.05, "largest_piece": 0.5},
-    "plants":       {"folded": 0.20, "open": None, "bad_joins": None, "slivers": 0.05, "largest_piece": None},
+    "characters":   {"folded": 0.03, "open": 0.05, "bad_joins": 0.02, "slivers": 0.05, "largest_piece": 0.5, "level": None},
+    "creatures":    {"folded": 0.05, "open": 0.05, "bad_joins": 0.02, "slivers": 0.05, "largest_piece": 0.5, "level": None},
+    "hard_objects": {"folded": 0.03, "open": 0.05, "bad_joins": 0.02, "slivers": 0.05, "largest_piece": 0.5, "level": None},
+    "buildings":    {"folded": 0.06, "open": 0.05, "bad_joins": 0.02, "slivers": 0.05, "largest_piece": 0.5, "level": 0.46},
+    "plants":       {"folded": 0.20, "open": None, "bad_joins": None, "slivers": 0.05, "largest_piece": None, "level": None},
 }
 
 # Routes whose shape gate rebuilds the model on a fail (D23), and how many extra builds at most (builds take about 4 minutes).
 REBUILD_ROUTES: frozenset[str] = frozenset({"buildings"})
 REBUILD_MAX = 2
 
+# Measures where more is better: the share must reach the limit, not stay under it.
+MIN_KEYS = ("largest_piece", "level")
+
 PROBLEM_WORDS = {
     "folded": "surface folded back on itself along {share} of its edges (up to {limit} is normal)",
     "open": "holes or torn seams along {share} of its edges (up to {limit} is normal)",
     "bad_joins": "places where three or more surfaces meet on one edge, along {share} of its edges (up to {limit} is normal)",
     "slivers": "very thin, stretched triangles, {share} of them (up to {limit} is normal)",
+    "level": "walls and roofs bent out of shape: only {share} of the surface is straight up or flat (at least {limit} is normal)",
     "largest_piece": "split into pieces: the biggest piece is only {share} of the surface, it should be at least {limit}",
 }
 
@@ -72,6 +80,7 @@ def shares(report: dict[str, Any]) -> dict[str, float]:
         "bad_joins": float(report.get("bad_join_edges") or 0) / edges,
         "slivers": float(report.get("sliver_share") or 0.0),
         "largest_piece": float(report.get("largest_piece_area") if report.get("largest_piece_area") is not None else 1.0),
+        "level": float(report.get("level_share") if report.get("level_share") is not None else 1.0),
     }
 
 
@@ -81,7 +90,7 @@ def problems(route: str, report: dict[str, Any]) -> list[str]:
     for key, limit in lim.items():
         if limit is None:
             continue
-        over = sh[key] < limit if key == "largest_piece" else sh[key] > limit
+        over = sh[key] < limit if key in MIN_KEYS else sh[key] > limit
         if over:
             out.append(PROBLEM_WORDS[key].format(share=f"{sh[key] * 100:.1f}%", limit=f"{limit * 100:.0f}%"))
     return out
@@ -93,7 +102,7 @@ def summary(category: str | None, report: dict[str, Any] | None) -> dict[str, An
         return None
     route = route_of(category)
     out = {**{k: report.get(k) for k in ("triangles", "edges", "open_edges", "bad_join_edges", "pieces", "largest_piece_area",
-                                         "sliver_share")},
+                                         "sliver_share", "level_share")},
            "folded_edge_share": (report.get("folded") or {}).get("120"), "route": route}
     if route:
         out["problems"] = problems(route, report)

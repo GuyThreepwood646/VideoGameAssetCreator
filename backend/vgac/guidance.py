@@ -570,12 +570,12 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     # automatic build stops on it (decision D23: never); on buildings the 3D step builds again first (meshgeom.REBUILD_ROUTES).
     "model_whole": {
         "severity": "warn",
-        "ok": "The 3D model is whole: no torn surface, folded edges or loose pieces beyond what a {route_words} normally has.",
-        "fail": lambda c: ("The 3D model looks damaged, like torn paper: {problem_list}. The app built it again {rebuilds} more "
+        "ok": "The 3D model is whole: no torn surface, folded edges, bent walls or loose pieces beyond what a {route_words} normally has.",
+        "fail": lambda c: ("The 3D model looks damaged, like torn paper or melted wax: {problem_list}. The app built it again {rebuilds} more "
                            "time(s) with new random draws and kept the least damaged, and it is still damaged. A picture with the texture on "
                            "can hide this, so look at the grey views under the model."
                            if (_var(c, "rebuilds") or 0) > 0 else
-                           "The 3D model looks damaged, like torn paper: {problem_list}. A picture with the texture on can hide this, so look at "
+                           "The 3D model looks damaged, like torn paper or melted wax: {problem_list}. A picture with the texture on can hide this, so look at "
                            "the grey views under the model."),
         # Scenery built with the rebuild off is the case seen: it comes out torn and the rebuild on made it whole. Every other
         # case gets the new-draw button from fixnotes.EXTRA_FIXES.
