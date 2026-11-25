@@ -18,6 +18,8 @@ public static partial class T
         RestartKeepingNeverTouchesAnIdThatIsNotBelowTheBackend();
         RestartKeepingWithRealProcesses();
         StartSwitchStopsAtWhatNeedsAPerson();
+        AppWindowThatCannotStartClosesWithoutAsking();
+        AppWindowRetriesOnlyAResourceInUseStart();
     }
 
     static void StartSwitchStopsAtWhatNeedsAPerson()
@@ -121,5 +123,65 @@ public static partial class T
             Check(!IsAlive(childPid), "stopping the app later stops the engine a restart had left");
         }
         finally { ProcessIdentity.Close(parent.Handle); }
+    }
+
+    // A window whose web view cannot start closes itself. That close must go through, not raise the quit question
+    // (the question would leave a blank window with a dialog nobody asked for).
+    static void AppWindowThatCannotStartClosesWithoutAsking()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "vgac-appwin-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        string blocked = Path.Combine(dir, "not-a-folder");
+        File.WriteAllText(blocked, "x");   // a file where the web view's data folder should be: starting fails
+        int asked = 0; bool closed = false; string problem = null;
+        var w = new AppWindow("http://127.0.0.1:1/", blocked, new SetupLog(dir));
+        w.CloseRequested = delegate { asked++; };
+        w.FormClosed += delegate { closed = true; problem = w.Problem; System.Windows.Forms.Application.ExitThread(); };
+        var timer = new System.Windows.Forms.Timer(); timer.Interval = 15000;
+        timer.Tick += delegate { System.Windows.Forms.Application.ExitThread(); };
+        timer.Start();
+        w.Show();
+        System.Windows.Forms.Application.Run();
+        timer.Dispose();
+        if (!closed) { w.Quitting = true; w.Close(); }
+        Check(problem != null, "the window recorded why it could not start");
+        Eq(asked, 0, "a window that could not start did not ask to quit");
+        Check(closed, "a window that could not start is closed");
+        try { Directory.Delete(dir, true); } catch (Exception) { }
+    }
+
+    // "Resource in use" gets one more try after a wait; a second failure closes the window without asking; other
+    // failures are not tried again.
+    static void AppWindowRetriesOnlyAResourceInUseStart()
+    {
+        Check(LauncherRules.WebViewStartRetry(unchecked((int)0x800700AA), 1), "resource in use: tried again");
+        Check(!LauncherRules.WebViewStartRetry(unchecked((int)0x800700AA), 2), "resource in use twice: not a third time");
+        Check(!LauncherRules.WebViewStartRetry(unchecked((int)0x80004005), 1), "another failure: not tried again");
+        foreach (bool busy in new[] { true, false })
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "vgac-appwin-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            int asked = 0, tries = 0; bool closed = false;
+            var w = new AppWindow("http://127.0.0.1:1/", Path.Combine(dir, "data"), new SetupLog(dir));
+            w.RetryDelayMs = 200;
+            w.StartProbe = delegate(int n)
+            {
+                tries = n;
+                throw new System.Runtime.InteropServices.COMException("probe", busy ? unchecked((int)0x800700AA) : unchecked((int)0x80004005));
+            };
+            w.CloseRequested = delegate { asked++; };
+            w.FormClosed += delegate { closed = true; System.Windows.Forms.Application.ExitThread(); };
+            var timer = new System.Windows.Forms.Timer(); timer.Interval = 15000;
+            timer.Tick += delegate { System.Windows.Forms.Application.ExitThread(); };
+            timer.Start();
+            w.Show();
+            System.Windows.Forms.Application.Run();
+            timer.Dispose();
+            if (!closed) { w.Quitting = true; w.Close(); }
+            Eq(tries, busy ? 2 : 1, busy ? "a busy start was tried a second time" : "another failure was tried once");
+            Eq(asked, 0, "a start that kept failing closed without asking to quit");
+            Check(closed, "a start that kept failing closed the window");
+            try { Directory.Delete(dir, true); } catch (Exception) { }
+        }
     }
 }
