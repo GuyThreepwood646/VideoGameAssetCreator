@@ -31,7 +31,7 @@ The Python install is about 1 GB and takes a few minutes. `npm ci` takes under a
 
 | What | Command (from the project folder) | Time |
 |---|---|---|
-| Backend, in parallel (quicker) | `cd backend` then `.venv\Scripts\python -m pytest -q -n 3 --dist loadfile tests` | about 2,950 test functions; same results as a serial run (pytest-xdist is pinned in `requirements.txt`) |
+| Backend, in parallel (quicker) | `cd backend` then `.venv\Scripts\python -m pytest -q -n 3 --dist loadfile tests` | about 2,990 test functions (`def test_` count under `backend/tests`); same results as a serial run (pytest-xdist is pinned in `requirements.txt`) |
 | Backend, serial | `cd backend` then `.venv\Scripts\python -m pytest -q tests` | the same tests, one after another |
 | Backend, one file | `.venv\Scripts\python -m pytest -q tests\test_minimums.py` | seconds |
 | Frontend: type check and build | `cd frontend` then `npm run build` | under 10 seconds (it runs the type check first, then builds) |
