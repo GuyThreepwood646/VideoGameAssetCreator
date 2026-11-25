@@ -343,3 +343,11 @@ where a row is still in the old label form.
   spring bones: a sway part with a location gets a chain at its region even where the search found none, and
   `metrics.springs.declared` says what happened to each point (`found`, `added` or `not_added`, with the reason).
   Writing the placed parts does not re-run a finished rig.
+
+## Additions (2026-11-24, node pack update)
+
+- GET /api/comfy/install (the install offer) gains `packs_outdated`: the names of VGAC's own node packs whose copy in VGAC's ComfyUI is an older version (`vgac-nodes (this project)` when vgac-nodes is outdated), `[]` when every pack is current or the ComfyUI is not installed. A copy is outdated when its folder has no `.vgac-pack.json` manifest or the manifest names another version (backend/vgac/pack_update.py). The ComfyUI card shows "Update the node pack" for a non-empty list.
+- POST /api/comfy/install/update-packs (body `{}`) -> `{warnings, packs_outdated}`. Runs the packs step of VGAC's own install again: an outdated pack is backed up under `<install>/backups/packs/<folder>-<time>`, its files are written over the old ones, and only the files the old manifest named that the pack no longer has are removed; the person's other files stay. A copy with no manifest keeps every file it holds. `warnings` carries the restart line ("vgac-nodes was updated. Restart ComfyUI so it loads the new nodes."). 400 while an install is running ("busy"), or when the install is not VGAC's own (`not_ours`).
+- POST /api/comfy/packs/report (a linked ComfyUI, backend/vgac/comfy_find.py) -> each pack item gains `outdated` (boolean): true for a present VGAC pack whose copy is an older version. The ComfyUI panel shows it as "out of date, will be updated" and offers Go ahead for it.
+- POST /api/comfy/packs/apply (a linked ComfyUI) replaces an outdated copy with the same backup rule, backing up under `local/pack-backups/`, and lists it in `added` as "<name> (updated: restart ComfyUI)".
+- GET /api/setup gains one item per ComfyUI the app uses that has an outdated vgac-nodes: id `node_pack.<n>`, group tools, state `warn`, label "Node pack out of date", needed_for `mesh` and `rig`. The checked ComfyUIs are VGAC's own install and each instance's linked engine (preflight.py `comfy_apps`). A current copy gives state `ok`; a ComfyUI with no vgac-nodes gives no item.
