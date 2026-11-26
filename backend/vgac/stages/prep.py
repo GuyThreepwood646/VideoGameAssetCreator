@@ -635,13 +635,24 @@ async def colour_faces(sc: StageContext, glb: Path, maps: dict[str, Path], rec: 
             # the finder's region together with the front of the head: the finder alone missed the eyes (looktex)
             found = looktex.front_of_head(mesh, base, head_yaw, whole_front=True)
             keep, how = found["tris"], found["how"]
+        sign_rec = None
+        if sc.category.get("emission_map"):
+            # scenery: the triangles under a lettered sign stay as painted (vgac/signkeep.py)
+            from .. import signkeep
+
+            try:
+                sign_tris, sign_rec = signkeep.sign_faces(sc.settings, glb, base, sc.dir / "signs")
+            except Exception as e:  # noqa: BLE001  (never fails the step: the clean-up then runs as it always did)
+                sign_tris, sign_rec = None, {"kept": 0, "reason": f"failed: {str(e)[:160]}"}
+            if sign_tris is not None:
+                keep = sign_tris if keep is None else np.union1d(np.asarray(keep, dtype=np.int64), sign_tris)
         r = looktex.colour_per_face(base, mesh, keep)
         out_dir = sc.dir / "faces"
         out_dir.mkdir(parents=True, exist_ok=True)
         path = face.save_rgb(r["base_color"], out_dir / "base_color.png")
         imaging.glb_replace_images(glb, base_color=path)
         return path, {"ran": True, "faces": r["faces"], "kept_texels": r["kept"], "detail_faces": r["detailed_faces"],
-                        "face_kept_by": how}
+                        "face_kept_by": how, **({"sign_keep": sign_rec} if sign_rec is not None else {})}
 
     path, record = await asyncio.to_thread(work)
     sc.register("base_color", path)
