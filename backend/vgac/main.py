@@ -256,6 +256,8 @@ class PaintIn(BaseModel):
     shine_mask_png: str | None = Field(default=None, min_length=1, max_length=paintsave.MAX_PICTURE_B64)
     metal_png: str | None = Field(default=None, min_length=1, max_length=paintsave.MAX_PICTURE_B64)
     metal_mask_png: str | None = Field(default=None, min_length=1, max_length=paintsave.MAX_PICTURE_B64)
+    glow_png: str | None = Field(default=None, min_length=1, max_length=paintsave.MAX_PICTURE_B64)
+    glow_mask_png: str | None = Field(default=None, min_length=1, max_length=paintsave.MAX_PICTURE_B64)
     strokes: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -1025,7 +1027,8 @@ def paint_version(vid: str, body: PaintIn, db: Session = Depends(get_session)) -
         raise HTTPException(400, "a material has no 3D model to paint on")
     try:
         inputs = paintsave.decode_inputs(body.picture_png, body.mask_png, body.strokes, shine_b64=body.shine_png,
-                                         shine_mask_b64=body.shine_mask_png, metal_b64=body.metal_png, metal_mask_b64=body.metal_mask_png)
+                                         shine_mask_b64=body.shine_mask_png, metal_b64=body.metal_png, metal_mask_b64=body.metal_mask_png,
+                                         glow_b64=body.glow_png, glow_mask_b64=body.glow_mask_png)
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
     inherited = {k: val for k, val in reference.inherited_params(parent.stage, parent.params).items() if k != "fix_for"}

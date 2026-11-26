@@ -5,7 +5,7 @@ import * as THREE from 'three'
 import { MeshBVH } from 'three-mesh-bvh'
 import { fillRegion, paintDab, smudgeDab, type Brush, type Dab, type DabTarget } from '../src/paint/paintDab'
 import { PaintLayer, type StrokeRecord } from '../src/paint/paintLayer'
-import { DEFAULT_PAINT, modelSaveable, PaintSession, paintableMaps, targetRgb } from '../src/paint/paintSession'
+import { DEFAULT_PAINT, glowByte, modelSaveable, PaintSession, paintableMaps, targetRgb } from '../src/paint/paintSession'
 import { SurfacePicker, type ViewerModel } from '../src/viewerTool'
 
 const SIZE = 64
@@ -170,7 +170,7 @@ test('shine and metal paint their own channel of the metallic-roughness picture,
   mat.metalnessMap = mr
   m.updateMatrixWorld(true)
   const model = { meshes: [m], renderer: {} as THREE.WebGLRenderer, picker: new SurfacePicker([m]), texturedMaterial: (mesh: THREE.Mesh) => mesh.material } as unknown as ViewerModel
-  assert.deepEqual(paintableMaps(model), { shine: true, metal: true })
+  assert.deepEqual(paintableMaps(model), { shine: true, metal: true, glow: true })
   const session = new PaintSession(model)
   const hooks = { picked: () => {}, changed: () => {}, renderer: () => undefined, notice: () => {} }
   const tool = session.tool(() => ({ ...DEFAULT_PAINT, target: 'shine', shine: 1, radius: 0.2, hardness: 1, strength: 1 }), hooks)
@@ -284,4 +284,41 @@ test('modelSaveable says before painting whether a save can work, and matches wh
   const split = modelOf([square(), two].map((m, i) => (i === 0 ? ((m.material as THREE.MeshStandardMaterial).map = pic(), m) : m)))
   assert.equal(modelSaveable(split), false)
   assert.equal(new PaintSession(split).saveableMaps() === null, true)
+})
+
+// Glow (PL-118): an empty picture beside the colour, a brush that lays down a strength, and an eraser that lays down
+// strength 0 so the save can tell it from texels never touched.
+test('glow: the brush lays down its strength, the eraser a zero strength, and untouched stays empty', () => {
+  const m = square()
+  const colour = new THREE.DataTexture(new Uint8Array(SIZE * SIZE * 4).fill(255), SIZE, SIZE)
+  colour.flipY = false
+  colour.needsUpdate = true
+  ;(m.material as THREE.MeshStandardMaterial).map = colour
+  m.updateMatrixWorld(true)
+  const model = { meshes: [m], renderer: {} as THREE.WebGLRenderer, picker: new SurfacePicker([m]), texturedMaterial: (mesh: THREE.Mesh) => mesh.material } as unknown as ViewerModel
+  assert.deepEqual(paintableMaps(model), { shine: false, metal: false, glow: true })
+  const session = new PaintSession(model)
+  const hooks = { picked: () => {}, changed: () => {}, renderer: () => undefined, notice: () => {} }
+  const hit = model.picker.pick(new THREE.Ray(new THREE.Vector3(0, 0, 5), new THREE.Vector3(0, 0, -1)))
+  assert.ok(hit)
+  const base = { ...DEFAULT_PAINT, target: 'glow' as const, radius: 0.1, hardness: 1, strength: 1 }
+  assert.equal(glowByte(0), 1)
+  assert.equal(glowByte(1), 255)
+  assert.deepEqual(targetRgb({ ...base, glow: 0.5 }), [glowByte(0.5), glowByte(0.5), glowByte(0.5)])
+  assert.deepEqual(targetRgb({ ...base, mode: 'erase', glow: 0.5 }), [1, 1, 1])
+  const lay = (settings: typeof base) => {
+    const tool = session.tool(() => settings, hooks)
+    tool.down?.(hit, {} as PointerEvent)
+    tool.up?.(hit, {} as PointerEvent)
+  }
+  lay({ ...base, glow: 0.5 })
+  const glow = session.saveableMaps()!.glow!
+  assert.deepEqual(px(glow, 32, 32), [glowByte(0.5), glowByte(0.5), glowByte(0.5)])
+  assert.deepEqual(px(glow, 2, 2), [0, 0, 0], 'untouched texels stay at 0')
+  assert.deepEqual(px(session.saveableMaps()!.colour, 32, 32), [255, 255, 255], 'the colour is not painted')
+  lay({ ...base, mode: 'erase' })
+  assert.deepEqual(px(glow, 32, 32), [1, 1, 1], 'the eraser is a touched texel of strength 0, not the original')
+  assert.equal(glow.changedMask()[32 * SIZE + 32], 1)
+  session.undo()
+  assert.deepEqual(px(glow, 32, 32), [glowByte(0.5), glowByte(0.5), glowByte(0.5)])
 })

@@ -1,4 +1,4 @@
-// Touch up (WP-22, saving WP-23): paint on the model's colour picture in step 4. Save makes a new clean-up version with
+// Touch up (WP-22, saving WP-23): paint on the model's colour, shine, metal and glow pictures in step 4. Save makes a new clean-up version with
 // the paint; until then the paint stays in this page.
 import { useState } from 'react'
 import { api } from '../../api'
@@ -34,7 +34,7 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
     <div className="touch-up" data-testid="touch-up">
       <div className="field-label">Touch up</div>
       <div className="small muted">
-        Paint on the colour picture of the model. Save as a new version to keep it: the new version carries the paint on to the rig and the export. Until you save, the paint stays in this page and is lost when you leave it.
+        Paint on the colour picture of the model, and on its shine, metal and glow when it has them. Save as a new version to keep it: the new version carries the paint on to the rig and the export. Until you save, the paint stays in this page and is lost when you leave it.
       </div>
       {paint.warnings.map((w) => (
         <div key={w.text} className={w.blocks ? 'warn-text' : 'small'}>
@@ -64,7 +64,7 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
             {!painting && !paint.modelSaveable && <span className="small muted">Painting is not available on models with separately textured parts yet, because the paint could not be saved.</span>}
             {painting && <span className="small muted">Click or drag on the model. Right-drag turns it. Press Escape to stop.</span>}
           </div>
-          {(paint.maps.shine || paint.maps.metal) && (
+          {(paint.maps.shine || paint.maps.metal || paint.maps.glow) && (
             <div className="touch-up-row">
               <span className="segmented" role="radiogroup" aria-label="What to paint">
                 <button type="button" role="radio" aria-checked={s.target === 'colour'} className={'seg' + (s.target === 'colour' ? ' seg-on' : '')} onClick={() => paint.setSettings({ target: 'colour' })}>
@@ -78,6 +78,11 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
                 {paint.maps.metal && (
                   <button type="button" role="radio" aria-checked={s.target === 'metal'} className={'seg' + (s.target === 'metal' ? ' seg-on' : '')} onClick={() => paint.setSettings({ target: 'metal' })}>
                     Metal <span className="tech-term">metallic</span>
+                  </button>
+                )}
+                {paint.maps.glow && (
+                  <button type="button" role="radio" aria-checked={s.target === 'glow'} className={'seg' + (s.target === 'glow' ? ' seg-on' : '')} onClick={() => paint.setSettings({ target: 'glow', ...(s.mode === 'smudge' || s.mode === 'pick' ? { mode: 'paint' as const } : {}) })} title="Glow makes a surface light up on its own, in its own colour">
+                    Glow <span className="tech-term">emission</span>
                   </button>
                 )}
               </span>
@@ -95,11 +100,18 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
                 </label>
               )}
               {s.target === 'metal' && <span className="small muted">0 is not metal, 100 is metal.</span>}
+              {s.target === 'glow' && (
+                <label className="small">
+                  Glow {Math.round(s.glow * 100)}%{' '}
+                  <input type="range" min={0} max={100} value={Math.round(s.glow * 100)} onChange={(e) => paint.setSettings({ glow: Number(e.target.value) / 100 })} aria-label="Glow: off to full" />
+                </label>
+              )}
+              {s.target === 'glow' && <span className="small muted">The brush makes the colour under it light up by this much. The Eraser turns glow off, also where the model had it. A colour you paint over glow keeps glowing, in the new colour.</span>}
             </div>
           )}
           <div className="touch-up-row">
             <span className="segmented" role="radiogroup" aria-label="What the brush does">
-              {MODES.map((m) => (
+              {MODES.filter((m) => s.target !== 'glow' || (m.id !== 'smudge' && m.id !== 'pick')).map((m) => (
                 <button key={m.id} type="button" role="radio" aria-checked={s.mode === m.id} className={'seg' + (s.mode === m.id ? ' seg-on' : '')} onClick={() => paint.setSettings({ mode: m.id })}>
                   {m.label}
                 </button>
@@ -112,7 +124,7 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
               </label>
             )}
           </div>
-          <div className="small muted">{MODES.find((m) => m.id === s.mode)?.hint}</div>
+          <div className="small muted">{s.target === 'glow' && s.mode === 'erase' ? 'Turns glow off under the brush.' : MODES.find((m) => m.id === s.mode)?.hint}</div>
           <div className="touch-up-row">
             {s.mode !== 'fill' && (
               <>

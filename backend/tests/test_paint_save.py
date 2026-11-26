@@ -229,6 +229,9 @@ class _Sc:
     def set_params(self, **values):
         self.version.params.update(values)
 
+    def save(self):
+        pass
+
 
 @pytest.fixture
 def version_files(monkeypatch):
@@ -910,3 +913,120 @@ def test_retexture_with_colour_only_paint_rigs_as_before(version_files, tmp_path
     mr = _mr_of(Path(new_rig.files["glb"]))
     assert (mr[..., 1] == 200).all() and (mr[..., 2] == 0).all(), "the donor's maps are kept"
     assert new_rig.metrics.get("retextured_maps") is None
+
+
+# --- glow painted by hand, and glow under a colour repaint -----------------------------------------------------
+
+
+def _glow_picture(strength: float, edit: np.ndarray) -> np.ndarray:
+    """What the panel sends: 0 where untouched, 1 + 254 x strength where the Glow brush went."""
+    out = np.zeros((SIZE, SIZE, 4), np.uint8)
+    out[..., 3] = 255
+    out[edit, :3] = 1 + int(round(strength * 254))
+    return out
+
+
+def test_glow_strength_reads_the_brush_value_and_the_eraser():
+    px = np.zeros((2, 2, 4), np.uint8)
+    px[0, 0, 0], px[0, 1, 0], px[1, 0, 0] = 1, 255, 128
+    s = paintsave.glow_strength_of(px)
+    assert s[0, 0] == 0.0 and s[0, 1] == 1.0 and abs(s[1, 0] - 127 / 254) < 1e-6 and s[1, 1] == 0.0
+
+
+def test_carry_glow_retints_a_colour_repaint_at_the_same_strength():
+    old = np.zeros((8, 8, 4), np.uint8)
+    old[..., :3] = (200, 100, 50)
+    old[..., 3] = 255
+    em = np.zeros((8, 8, 3), np.uint8)
+    em[:4] = (100, 50, 25)  # half strength over the old colour
+    new = old.copy()
+    new[:2] = (40, 80, 200, 255)  # the top rows are repainted, one of them glowing
+    new[6:] = (40, 80, 200, 255)  # repainted where there was no glow
+    out = paintsave.carry_glow(em, old, new)
+    assert (out[:2] == (20, 40, 100)).all(), "keeps half strength, in the new colour"
+    assert (out[2:4] == (100, 50, 25)).all(), "an unchanged texel keeps its glow"
+    assert out[4:].max() == 0, "no glow appears where there was none"
+
+
+def test_carry_glow_brush_lights_the_colour_and_the_eraser_clears_glow():
+    base = np.zeros((16, 16, 4), np.uint8)
+    base[..., :3] = (200, 100, 50)
+    base[..., 3] = 255
+    island = np.ones((16, 16), bool)
+    edit = np.zeros((16, 16), bool)
+    edit[6:8] = True
+    lit = paintsave.carry_glow(None, base, base, np.full((16, 16), 0.5, np.float32), edit, island, 0)
+    inner = slice(4, 12)  # the island's own border takes the nearest painted colour (merge_picture), so look inside it
+    assert (lit[6:8, inner] == (100, 50, 25)).all() and lit[:6, inner].max() == 0 and lit[8:, inner].max() == 0
+    em = np.full((16, 16, 3), 90, np.uint8)
+    erase = np.zeros((16, 16), bool)
+    erase[6:10] = True
+    out = paintsave.carry_glow(em, base, base, np.zeros((16, 16), np.float32), erase, island, 0)
+    assert out[6:10, inner].max() == 0 and (out[:4, inner] == 90).all() and (out[12:, inner] == 90).all()
+    assert paintsave.carry_glow(np.zeros((4, 16, 3), np.uint8), base[:4], base[:4]) is None
+
+
+def _glow_parent(tmp_path, base, em):
+    parent = _parent_on_disk(tmp_path, base)
+    if em is not None:
+        Image.fromarray(em, "RGB").save(parent.folder / "emission.png")
+        parent.files["emission"] = str(parent.folder / "emission.png")
+    return parent
+
+
+def _run_paint(tmp_path, parent, **kw):
+    child = _version("child")
+    child.folder = tmp_path / "child"
+    sc = _Sc(tmp_path / "child", parent, child)
+    inputs = paintsave.decode_inputs(kw.get("picture"), kw.get("mask"), [{"mode": "paint", "target": kw.get("target", "glow")}],
+                                     glow_b64=kw.get("glow"), glow_mask_b64=kw.get("glow_mask"))
+    paintsave.write_inputs(sc.dir, inputs)
+    asyncio.run(paintsave.paint(sc, {}))
+    return child
+
+
+def test_paint_job_glow_on_a_parent_without_a_glow_map(version_files, tmp_path):
+    base = _picture()
+    parent = _glow_parent(tmp_path, base, None)
+    island = _island(tmp_path)
+    edit = np.zeros((SIZE, SIZE), bool)
+    rows, cols = np.where(island)
+    edit[rows[:10], cols[:10]] = True
+    child = _run_paint(tmp_path, parent, glow=_png_b64(Image.fromarray(_glow_picture(1.0, edit))),
+                       glow_mask=_png_b64(Image.fromarray((edit * 255).astype(np.uint8), "L")))
+    em = np.array(Image.open(child.files["emission"]).convert("RGB"))
+    assert (em[edit] == base[edit][:, :3]).all(), "full strength glows in the picture's own colour"
+    assert em[_kept(island, edit)].max() == 0
+    assert child.metrics["paint_glow_texels"] == int(edit.sum()) and child.metrics["paint_texels"] == 0
+    assert "emission" not in parent.files
+
+
+def test_paint_job_glow_eraser_removes_the_whole_map_when_nothing_glows(version_files, tmp_path):
+    base = _picture()
+    island = _island(tmp_path)
+    em = np.zeros((SIZE, SIZE, 3), np.uint8)
+    rows, cols = np.where(island)
+    em[rows[:10], cols[:10]] = 120
+    parent = _glow_parent(tmp_path, base, em)
+    erase = np.zeros((SIZE, SIZE), bool)
+    erase[rows[:10], cols[:10]] = True
+    child = _run_paint(tmp_path, parent, glow=_png_b64(Image.fromarray(_glow_picture(0.0, erase))),
+                       glow_mask=_png_b64(Image.fromarray((erase * 255).astype(np.uint8), "L")))
+    assert "emission" not in child.files and not (tmp_path / "child" / "emission.png").exists()
+
+
+def test_paint_job_colour_repaint_keeps_the_glow_in_the_new_colour(version_files, tmp_path):
+    base = _picture()
+    island = _island(tmp_path)
+    rows, cols = np.where(island)
+    edit = np.zeros((SIZE, SIZE), bool)
+    edit[rows[:10], cols[:10]] = True
+    em = np.zeros((SIZE, SIZE, 3), np.uint8)
+    em[edit] = (base[edit][:, :3] // 2)  # glowing at half strength
+    parent = _glow_parent(tmp_path, base, em)
+    painted = base.copy()
+    painted[edit] = [200, 40, 40, 255]
+    child = _run_paint(tmp_path, parent, target="colour", picture=_png_b64(Image.fromarray(painted)),
+                       mask=_png_b64(Image.fromarray((edit * 255).astype(np.uint8), "L")))
+    got = np.array(Image.open(child.files["emission"]).convert("RGB"))
+    assert np.abs(got[edit].astype(int) - np.array([100, 20, 20])).max() <= 1

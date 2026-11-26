@@ -43,6 +43,9 @@ PAINT_SHINE_INPUT = "paint_shine_input.png"
 PAINT_SHINE_MASK_INPUT = "paint_shine_mask_input.png"
 PAINT_METAL_INPUT = "paint_metal_input.png"
 PAINT_METAL_MASK_INPUT = "paint_metal_mask_input.png"
+# The glow picture (strength painted by hand) and its edit mask, held the same way.
+PAINT_GLOW_INPUT = "paint_glow_input.png"
+PAINT_GLOW_MASK_INPUT = "paint_glow_mask_input.png"
 # Metrics of one run that a painted version does not carry over from its parent.
 _RUN_METRICS = ("checks", "checks_passed", "checks_failed", "gate_ok", "elapsed_seconds", "refit_of")
 
@@ -103,16 +106,18 @@ def _decode_png(text: str, what: str, limit: int) -> bytes:
 
 def decode_inputs(picture_b64: str | None, mask_b64: str | None, strokes: list[dict[str, Any]], *,
                   shine_b64: str | None = None, shine_mask_b64: str | None = None,
-                  metal_b64: str | None = None, metal_mask_b64: str | None = None) -> dict[str, bytes]:
+                  metal_b64: str | None = None, metal_mask_b64: str | None = None,
+                  glow_b64: str | None = None, glow_mask_b64: str | None = None) -> dict[str, bytes]:
     """Validate what the panel sent. Returns the bytes that are present: "picture" and "mask" (the colour picture and
-    its edit mask), "shine" and "shine_mask", "metal" and "metal_mask", and "strokes" (the stroke log as JSON). Each
+    its edit mask), "shine" and "shine_mask", "metal" and "metal_mask", "glow" and "glow_mask", and "strokes" (the stroke log as JSON). Each
     picture comes with its mask, and at least one picture must be sent."""
     if not isinstance(strokes, list) or len(strokes) > MAX_STROKES:
         raise ValueError("the stroke log is missing or too long")
     out: dict[str, bytes] = {"strokes": json.dumps(strokes, indent=1).encode("utf-8")}
     pairs = {"colour": (picture_b64, mask_b64, "picture", "mask"),
              "shine": (shine_b64, shine_mask_b64, "shine", "shine_mask"),
-             "metal": (metal_b64, metal_mask_b64, "metal", "metal_mask")}
+             "metal": (metal_b64, metal_mask_b64, "metal", "metal_mask"),
+             "glow": (glow_b64, glow_mask_b64, "glow", "glow_mask")}
     for label, (pic_text, mask_text, pic_key, mask_key) in pairs.items():
         if pic_text is None and mask_text is None:
             continue
@@ -120,7 +125,7 @@ def decode_inputs(picture_b64: str | None, mask_b64: str | None, strokes: list[d
             raise ValueError("a painted picture needs its edit mask too")
         out[pic_key] = _decode_png(pic_text, f"the {label} picture", MAX_PICTURE_B64)
         out[mask_key] = _decode_png(mask_text, f"the {label} edit mask", MAX_PICTURE_B64)
-    if not any(k in out for k in ("picture", "shine", "metal")):
+    if not any(k in out for k in ("picture", "shine", "metal", "glow")):
         raise ValueError("nothing was sent to paint")
     return out
 
@@ -129,7 +134,8 @@ def write_inputs(folder: Path, inputs: dict[str, bytes]) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     names = {"picture": PAINT_INPUT, "mask": PAINT_MASK_INPUT, "strokes": PAINT_STROKES_INPUT,
              "shine": PAINT_SHINE_INPUT, "shine_mask": PAINT_SHINE_MASK_INPUT,
-             "metal": PAINT_METAL_INPUT, "metal_mask": PAINT_METAL_MASK_INPUT}
+             "metal": PAINT_METAL_INPUT, "metal_mask": PAINT_METAL_MASK_INPUT,
+             "glow": PAINT_GLOW_INPUT, "glow_mask": PAINT_GLOW_MASK_INPUT}
     for key, data in inputs.items():
         (folder / names[key]).write_bytes(data)
 
@@ -207,6 +213,41 @@ def merge_picture(parent_px: np.ndarray, painted_px: np.ndarray, edit: np.ndarra
                  "rim_texels": int(rim.sum()), "hole_texels": int(holes.sum())}
 
 
+GLOW_FLOOR = 0.02  # a picture colour this dark (peak channel, 0..1) has no glow strength to read from it
+
+
+def glow_strength_of(painted_px: np.ndarray) -> np.ndarray:
+    """The strength (0..1, float32) the Glow brush laid down. The glow picture holds 0 where untouched and 1 + 254 x
+    strength where the brush went, so an erased texel (strength 0) is told from one never touched by the edit mask alone."""
+    return np.clip((painted_px[..., 0].astype(np.float32) - 1.0) / 254.0, 0.0, 1.0)
+
+
+def carry_glow(parent_em: np.ndarray | None, parent_base: np.ndarray, new_base: np.ndarray, strength: np.ndarray | None = None,
+               edit: np.ndarray | None = None, island: np.ndarray | None = None, pad_px: int = 0) -> np.ndarray | None:
+    """The glow picture (H, W, 3 uint8) of a painted version, or None when nothing glows.
+
+    The parent's glow (`parent_em`, None when it has none) keeps its strength where a colour repaint changed the picture
+    (`new_base` against `parent_base`): the strength is the glow over the old colour, and the glow takes the new colour
+    at that strength. Where the Glow brush went (`edit`, with `strength` 0..1 at those texels) the glow is the new
+    colour at the painted strength, so strength 0 is the eraser. Glow is cleared only that way."""
+    h, w = new_base.shape[:2]
+    old = parent_base[..., :3].astype(np.float32) / 255.0
+    new = new_base[..., :3].astype(np.float32) / 255.0
+    em = np.zeros((h, w, 3), np.float32) if parent_em is None else parent_em.astype(np.float32) / 255.0
+    peak_old = old.max(axis=-1)
+    lit = em.max(axis=-1) > 0
+    readable = lit & (peak_old >= GLOW_FLOOR)
+    changed = (new_base[..., :3] != parent_base[..., :3]).any(axis=-1) & readable
+    if changed.any():
+        gain = np.clip(em.max(axis=-1) / np.maximum(peak_old, GLOW_FLOOR), 0.0, 1.0)
+        em[changed] = new[changed] * gain[changed][:, None]
+    em8 = np.clip(np.rint(em * 255.0), 0, 255).astype(np.uint8)
+    if edit is not None and strength is not None and edit.any():
+        painted = np.clip(np.rint(new * strength[..., None] * 255.0), 0, 255).astype(np.uint8)
+        em8, _ = merge_picture(em8, painted, edit, island if island is not None else np.ones((h, w), bool), pad_px)
+    return em8 if em8.any() else None
+
+
 def _copy_parent_files(sc: Any, parent: Version) -> None:
     """Copy the parent version's files into this version at the same relative paths, so the parent can be removed
     later without breaking this one (the same rule as the rig re-fits)."""
@@ -260,13 +301,15 @@ async def paint(sc: Any, params: dict[str, Any]) -> None:
         raise ValueError("the clean-up has no model or picture to paint on")
     names = {"picture": PAINT_INPUT, "mask": PAINT_MASK_INPUT, "strokes": PAINT_STROKES_INPUT,
              "shine": PAINT_SHINE_INPUT, "shine_mask": PAINT_SHINE_MASK_INPUT,
-             "metal": PAINT_METAL_INPUT, "metal_mask": PAINT_METAL_MASK_INPUT}
+             "metal": PAINT_METAL_INPUT, "metal_mask": PAINT_METAL_MASK_INPUT,
+             "glow": PAINT_GLOW_INPUT, "glow_mask": PAINT_GLOW_MASK_INPUT}
     inputs = {key: sc.dir / name for key, name in names.items()}
     has_colour = inputs["picture"].is_file()
+    has_glow = inputs["glow"].is_file()
     maps = [k for k in ("shine", "metal") if inputs[k].is_file()]
-    if not inputs["strokes"].is_file() or not (has_colour or maps):
+    if not inputs["strokes"].is_file() or not (has_colour or maps or has_glow):
         raise ValueError("the painted picture was not received")
-    needed = (["picture", "mask"] if has_colour else []) + [x for k in maps for x in (k, f"{k}_mask")]
+    needed = (["picture", "mask"] if has_colour else []) + [x for k in maps for x in (k, f"{k}_mask")] + (["glow", "glow_mask"] if has_glow else [])
     if any(not inputs[k].is_file() for k in needed):
         raise ValueError("the painted picture was not received")
 
@@ -290,6 +333,13 @@ async def paint(sc: Any, params: dict[str, Any]) -> None:
             raise ValueError(f"the painted {key} picture is {painted_map.size[0]} by {painted_map.size[1]}, the picture is {size} by {size}")
         painted_px[key] = np.asarray(painted_map)
         edits[key] = _edit_of(inputs[f"{key}_mask"], painted_map.size)
+    glow_strength = None
+    if has_glow:
+        painted_glow = Image.open(inputs["glow"]).convert("RGBA")
+        if painted_glow.size != (size, size):
+            raise ValueError(f"the painted glow picture is {painted_glow.size[0]} by {painted_glow.size[1]}, the picture is {size} by {size}")
+        glow_strength = glow_strength_of(np.asarray(painted_glow))
+        edits["glow"] = _edit_of(inputs["glow_mask"], painted_glow.size)
     if not any(e.any() for e in edits.values()):
         raise ValueError("nothing was painted")
 
@@ -298,12 +348,24 @@ async def paint(sc: Any, params: dict[str, Any]) -> None:
     def work() -> dict[str, Any]:
         island = _picture_layout(parent_glb, size)
         out: dict[str, Any] = {"counts": {}}
+        new_colour = base_arr
         if has_colour:
             merged, counts = merge_picture(base_arr, painted_px["colour"], edits["colour"], island, _pad_px(size))
             mode = "RGBA" if base_mode == "RGBA" else "RGB"
             new_base = sc.dir / "base_color.png"
             Image.fromarray(merged if mode == "RGBA" else merged[..., :3], mode).save(new_base)
             out.update(base=new_base, counts=counts)
+            new_colour = merged
+        parent_em_file = library.version_file(parent, "emission", sc.settings)
+        parent_em = None
+        if parent_em_file is not None:
+            with Image.open(parent_em_file) as em_img:
+                em_img = em_img.convert("RGB")
+                if em_img.size != (size, size):
+                    em_img = em_img.resize((size, size), Image.BILINEAR)
+                parent_em = np.asarray(em_img)
+        if has_colour or has_glow:
+            out["emission"] = carry_glow(parent_em, base_arr, new_colour, glow_strength, edits.get("glow"), island, _pad_px(size))
         for key, file_name in (("shine", "roughness"), ("metal", "metallic")):
             if key not in maps:
                 continue
@@ -320,7 +382,8 @@ async def paint(sc: Any, params: dict[str, Any]) -> None:
             out[f"{key}_counts"] = counts
         new_glb = sc.dir / Path(parent_glb).name
         shutil.copyfile(parent_glb, new_glb)
-        if not imaging.glb_replace_images(new_glb, base_color=out.get("base"), roughness=out.get("shine"), metallic=out.get("metal")):
+        swapped = any(out.get(k) for k in ("base", "shine", "metal"))  # a glow-only save leaves the model's pictures alone
+        if swapped and not imaging.glb_replace_images(new_glb, base_color=out.get("base"), roughness=out.get("shine"), metallic=out.get("metal")):
             raise ValueError("the new picture could not be written into the model")
         out["glb"] = new_glb
         return out
@@ -333,10 +396,17 @@ async def paint(sc: Any, params: dict[str, Any]) -> None:
         sc.register("base_color", done["base"])
         sc.register("paint_mask", mask_out)
     sc.register("glb", done["glb"])
-    em = glow.carry(library.version_file(parent, "emission", sc.settings), sc.dir / "emission.png",
-                    edits["colour"] > 0.5 if has_colour else None)  # the glow stays, except where the person painted
-    if em is not None:
-        sc.register("emission", em)
+    if has_colour or has_glow:  # the glow keeps its strength under a colour repaint; the Glow brush and eraser change it
+        em_out = sc.dir / "emission.png"
+        if done["emission"] is not None:
+            Image.fromarray(done["emission"], "RGB").save(em_out)
+            sc.register("emission", em_out)
+        elif parent.files.get("emission"):
+            em_out.unlink(missing_ok=True)
+            files = sc.version.files
+            files.pop("emission", None)
+            sc.version.files = files
+            sc.save()
     for key, file_name in (("shine", "roughness"), ("metal", "metallic")):
         if key not in maps:
             continue
@@ -354,7 +424,8 @@ async def paint(sc: Any, params: dict[str, Any]) -> None:
                    paint_island_texels=counts.get("painted_on_island", 0),
                    paint_padding_texels=counts.get("padding_texels", 0),
                    paint_shine_texels=int(edits["shine"].sum()) if "shine" in edits else None,
-                   paint_metal_texels=int(edits["metal"].sum()) if "metal" in edits else None)
+                   paint_metal_texels=int(edits["metal"].sum()) if "metal" in edits else None,
+                   paint_glow_texels=int(edits["glow"].sum()) if "glow" in edits else None)
     for p in inputs.values():
         p.unlink(missing_ok=True)
     sc.set_params(paint_of=parent.id)

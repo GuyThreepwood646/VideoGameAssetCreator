@@ -1,9 +1,10 @@
 // Painting on the 3D preview (WP-22): the session that owns the picture layers of one loaded model, and the viewer tool
 // that turns pointer spots into brush dabs. Painting is for this page only until a save (WP-23).
 //
-// Three kinds of picture can be painted (WP-32): the colour picture, the shine picture (roughness, stored as roughness:
-// shine is 1 minus it) and the metal picture. The shine and metal pictures are the two channels of the model's
-// metallic-roughness picture, each read as a grey picture of its own.
+// Four kinds of picture can be painted: the colour picture, the shine picture (roughness, stored as roughness: shine is 1
+// minus it), the metal picture (shine and metal are the two channels of the model's metallic-roughness picture, each read
+// as a grey picture of its own) and the glow picture, a grey picture that starts empty and holds the glow strength laid
+// down by hand (see glowByte); the save lights the colour under it by that strength.
 import * as THREE from 'three'
 import type { SurfaceHit, ViewerModel, ViewerTool } from '../viewerTool'
 import { fillRegion, paintDab, smudgeDab, type Brush, type Dab, type DabTarget } from './paintDab'
@@ -13,7 +14,7 @@ export type PaintMode = 'paint' | 'erase' | 'pick' | 'smudge' | 'fill'
 export type PaintTarget = PaintTargetName
 export type PaintSettings = {
   mode: PaintMode
-  target: PaintTarget // which picture the brush paints: the colour, the shine or the metal
+  target: PaintTarget // which picture the brush paints: the colour, the shine, the metal or the glow
   rgb: [number, number, number]
   radius: number // metres on the model
   hardness: number // 0 soft to 1 hard
@@ -21,6 +22,7 @@ export type PaintSettings = {
   match: number // 0 to 1: how close a colour must be to the clicked one for Fill
   shine: number // 0 matt to 1 shiny (WP-32)
   metal: number // 0 not metal to 1 metal (WP-32)
+  glow: number // 0 no glow to 1 full glow
   faceOnly: boolean
   mirror: boolean
 }
@@ -34,12 +36,24 @@ export const DEFAULT_PAINT: PaintSettings = {
   match: 0.12,
   shine: 0.5,
   metal: 0,
+  glow: 1,
   faceOnly: false,
   mirror: false,
 }
 
-// The value the brush lays down for the chosen picture: an sRGB colour, or a grey level for shine and metal.
+// The grey level that stands for a glow strength in the glow picture: 0 is a texel the glow brush never touched, 1 to 255
+// is a strength from 0 to 1. The eraser lays down 1 (strength 0), so an erased texel differs from an untouched one and
+// the save can switch off glow that the model already had.
+export function glowByte(strength: number): number {
+  return 1 + Math.round(Math.min(Math.max(strength, 0), 1) * 254)
+}
+
+// The value the brush lays down for the chosen picture: an sRGB colour, or a grey level for shine, metal and glow.
 export function targetRgb(s: PaintSettings): [number, number, number] {
+  if (s.target === 'glow') {
+    const v = glowByte(s.mode === 'erase' ? 0 : s.glow)
+    return [v, v, v]
+  }
   if (s.target === 'shine') {
     const v = Math.round((1 - s.shine) * 255)
     return [v, v, v]
@@ -141,18 +155,21 @@ function channelLayer(texture: THREE.Texture, channel: 1 | 2): PaintLayer {
   return layer
 }
 
-// Whether the model has a shine picture and a metal picture the editor can paint (on the first UV layout).
-export function paintableMaps(model: ViewerModel): { shine: boolean; metal: boolean } {
+// Whether the model has a shine picture and a metal picture the editor can paint (on the first UV layout), and whether
+// it has a colour picture to light (glow is painted on any model the editor can paint).
+export function paintableMaps(model: ViewerModel): { shine: boolean; metal: boolean; glow: boolean } {
   let shine = false
   let metal = false
+  let glow = false
   for (const mesh of model.meshes) {
     const uv = mesh.geometry?.attributes.uv
     const mat = firstMaterial(model.texturedMaterial(mesh))
     if (!uv || !mat) continue
+    if (!mat.map || (mat.map.channel ?? 0) === 0) glow = true
     if (mat.roughnessMap && (mat.roughnessMap.channel ?? 0) === 0) shine = true
     if (mat.metalnessMap && (mat.metalnessMap.channel ?? 0) === 0) metal = true
   }
-  return { shine, metal }
+  return { shine, metal, glow }
 }
 
 // Whether a save can carry the paint for this model, known before painting starts and without changing the model: the
@@ -222,7 +239,7 @@ function lastWith(list: PaintLayer[], ok: (l: PaintLayer) => boolean): PaintLaye
 }
 
 // The layers a save sends: the one colour picture, and the shine and metal pictures when the model has them.
-export type SaveMaps = { colour: PaintLayer; shine: PaintLayer | null; metal: PaintLayer | null }
+export type SaveMaps = { colour: PaintLayer; shine: PaintLayer | null; metal: PaintLayer | null; glow: PaintLayer | null }
 
 // The picture layers of one model: a blank picture for each textured part that has none, the model's own picture
 // otherwise. Creating a session changes the materials of the model (it gives blank parts a picture, and swaps the
@@ -232,9 +249,11 @@ export class PaintSession {
   private readonly colourLayers: PaintLayer[] = []
   private readonly shineLayers: PaintLayer[] = []
   private readonly metalLayers: PaintLayer[] = []
+  private readonly glowLayers: PaintLayer[] = []
   private readonly colourByMesh = new Map<THREE.Mesh, PaintLayer>()
   private readonly shineByMesh = new Map<THREE.Mesh, PaintLayer>()
   private readonly metalByMesh = new Map<THREE.Mesh, PaintLayer>()
+  private readonly glowByMesh = new Map<THREE.Mesh, PaintLayer>()
   private readonly targets = new Map<PaintLayer, DabTarget[]>()
   private readonly mirrorX: number
   // The order of the steps across the pictures (WP-32): one entry per step, naming the picture it changed. Undo and redo
@@ -245,6 +264,7 @@ export class PaintSession {
   constructor(model: ViewerModel) {
     const layerOf = new Map<THREE.Texture, PaintLayer>()
     const channelOf = new Map<string, PaintLayer>()
+    const glowOf = new Map<PaintLayer, PaintLayer>()
     const add = (list: PaintLayer[], byMesh: Map<THREE.Mesh, PaintLayer>, layer: PaintLayer, mesh: THREE.Mesh) => {
       if (!this.layers.includes(layer)) this.layers.push(layer)
       if (!list.includes(layer)) list.push(layer)
@@ -287,6 +307,13 @@ export class PaintSession {
         layerOf.set(layer.texture, layer)
       }
       add(this.colourLayers, this.colourByMesh, layer, mesh)
+      // The glow picture: empty, the size of the colour picture it lights, on the same layout.
+      let glow = glowOf.get(layer)
+      if (!glow) {
+        glow = new PaintLayer(layer.width, layer.height, new Uint8Array(layer.width * layer.height * 4), true)
+        glowOf.set(layer, glow)
+      }
+      add(this.glowLayers, this.glowByMesh, glow, mesh)
       // Shine (green channel) and metal (blue channel) of the metallic-roughness picture (WP-32).
       if (mat.roughnessMap && (mat.roughnessMap.channel ?? 0) === 0) {
         const key = `${mat.roughnessMap.uuid}:1`
@@ -352,7 +379,7 @@ export class PaintSession {
   // Null when the model has parts with colour pictures of their own (or several shine or metal pictures); those cannot be saved yet.
   saveableMaps(): SaveMaps | null {
     if (this.colourLayers.length !== 1 || this.shineLayers.length > 1 || this.metalLayers.length > 1) return null
-    return { colour: this.colourLayers[0], shine: this.shineLayers[0] ?? null, metal: this.metalLayers[0] ?? null }
+    return { colour: this.colourLayers[0], shine: this.shineLayers[0] ?? null, metal: this.metalLayers[0] ?? null, glow: this.glowLayers[0] ?? null }
   }
 
   // The colour picture a save sends, when the model is saveable (see saveableMaps).
@@ -428,8 +455,8 @@ export class PaintSession {
     let strokeFace: { mesh: THREE.Mesh; face: number } | null = null
     // Smudge: the colour the stroke is carrying (null until its first dab).
     const carry: { rgb: [number, number, number] | null } = { rgb: null }
-    const brushOf = (s: PaintSettings): Brush => ({ rgb: targetRgb(s), radius: s.radius, hardness: s.hardness, strength: s.strength, erase: s.mode === 'erase' })
-    const mapOf = (target: PaintTarget): Map<THREE.Mesh, PaintLayer> => (target === 'shine' ? this.shineByMesh : target === 'metal' ? this.metalByMesh : this.colourByMesh)
+    const brushOf = (s: PaintSettings): Brush => ({ rgb: targetRgb(s), radius: s.radius, hardness: s.hardness, strength: s.strength, erase: s.mode === 'erase' && s.target !== 'glow' })
+    const mapOf = (target: PaintTarget): Map<THREE.Mesh, PaintLayer> => (target === 'shine' ? this.shineByMesh : target === 'metal' ? this.metalByMesh : target === 'glow' ? this.glowByMesh : this.colourByMesh)
     // One dab at a spot. With faceOnly, only the stroke's triangle is painted (faceSpot), and its mirror image for the mirror side.
     const paintAt = (layer: PaintLayer, spot: Spot, s: PaintSettings, faceSpot: { mesh: THREE.Mesh; face: number } | null) => {
       const targets = this.targets.get(layer) ?? []

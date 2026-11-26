@@ -1,6 +1,6 @@
 // Turns the painted pictures into what the save sends (WP-23, WP-32): each picture as PNG (glTF row order, as the layer
 // holds it), its edit mask as PNG (white where the picture differs from the one the model came with), and the stroke
-// logs. The shine and metal pictures are sent only when they changed.
+// logs. The shine, metal and glow pictures are sent only when they changed.
 import type { PaintLayer, StrokeRecord } from './paintLayer'
 import type { SaveMaps } from './paintSession'
 
@@ -13,6 +13,8 @@ export type PaintSaveBody = {
   shine_mask_png?: string
   metal_png?: string
   metal_mask_png?: string
+  glow_png?: string
+  glow_mask_png?: string
 }
 
 // A PNG of RGBA bytes, as base64 text (no data: prefix).
@@ -51,9 +53,10 @@ export function paintSaveBody(maps: SaveMaps): PaintSaveBody | null {
   const colour = layerFiles(maps.colour)
   const shine = maps.shine ? layerFiles(maps.shine) : null
   const metal = maps.metal ? layerFiles(maps.metal) : null
-  if (!colour && !shine && !metal) return null
+  const glow = maps.glow ? layerFiles(maps.glow) : null
+  if (!colour && !shine && !metal && !glow) return null
   const body: PaintSaveBody = {
-    strokes: [...maps.colour.strokeLog, ...(maps.shine?.strokeLog ?? []), ...(maps.metal?.strokeLog ?? [])],
+    strokes: [...maps.colour.strokeLog, ...(maps.shine?.strokeLog ?? []), ...(maps.metal?.strokeLog ?? []), ...(maps.glow?.strokeLog ?? [])],
   }
   if (colour) {
     body.picture_png = colour.picture
@@ -66,6 +69,10 @@ export function paintSaveBody(maps: SaveMaps): PaintSaveBody | null {
   if (metal) {
     body.metal_png = metal.picture
     body.metal_mask_png = metal.mask
+  }
+  if (glow) {
+    body.glow_png = glow.picture
+    body.glow_mask_png = glow.mask
   }
   return body
 }
