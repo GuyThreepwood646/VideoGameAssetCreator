@@ -70,6 +70,8 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
   const textures = TEXTURE_KEYS.filter((k) => k in version.files)
   const iou = version.metrics.silhouette_iou
   const tris = typeof version.metrics.triangles === 'number' ? version.metrics.triangles : null
+  // The size the files ship at: the clean-up step's look can shrink the texture it baked (texture_size is the bake).
+  const texPx = typeof version.metrics.texture_size_shipped === 'number' ? version.metrics.texture_size_shipped : version.metrics.texture_size
   // Where the chosen look changed the result (fewer triangles, small or crisp textures, flat faces, no bumps).
   const look = versionLook(version)
   // A change described at this step edits the picture first; the model is built from the edited picture.
@@ -179,7 +181,7 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
           <div className="small">
             {tris !== null ? `Your model: ${tris.toLocaleString('en-US')} triangles` : 'triangle count unknown'}
             {libHairOn && tris !== null && typeof libHair?.triangles === 'number' ? ` in the body and ${libHair.triangles.toLocaleString('en-US')} in the hair` : ''}
-            {typeof version.metrics.texture_size === 'number' ? `, ${version.metrics.texture_size} px texture` : ''}
+            {typeof texPx === 'number' ? `, ${texPx} px texture` : ''}
             {version.stage === 'mesh' && version.params?.head_room ? ' (over the budget on purpose: the clean-up step brings it back down and gives the head a bigger share of the triangles)' : ''}
           </div>
         </div>

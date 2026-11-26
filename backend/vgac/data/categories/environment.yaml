@@ -38,6 +38,16 @@ pose_block: >-
   background, seen straight from the front at eye level, square-on, with its front facing the camera,
   whole piece visible with margin around it, centred in frame. Soft even studio lighting with no hard
   shadows. No text, no logos, no people, no surrounding scenery, no motion blur, no cropping.
+# Used in place of pose_block when the description puts words in quotes (a sign reading "CORNER SHOP"): the painter then
+# letters exactly those words. Without quoted words the plain pose_block applies, because wording that merely allows a
+# sign makes the painter invent one with garbled letters on a well or a fence (vgac/stages/concept.py pose_block_for).
+pose_block_lettered: >-
+  The structure stands alone on a plain flat light grey ground against a plain flat light grey
+  background, seen straight from the front at eye level, square-on, with its front facing the camera,
+  whole piece visible with margin around it, centred in frame. Soft even studio lighting with no hard
+  shadows. Any sign carries exactly the words written in quotes in the description, in large clear capital
+  letters; no other text and no logos anywhere in the picture. No people, no surrounding scenery, no motion
+  blur, no cropping.
 # WP-44 (standard detail pairs, bakeoff/wp44): with the rebuild off, all five pieces (cottage, arch, doorway, fence, sign)
 # came out shattered (21 to 28 percent open edges). With the rebuild on they are whole and the doorway stays open.
 remesh_default: true

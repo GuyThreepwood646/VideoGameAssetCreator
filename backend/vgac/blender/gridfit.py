@@ -137,6 +137,20 @@ def piece_kind(dims) -> str:
     return "floor" if small > 0 and z < FLOOR_RATIO * small else "wall"
 
 
+def is_chosen(grid: dict, params: dict | None = None) -> bool:
+    """Whether the person asked for the grid: a footprint, a height or a grid size other than the default was chosen
+    (from the prep report's "grid" block, else the version's params). A piece with none of these stands on its own: the
+    grid still rounds it where that fits, but a miss is not a fault."""
+    p = params or {}
+    fp = grid.get("footprint_choice", p.get("grid_footprint"))
+    if fp in FOOTPRINTS:
+        return True
+    if height_choice(grid.get("height_choice", p.get("grid_height"))) is not None:
+        return True
+    g = grid.get("grid_m", p.get("grid_m"))
+    return g not in (None, "") and abs(grid_value(g) - DEFAULT_GRID_M) > 1e-9
+
+
 def is_multiple(value: float, step: float, tol: float = FIT_TOLERANCE_M) -> bool:
     """True when value is a whole number (at least one) of steps, within tol."""
     if step <= 0 or value <= 0:

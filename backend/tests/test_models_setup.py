@@ -241,7 +241,9 @@ def test_http_status_and_gate_refusal(world):
 
 def test_the_shipped_sets_cover_every_file_once_and_gates_are_consistent():
     d = json.loads(REAL_LIST.read_text(encoding="utf-8-sig"))
-    ids = {f"{k}:{n}" for sec, k in (("models", "model"), ("addons", "addon"), ("project_files", "project_file")) for n in d[sec]}
+    # The item finder's files (finder_*) are set up by setup/Setup-ItemFinder.ps1, not by the models panel, so they are in no set.
+    ids = {f"{k}:{n}" for sec, k in (("models", "model"), ("addons", "addon"), ("project_files", "project_file")) for n in d[sec]
+           if not (sec == "project_files" and n.startswith("finder_"))}
     seen: list[str] = []
     for s in d["sets"]:
         seen += s["items"]

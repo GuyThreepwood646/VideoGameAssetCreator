@@ -140,11 +140,12 @@ def test_grid_checks_pass_with_the_plan_sentences():
 
 
 def test_grid_checks_fail_with_a_fix():
-    rep = _grid_report([1.45, 0.3, 3.0], ["too_far", "thin", "snapped"], gap=45.0)
+    # A grid size was chosen (not the default 1 m), so the piece is meant to snap and a miss is a fault.
+    rep = _grid_report([1.45, 0.3, 3.0], ["too_far", "thin", "snapped"], grid=2, gap=45.0)
     by = {c["name"]: c for c in quality.grid_checks(rep, {"grid_footprint": "auto"})}
     fit = by["grid_fit"]
     assert not fit["passed"] and fit["help"] == "The piece is 1.45 m wide, between grid steps, so it leaves a gap next to other pieces."
-    # Everything automatic already: the fix is the next finer grid on which it fits.
+    # Footprint and height automatic: the fix is the next finer grid on which it fits.
     assert fit["fix"] == {"stage": "prep", "params": {"grid_m": 0.5}, "label": "Snap to the grid"}
     assert not by["tiles_cleanly"]["passed"] and by["tiles_cleanly"]["help"] == "Copies placed side by side leave a gap or overlap of 45 cm."
     assert "fix" not in by["tiles_cleanly"]
@@ -159,6 +160,37 @@ def test_grid_checks_fail_with_a_fix():
     # Nothing finer fits: no fix, "Change something" applies.
     stuck = _grid_report([1.3, 0.3, 3.0], ["too_far", "thin", "snapped"], grid=0.5, before=[1.3, 0.3, 3.0])
     assert "fix" not in quality.grid_checks(stuck, {})[0]
+
+
+def test_a_piece_nobody_set_on_the_grid_is_noted_not_warned():
+    # A freestanding building: all automatic, the default 1 m grid, depth 2.487 m between steps.
+    rep = _grid_report([3.0, 2.487, 3.0], ["snapped", "too_far", "snapped"], gap=45.0, before=[2.819, 2.487, 3.0])
+    assert not gridfit.is_chosen(rep, {"grid_m": 1, "grid_footprint": "auto", "grid_height": "auto"})
+    checks = quality.grid_checks(rep, {"grid_m": 1, "grid_footprint": "auto", "grid_height": "auto"})
+    assert [c["name"] for c in checks] == ["grid_fit"]  # copies side by side are not judged either
+    fit = checks[0]
+    assert fit["passed"] and "fix" not in fit
+    assert fit["help"] == ("The piece is 3 x 2.49 x 3 m and stands on its own, so it is not set on the 1 m grid. "
+                           "Choose a footprint or a grid size under Fine tune to set it on one.")
+    # Any choice makes the same piece a fault again, with the same fix as before.
+    for params in ({"grid_footprint": "2x1"}, {"grid_height": 3}):
+        again = {c["name"]: c for c in quality.grid_checks(rep, params)}
+        assert not again["grid_fit"]["passed"] and "tiles_cleanly" in again, params
+    bigger = {c["name"]: c for c in quality.grid_checks({**rep, "grid_m": 2}, {})}  # the report holds the grid that was used
+    assert not bigger["grid_fit"]["passed"]
+    # The report's own record of the choice counts without the params.
+    assert gridfit.is_chosen({**rep, "footprint_choice": "2x1"}) and not gridfit.is_chosen({**rep, "footprint_choice": "auto"})
+    assert gridfit.is_chosen({**rep, "height_choice": 3.0}) and gridfit.is_chosen({**rep, "grid_m": 0.5})
+    # A piece that fits is the same as before whether or not the grid was chosen.
+    ok = quality.grid_checks(_grid_report([3.0, 2.0, 3.0], ["snapped", "snapped", "snapped"]), {})
+    assert ok[0]["help"] == "The piece is 3 x 2 x 3 m and lines up with the 1 m grid." and len(ok) == 2
+
+
+def test_the_finish_line_for_a_piece_that_stands_on_its_own():
+    line = guidance.grid_finish_line({"grid_m": 1, "grid_fit": False, "grid_chosen": False})
+    assert line["state"] == "ok" and "not set on a grid" in line["text"]
+    assert guidance.grid_finish_line({"grid_m": 1, "grid_fit": False, "grid_chosen": True})["state"] == "warn"
+    assert prep_stage.grid_metrics(_grid_report([3.0, 2.487, 3.0], ["snapped", "too_far", "snapped"]))["grid_chosen"] is False
 
 
 def test_prep_checks_use_the_grid_for_scenery():

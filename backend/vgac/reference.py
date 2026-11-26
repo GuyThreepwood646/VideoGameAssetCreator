@@ -408,6 +408,8 @@ def _data() -> dict[str, Any]:
         c = _load_yaml(p)
         c.setdefault("id", p.stem)
         c["pose_block"] = " ".join(str(c.get("pose_block", "")).split())
+        if c.get("pose_block_lettered"):
+            c["pose_block_lettered"] = " ".join(str(c["pose_block_lettered"]).split())
         categories[c["id"]] = c
     styles = {s["id"]: {**s, "prompt_block": " ".join(str(s.get("prompt_block", "")).split())}
               for s in _load_yaml(DATA_DIR / "styles.yaml").get("styles", [])}

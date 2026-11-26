@@ -1094,7 +1094,10 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     # G15 (plan 3.8): scenery on the grid, checked in prep.
     "grid_fit": {
         "severity": "warn",
-        "ok": lambda c: ("The piece is {w:m} x {d:m} x {h:m} m, smaller than one {grid:m} m square, so it sits inside one square."
+        "ok": lambda c: ("The piece is {w:m} x {d:m} x {h:m} m and stands on its own, so it is not set on the {grid:m} m grid. "
+                         "Choose a footprint or a grid size under Fine tune to set it on one."
+                         if _var(c, "free") else
+                         "The piece is {w:m} x {d:m} x {h:m} m, smaller than one {grid:m} m square, so it sits inside one square."
                          if _var(c, "small") else "The piece is {w:m} x {d:m} x {h:m} m and lines up with the {grid:m} m grid."),
         "fail": "The piece is {side:m} m {side_word}, between grid steps, so it leaves a gap next to other pieces.",
         "fix": lambda c: {"stage": "prep", "params": _var(c, "fix_params")} if _var(c, "fix_params") else None,
@@ -1666,6 +1669,9 @@ def grid_finish_line(metrics: dict[str, Any]) -> dict[str, Any] | None:
     grid = format_check_text("{g:m}", {"g": m["grid_m"]})
     if m.get("grid_fit", True):
         return {"id": "grid", "text": f"Snaps to a {grid} m grid, pivot on the corner, ready for baked lighting.", "state": "ok", "term": "grid"}
+    if m.get("grid_chosen") is False:
+        return {"id": "grid", "text": "Stands on its own, pivot on the corner, ready for baked lighting; not set on a grid.",
+                "state": "ok", "term": "grid"}
     return {"id": "grid", "text": f"Pivot on the corner and ready for baked lighting, but it does not fit the {grid} m grid yet.",
             "state": "warn", "term": "grid"}
 

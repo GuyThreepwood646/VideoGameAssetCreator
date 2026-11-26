@@ -223,6 +223,12 @@ def grid_checks(g: dict[str, Any], params: dict[str, Any] | None = None) -> list
     smaller = all(s == "thin" for s in (g.get("states") or [])[:2])
     vars_: dict[str, Any] = {"w": round(dims[0], 3), "d": round(dims[1], 3), "h": round(dims[2], 3), "grid": grid,
                              "small": smaller}
+    if off is not None and not gridfit.is_chosen(g, params):
+        # Nobody asked for the grid: a piece that stands on its own is not at fault for missing it, so this is a plain
+        # note, and copies side by side (a kit idea) are not judged either.
+        vars_["free"] = True
+        out.append(check("grid_fit", True, [round(d, 3) for d in dims], grid, vars=vars_))
+        return out
     if off is not None:
         vars_.update(side=round(dims[off], 3), side_word=gridfit.SIDE_WORDS[off],
                      fix_params=grid_fix_params({**g, "off_side": off}, params))

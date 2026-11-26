@@ -1383,19 +1383,43 @@ def before_after_sheet(crop: Path, before: tuple, after: tuple, dest: Path, cell
 # --- the pass ------------------------------------------------------------------------------------------------
 
 
-def image_instance(sc: StageContext) -> str | None:
-    """The card that draws pictures now (the side-views step's, or the one that took over while it is off)."""
+def image_instances(sc: StageContext) -> list[str]:
+    """Every card that may draw pictures now, the preferred one first: the side-views step's card (or the one that took
+    over while it is off), then each other card jobs.route would pick once the earlier ones are left out (so the
+    person's off switches and allowed kinds apply the same way). Cards without a client here are left out."""
     from .. import jobs, prefs
 
+    out: list[str] = []
     try:
         p = prefs.load(sc.settings)
-        inst = jobs.route("turnaround", sc.asset.category, sc.settings, prefs.disabled_instances(sc.settings),
-                          p.get("allowed_kinds"), p.get("default_instance"))
+        off = set(prefs.disabled_instances(sc.settings))
+        while True:
+            inst = jobs.route("turnaround", sc.asset.category, sc.settings, off, p.get("allowed_kinds"), p.get("default_instance"))
+            if not inst or inst == jobs.HOST or inst in out:
+                break
+            out.append(inst)
+            off.add(inst)
     except Exception:  # noqa: BLE001
         inst = sc.settings.stage_instances.get("turnaround")
-    if not inst or inst == jobs.HOST or inst not in sc.ctx.clients:
-        return None
-    return inst
+        out = [inst] if inst else []
+    return [i for i in out if i != jobs.HOST and i in sc.ctx.clients]
+
+
+def image_instance(sc: StageContext) -> str | None:
+    """The card that draws pictures now (the side-views step's, or the one that took over while it is off)."""
+    found = image_instances(sc)
+    return found[0] if found else None
+
+
+async def live_image_instance(sc: StageContext) -> str | None:
+    """image_instance, but a card whose engine does not answer is passed over for the next card that may draw pictures.
+    When none answers, the preferred card is returned, so the failure shows up where it is used. A single-card setup
+    gives that card."""
+    found = image_instances(sc)
+    for inst in found:
+        if bool((await sc.client(inst).vram_summary()).get("reachable")):
+            return inst
+    return found[0] if found else None
 
 
 async def redraw(sc: StageContext, instance: str, crop: Path, seed: int, dest: Path, prompt: str = REDRAW_PROMPT,
