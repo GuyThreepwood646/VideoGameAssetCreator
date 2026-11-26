@@ -107,3 +107,14 @@ def test_window_glows_only_where_lit():
     mask[8:37, 8:22] = True
     lit = glow_worker.lit_pixels(rgb, hsv, (8, 8, 22, 37), mask)
     assert not lit[10:20, 10:20].any() and lit[25:35, 10:20].all()
+
+    # a pale cream pane beside a bright wall is lit (bright and warm); a shaded brown patch and a grey-green pane are not
+    rgb[:] = 0.92
+    rgb[10:20, 10:20] = (0.84, 0.80, 0.66)    # cream: H about 44, S 0.21, V 0.84
+    rgb[25:35, 10:20] = (0.49, 0.34, 0.25)    # shaded brown: H 17, V 0.49
+    rgb[10:20, 25:35] = (0.74, 0.78, 0.70)    # grey-green glass
+    hsv = np.asarray(Image.fromarray((rgb * 255).astype(np.uint8), "RGB").convert("HSV"))
+    mask[:] = False
+    mask[8:37, 8:37] = True
+    lit = glow_worker.lit_pixels(rgb, hsv, (8, 8, 37, 37), mask)
+    assert lit[10:20, 10:20].all() and not lit[25:35, 10:20].any() and not lit[10:20, 25:35].any()

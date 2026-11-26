@@ -21,7 +21,8 @@ THREADS = 2
 PANEL_GAIN = 0.6
 WINDOW_LIT_OVER = 0.12   # a window pixel is lit when this much brighter than the wall round the window (V, 0..1) ...
 WARM_HUE = (12.0, 75.0)   # ... or warm (orange to yellow-green degrees), bright and saturated
-WARM_V, WARM_S = 0.8, 0.4
+WARM_STRONG = (0.6, 0.4)   # (V, S) at least: a saturated warm pane, even a little shaded
+WARM_PALE = (0.75, 0.15)   # (V, S) at least: a pale cream or yellow pane, which is bright rather than saturated
 GDINO = "IDEA-Research/grounding-dino-tiny"
 SAM2 = "facebook/sam2.1-hiera-small"
 
@@ -47,7 +48,8 @@ def lit_pixels(rgb, hsv, box, mask):
     v = rgb.max(-1)
     wall = float(np.median(v[ring])) if ring.any() else 1.0
     hue = hsv[..., 0] * (360.0 / 255.0)
-    warm = (hue >= WARM_HUE[0]) & (hue <= WARM_HUE[1]) & (v >= WARM_V) & (hsv[..., 1] / 255.0 >= WARM_S)
+    sat = hsv[..., 1] / 255.0
+    warm = (hue >= WARM_HUE[0]) & (hue <= WARM_HUE[1]) & (((v >= WARM_STRONG[0]) & (sat >= WARM_STRONG[1])) | ((v >= WARM_PALE[0]) & (sat >= WARM_PALE[1])))
     return (v > wall + WINDOW_LIT_OVER) | warm
 
 
