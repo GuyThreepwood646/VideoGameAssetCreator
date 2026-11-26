@@ -7,14 +7,14 @@ moves weight from the forearm and forearm twist bones onto the Hand bone for ski
 across the wrist so a bend shows no step.
 
 Per side, the hand region is the skin within HAND_REACH x hand length of the Hand bone (extended by one hand length for the
-fingers), no further behind the wrist joint than the ramp reaches, within RADIUS_MAX x hand length of the hand axis and not
+fingers), no further behind the wrist joint than HAND_BACK, within RADIUS_MAX x hand length of the hand axis and not
 above the forearm start by more than 0.2 m. Of those, only vertices that already carry HAND_SKIN_MIN of their weight on the
 hand chain are changed: a sleeve cuff lying round the wrist carries almost none, and must not follow the hand.
 Only forearm and twist weight moves, so skin of other parts that happens to be near stays as it is.
 Along the wrist-to-fingertip axis (a = 0 at the Hand joint) the share of a vertex's weight that the hand chain (Hand and
 finger bones) should carry is smoothstep over a in [c-w, c+w], c = RAMP_CENTER and w = RAMP_HALF, both x hand length: 0 at
-the elbow end, 0.5 at c, 1 from c+w on. The ramp ends at the joint: the skin of the hand mesh starts behind the Hand bone's
-joint, so the whole ramp lies on the forearm side of it. A vertex below its target takes the difference from its forearm and twist weights (never from the
+the elbow end, 0.5 at c, 1 from c+w on. The ramp starts at HAND_BACK, the bound of the region, so it is 0 there and nothing
+behind the bound is read or changed: forearm weights above the wrist stay as the rigger left them. A vertex below its target takes the difference from its forearm and twist weights (never from the
 upper arm, shoulder or other bones) and gives it to the Hand bone. Finger bone weights are never touched, so fingers
 stay as they were and palm skin goes to the Hand bone, not the finger roots. Row sums are unchanged. A skeleton without
 Hand and ForeArm bones, or with no forearm weight on the hand skin, is left as it is.
@@ -29,8 +29,9 @@ import sys
 import numpy as np
 
 HAND_REACH = 0.6  # skin within this x hand length of the hand segment belongs to the hand region
-RAMP_HALF = 0.3  # half width of the wrist ramp, x hand length
-RAMP_CENTER = -0.3  # where the ramp is at half, x hand length from the Hand joint (negative: toward the elbow)
+HAND_BACK = -0.2  # the pass reads and changes nothing further back than this, x hand length from the Hand joint (negative: toward the elbow)
+RAMP_HALF = 0.15  # half width of the wrist ramp, x hand length
+RAMP_CENTER = -0.05  # where the ramp is at half: the ramp spans HAND_BACK to +0.1, all on the hand side of the bound
 FORE_UP = 0.2  # metres above the forearm start where the region ends
 SKIN_RG = 0.06  # skin tone test on the picture colour: red above green by this much
 SKIN_RB = 0.12  # and above blue by this much
@@ -100,7 +101,7 @@ def hand_region(P, hand_head, hand_tail, fore_head):
     axis = (h1 - h0) / hl
     a = (P - h0) @ axis
     radial = np.linalg.norm((P - h0) - np.outer(a, axis), axis=1)
-    mask = ((dh < hl * HAND_REACH) & (a > (RAMP_CENTER - RAMP_HALF) * hl) & (radial <= RADIUS_MAX * hl)
+    mask = ((dh < hl * HAND_REACH) & (a > HAND_BACK * hl) & (radial <= RADIUS_MAX * hl)
             & (P[:, 2] < float(np.asarray(fore_head)[2]) + FORE_UP))
     return mask, a, hl
 
