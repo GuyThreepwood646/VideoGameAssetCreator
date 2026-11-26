@@ -17,6 +17,8 @@
 #                triangle_cap (optional, a fixed ceiling); texture_cap is the largest texture size shipped, under the
 #                platform's own; bake_texture (optional) is the size the 3D step bakes and the clean-up paints at, the
 #                colour then shrunk to texture_cap at the end of the clean-up
+#                floor_error_px, floor_picture_px (optional): clean-up cuts to at least the triangle count where the surface
+#                moves more than floor_error_px pixels of a picture floor_picture_px wide (trifloor.py), up to the platform's maximum
 #     surface    {shading: smooth | flat, face_layout, colour_per_face, face_keeps_texture}
 #                face_layout: the face gets more of the texture before the pictures are painted (no face paint pass);
 #                colour_per_face: every triangle one colour after the painting; face_keeps_texture: except the front
@@ -205,7 +207,7 @@ styles:
       environment:
         plain: faceted shapes with one flat colour per face, at most 3,000 triangles, simple textures.
         recipe:
-          mesh: {texture_cap: 1024, triangle_cap: 3000}
+          mesh: {texture_cap: 1024, triangle_cap: 3000, floor_error_px: 1.5, floor_picture_px: 1024}
   - id: realistic_pbr
     delight_default: remove
     pbr_fix_default: true

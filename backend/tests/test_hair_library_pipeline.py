@@ -373,7 +373,7 @@ GOLDEN_OFF = {
                         "texture_colour_matches_picture", "texture_matches_picture", "texture_metallic_budget", "texture_metallic_pow2",
                         "texture_metallic_square", "texture_normal_budget", "texture_normal_pow2",
                         "texture_normal_square", "texture_roughness_budget", "texture_roughness_pow2",
-                        "texture_roughness_square", "texture_sharp", "triangle_budget"],
+                        "texture_roughness_square", "texture_sharp", "texture_speckle", "triangle_budget"],
              "files": ["ao", "base_color", "glb", "input", "metallic", "normal", "preview", "roughness", "sheet",
                        "views_dir"],
              "metrics": ["atlas_used", "checks", "checks_failed", "checks_passed", "dims", "elapsed_seconds",
@@ -388,7 +388,7 @@ GOLDEN_OFF = {
     # picture_projection, skin_not_metal and the two texture_* checks are there as "not measured" or measured: never silently missing
     "prep": {"checks": ["albedo_range", "atlas_used", "bake_matches", "baked_light", "degenerate_faces",
                         "face_matches_picture", "hair_matches_picture", "manifold", "metal_mixed", "picture_projection", "size_m",
-                        "skin_not_metal", "texture_colour_matches_picture", "texture_padding", "texture_sharp", "triangle_budget",
+                        "skin_not_metal", "texture_colour_matches_picture", "texture_padding", "texture_sharp", "texture_speckle", "triangle_budget",
                         "uv_set", "watertight"],
              "files": ["ao", "base_color", "glb", "metallic", "normal", "report", "roughness"],
              "metrics": ["atlas_used", "bake_match", "bake_mesh_hash", "bones", "boundary_edges", "checks",
@@ -431,8 +431,8 @@ ADDED_ON = {
 }
 # Texture fidelity (2026-11): the report-only measure in both steps, and the picture painted onto a character by itself.
 for _stage, _part, _keys in (("turnaround", "files", ["quarter2", "quarter2_cutout", "quarter2_white"]),
-                             ("mesh", "metrics", ["texture_fidelity"]), ("prep", "params", ["source_project_mode"]),
-                             ("prep", "metrics", ["srcproject_applied", "srcproject_reason", "srcproject_upscale", "texture_fidelity"]),
+                             ("mesh", "metrics", ["texture_fidelity", "texture_speckle"]), ("prep", "params", ["source_project_mode"]),
+                             ("prep", "metrics", ["srcproject_applied", "srcproject_reason", "srcproject_upscale", "texture_fidelity", "texture_speckle"]),
                              # whether the step 1 picture's turn may be expected (srcproject.picture_known_of)
                              ("prep", "metrics", ["srcproject_picture_known"]),
                              # Shape loss (WP-16, 2026-11-19): how far the budget reduction moved the surface, a metric only.

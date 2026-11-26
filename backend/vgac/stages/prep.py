@@ -72,7 +72,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import creaturemetal, face, facing, guidance, hairlib, hairmat, headtris, imaging, layoutspread, library, lightfix, meshchecks, normalfix, quality, reference, skinmetal, srcproject, steptime, texcolour
+from .. import creaturemetal, face, facing, guidance, hairlib, hairmat, headtris, imaging, layoutspread, library, lightfix, meshchecks, normalfix, quality, reference, skinmetal, srcproject, steptime, texcolour, trifloor
 from .. import hair as hairfind
 from ..blender import gridfit
 from . import face_detail, hair_detail
@@ -330,6 +330,9 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         # The body is decimated to the budget less the hair's allowance; the hair pass sees the library and stands back.
         params = {**params, "hair_source": hairlib.LIBRARY}
         tri_limit = {**tri_limit, "limit": hair["body_limit"]}
+    floor_plan = await triangle_floor_plan(sc, rec, src, mesh_v, tri_limit) if hair is None else None
+    if floor_plan is not None:
+        tri_limit = {**tri_limit, "limit": floor_plan["limit"], "source": "floor" if floor_plan["state"] in ("raised", "over_max") else tri_limit["source"]}
     head = headtris.plan(rec, sc.asset.category, params, shading["shading"], mesh_v_params)
     sc.set_params(size_m=size["size_m"], size_axis=size["size_axis"], size_word=size["size_word"],
                   face_yaw=face_yaw if face_yaw not in (None, "") else "auto", symmetric=symmetric, pivot=pivot, smooth_angle=smooth,
@@ -343,6 +346,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     sc.set_metrics(size_source=size["size_source"], shading_applied=shading["shading"], shading_source=shading["source"],
                    triangle_limit=tri_limit["limit"], triangle_limit_source=tri_limit["source"],
                    recipe=reference.recipe_record(rec, "mesh", "surface"), **facing_)
+    if floor_plan is not None:
+        sc.set_metrics(triangle_floor=floor_plan)
     sc.use_model("blender")
     out = sc.dir / "prep.glb"
     args: list[Any] = [src, out, "mesh", "--size", size["size_m"], "--size-axis", size["size_axis"], "--yaw", facing_["face_yaw_applied"],
@@ -926,6 +931,30 @@ def prep_triangle_limit(rec: dict[str, Any], mesh_params: dict[str, Any] | None,
     return {"limit": platform, "source": "platform"}
 
 
+async def triangle_floor_plan(sc: StageContext, rec: dict[str, Any], src: Path, mesh_v: Any, tri_limit: dict[str, Any]) -> dict[str, Any] | None:
+    """The triangle floor (trifloor.py) for a look that sets one (recipe mesh.floor_error_px): one descent of the reduction
+    on the model about to be cut, then the limit is the larger of the look's target and the floor, never over the platform's
+    maximum. None when the look sets no floor, the model is already at or under the limit, or the descent fails (the
+    limit then stays the look's target; the reason is recorded). {limit, floor, state, target, platform_max, error_px,
+    picture_px, seconds, curve}."""
+    mesh = rec.get("mesh") or {}
+    error_px, picture_px = mesh.get("floor_error_px"), mesh.get("floor_picture_px")
+    target, platform_max = int(tri_limit.get("limit") or 0), int(sc.budget.get("triangles") or 0)
+    have = int(((mesh_v.metrics or {}).get("triangles") if mesh_v is not None else 0) or 0)
+    if not error_px or not picture_px or not target or have <= target:
+        return None
+    out = sc.dir / "triangle_floor.json"
+    try:
+        await sc.blender("trifloor.py", [src, out, "--min", trifloor.MIN_TRIANGLES], log_name="trifloor.log")
+        curve = json.loads(out.read_text(encoding="utf-8"))
+    except Exception as err:  # noqa: BLE001  (the floor is advice: a failed descent leaves the look's target as it was)
+        return {"limit": target, "floor": None, "state": "none", "target": target, "platform_max": platform_max, "error": str(err)[:200]}
+    floor = trifloor.floor_from_steps(curve.get("steps") or [], int(picture_px), float(error_px))
+    plan = trifloor.limit_with_floor(target, floor, platform_max)
+    return {**plan, "target": target, "platform_max": platform_max, "error_px": float(error_px), "picture_px": int(picture_px),
+            "seconds": curve.get("seconds"), "curve": [{"tris": st["tris"], "p95": round(st["p95"], 6)} for st in curve.get("steps") or []]}
+
+
 def gutter_short(gap: int, pad: int) -> bool:
     """True when the gutter (empty texels between islands) is under what the texture_padding check asks for."""
     return int(gap) < math.ceil(PADDING_PASS_FRACTION * pad)
@@ -1263,10 +1292,24 @@ def prep_checks(report: dict[str, Any], params: dict[str, Any], metrics: dict[st
     oc = outline_check(report)
     if oc is not None:
         checks.append(oc)
+    fl = floor_check(metrics.get("triangle_floor"), tri_vars)
+    if fl is not None:
+        checks.append(fl)
     ff = (metrics.get("srcproject_face_finder") or {}).get("missing")
     if ff:  # the processor finder was asked for and is not there (nothing asked for: nothing said)
         checks.append(quality.check("face_finder", False, ff, "found", vars={"reason": ff}))
     return checks
+
+
+def floor_check(plan: dict[str, Any] | None, tri_vars: dict[str, Any] | None) -> dict[str, Any] | None:
+    """triangle_floor (warning only): the shape needs more triangles than the look asks for (state raised: cut to the
+    floor) or more than the platform allows (over_max: cut to the platform's maximum). None when the floor is at or under
+    the look's target, or was not read."""
+    if not isinstance(plan, dict) or plan.get("state") not in ("raised", "over_max"):
+        return None
+    vars_ = {k: plan.get(k) for k in ("state", "floor", "target", "platform_max")}
+    vars_["look"] = (tri_vars or {}).get("look")
+    return quality.check("triangle_floor", False, plan.get("limit"), plan.get("floor"), vars=vars_)
 
 
 def outline_check(report: dict[str, Any]) -> dict[str, Any] | None:
@@ -1452,10 +1495,12 @@ async def judge(sc: StageContext) -> None:
     m = sc.version.metrics
     limit = m.get("triangle_limit") or sc.budget["triangles"]
     tri_vars = None
-    if m.get("triangle_limit_source") == "recipe":
+    if m.get("triangle_limit_source") in ("recipe", "floor"):
         from .mesh import look_vars
 
         tri_vars = {**look_vars(rec, sc.budget), "recipe": True}
+        if m.get("triangle_limit_source") == "floor":
+            tri_vars.update(floor=True, target=(m.get("triangle_floor") or {}).get("target"))
     hv = headtris.head_vars(m)
     if hv:
         tri_vars = {**(tri_vars or {}), **hv}

@@ -534,6 +534,8 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                          "Your full model has {value:n} triangles, more than your platform's limit of {platform_triangles:n} on purpose: Clean up for the game "
                          "brings it back to the limit with weighted decimation (more triangles on the head)."
                          if _var(c, "head_room") else
+                         "Your full model has {value:n} triangles, inside the {limit:n} this shape needs to keep its look (the {look} look alone asks for {target:n}; your platform would allow up to {platform_triangles:n})."
+                         if _var(c, "floor") else
                          "Your full model has {value:n} triangles, inside the {look} look's limit of {limit:n} (your platform would allow up to {platform_triangles:n})."
                          if _var(c, "recipe") else "Your full model has {value:n} triangles (the flat pieces it is made of), inside your platform's limit of {limit:n}.") + _head_line(c),
         "fail": lambda c: ("Your model's body has {value:n} triangles, {over:n} more than the {limit:n} left for it after {hair_allowance:n} of your "
@@ -987,6 +989,12 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                 "{tone} than the picture.",
         "vars": lambda c: {"tone": "lighter" if float((c.get("vars") or {}).get("delta_l") or 0) > 0 else "darker"},
     },
+    "texture_speckle": {
+        "severity": "warn",
+        "ok": "The colour texture is calm: the colours inside small areas stay close together (hue scatter {value:pct}).",
+        "fail": ("In small areas of the colour texture the colours jump between many different hues (hue scatter {value:pct}, it should "
+                 "stay at most {limit:pct}), so the model may look speckled in rainbow colours."),
+    },
     "texture_padding": {
         "severity": "warn",
         "ok": "Texture pieces (UV islands) have {value:n} px of space around them (UV padding), enough for distant views.",
@@ -1402,6 +1410,17 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "severity": "warn",
         "ok": "The photo looks taken straight on.",
         "fail": "The detail is much finer on one side of the photo than the other, which usually means it was taken at an angle; the texture would look stretched. Take it straight on.",
+    },
+    # PL-131 triangle floor (prep): the surface error read from one descent of the reduction against the picture's pixel size.
+    "triangle_floor": {
+        "severity": "warn",
+        "ok": "This shape keeps its look at the triangle count your look asks for.",
+        "fail": lambda c: ("This shape needs about {floor:n} triangles to keep its look at the picture's detail, but your platform allows at most "
+                           "{platform_max:n}, so Clean up kept {value:n} and some detail may look rough. Choose a platform with a bigger triangle "
+                           "budget to keep more of it."
+                           if _var(c, "state") == "over_max" else
+                           "The {look} look asks for {target:n} triangles, but this shape needs about {floor:n} to keep its look at the picture's "
+                           "detail, so Clean up kept {value:n}."),
     },
     # WP-16 outline check (prep): before and after the budget reduction, drawn as outlines from the sides and the top.
     "outline_kept": {

@@ -47,6 +47,7 @@ HEADLINES: dict[str, str] = {
     "texture_sharp": "The colour texture is softer than the picture",
     "texture_matches_picture": "The model's texture does not match the picture",
     "texture_colour_matches_picture": "The model's colours differ from the picture",
+    "texture_speckle": "The colour texture is speckled in rainbow colours",
     "bake_matches": "The surface detail was made for an earlier copy of the model",
     "picture_projection": "The picture was not painted onto the model",
     "neck_join": "The seam between face and body paint may show at the neck",
@@ -123,6 +124,7 @@ HEADLINES: dict[str, str] = {
     "movement_shape": "The shape used for moving is not the usual one",
     # WP-16 outline check (worth a look)
     "outline_kept": "The clean-up changed the model's outline",
+    "triangle_floor": "The shape needs more triangles than the look asks for",
 }
 
 # WP-86 and WP-92 (new entries; the wording above is not touched here).
