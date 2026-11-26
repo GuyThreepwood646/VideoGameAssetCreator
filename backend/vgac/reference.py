@@ -807,7 +807,7 @@ SHADINGS = ("smooth", "flat")
 SURFACE_SWITCHES = ("face_layout", "colour_per_face", "face_keeps_texture")
 # Recipe fields a look may set that RECIPE_DEFAULTS leaves out (absent means today's behaviour; reference.recipe adds
 # them to the resolved recipe only when set, so a look without them keeps its recipe and digest).
-RECIPE_OPTIONAL: dict[str, tuple[str, ...]] = {"mesh": ("triangle_cap", "bake_texture"), "surface": SURFACE_SWITCHES}
+RECIPE_OPTIONAL: dict[str, tuple[str, ...]] = {"mesh": ("triangle_cap", "bake_texture", "floor_error_px", "floor_picture_px"), "surface": SURFACE_SWITCHES}
 # The noun of the recipe's plain sentence, per category.
 # The picker's headings (UX-08), in order. The category keys and labels are unchanged; only the grouping is new.
 CATEGORY_GROUPS = (
@@ -891,6 +891,10 @@ def recipe(style_id: str, category_id: str, platform_id: str, strict: bool = Tru
         mesh["triangle_cap"] = int(tcap)
         if tris:
             mesh["triangles"] = max(min(floor, tris_budget), min(tris, int(tcap)))
+    # triangle floor (trifloor.py): the allowed surface error in picture pixels and the picture's width in pixels
+    if mesh_raw.get("floor_error_px"):
+        mesh["floor_error_px"] = float(mesh_raw["floor_error_px"])
+        mesh["floor_picture_px"] = int(mesh_raw.get("floor_picture_px") or 1024)
     bake = mesh_raw.get("bake_texture")
     if bake and int(bake) > tex:
         mesh["bake_texture"] = min(int(bake), tex_budget)
