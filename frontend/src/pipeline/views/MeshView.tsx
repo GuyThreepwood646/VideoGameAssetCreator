@@ -142,7 +142,7 @@ export function MeshView({ version, category, asset, hairFocus, onFix, onChanged
   return (
     <div className="mesh-view" onPointerDownCapture={activate} onFocusCapture={activate}>
       {glb ? (
-        <Viewer url={glb} height={440} tool={paintTool} onToolExit={() => setPainting(false)} onModelLoaded={setModel} />
+        <Viewer url={glb} glowUrl={version.stage === 'prep' ? libraryUrl(version.files.emission) : null} height={440} tool={paintTool} onToolExit={() => setPainting(false)} onModelLoaded={setModel} />
       ) : (
         <div className="placeholder-box">No 3D model in this version.</div>
       )}

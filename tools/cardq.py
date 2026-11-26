@@ -10,7 +10,13 @@ run:
   pending in its ComfyUI /queue (A is port 8188, B is 8189), no other cardq
   lock holds it, and the app on 8765 has no running or queued job on it.
   "any" takes whichever card frees first; --quiet waits for both cards and
-  holds both while the command runs. It then takes a lock file under
+  holds both while the command runs.
+  A card the owner switched off in the app (enabled false, or state off) is
+  not waited for: "any" uses the other card, and when no card can be used (or
+  --card names an off card, or --quiet is given with one off) it prints why
+  and exits 75 without running the command. A cleanly stopped engine (state
+  stopped) counts as free with an empty queue: its port is not answering,
+  and the app starts that engine itself when a job arrives. It then takes a lock file under
   bakeoff/cards/locks/, appends a claim line to bakeoff/cards/claims.jsonl,
   waits while free memory is under 12 GB, runs the command with stdout and
   stderr passed through, and releases the lock. If that card's queue is empty
@@ -28,6 +34,9 @@ Rules it keeps:
   - It never calls /interrupt and never deletes queue items.
   - A lock whose process is gone (checked by pid) is reclaimed with a log line.
   - The app on 8765 is only ever read (GET).
+  - A card that is off in the app (GET /api/gpus: enabled false or state off)
+    is never waited for. A stopped engine is free, not off; a failed engine
+    is still waited for, as before.
 
 status:
   Prints each card's queue counts, the lock holder, and the app's running and
@@ -52,6 +61,7 @@ APP_URL = "http://127.0.0.1:8765"
 POLL_SECONDS = 15
 LONG_WAIT_SECONDS = 30 * 60
 MIN_FREE_GB = 12.0
+EXIT_CARD_UNAVAILABLE = 75  # EX_TEMPFAIL: no card could be used; the command did not run
 
 
 def log(msg):
@@ -215,9 +225,41 @@ def app_jobs():
     return out
 
 
-def card_busy_reason(card, jobs):
-    """Why the card is not free, or None when it is."""
+class CardUnavailable(Exception):
+    """A card the owner has switched off or stopped in the app: nothing to wait for."""
+
+
+def app_gpus():
+    """{card letter: GET /api/gpus entry} from the app, or None when the app cannot be read."""
+    try:
+        data = http_json(f"{APP_URL}/api/gpus") or []
+    except Exception:
+        return None
+    return {str(g.get("instance", "")).upper(): g for g in data}
+
+
+def card_off_reason(card, gpus):
+    """Why the app says the card is switched off, or None. Only enabled false or state off counts: a stopped
+    engine is not off (the app starts it when a job comes). None too when the app is unreachable."""
+    if not gpus or card not in gpus:
+        return None
+    g = gpus[card]
+    if g.get("enabled") is False or g.get("state") == "off":
+        return f"card {card} is switched off in the app"
+    return None
+
+
+def card_stopped(card, gpus):
+    """True when the app says the card's engine is cleanly stopped (not started, not failed)."""
+    return bool(gpus) and card in gpus and gpus[card].get("state") == "stopped"
+
+
+def card_busy_reason(card, jobs, gpus=None):
+    """Why the card is not free, or None when it is. A cleanly stopped engine has an empty queue: its port is not
+    answering, so there is nothing to wait for."""
     counts = queue_counts(card)
+    if counts is None and card_stopped(card, gpus):
+        counts = (0, 0)
     if counts is None:
         return f"card {card} ComfyUI not reachable"
     if counts != (0, 0):
@@ -234,14 +276,23 @@ def card_busy_reason(card, jobs):
 # ---- run ------------------------------------------------------------------
 
 def acquire(wanted, mode, session, command):
-    """Wait until the cards are free and locked; return the cards held."""
+    """Wait until the cards are free and locked; return the cards held. Raises CardUnavailable when a card that
+    must be used (all of them, or every card in "any") is off or stopped in the app."""
     start = now()
     next_notice = LONG_WAIT_SECONDS
     last = None
     while True:
+        gpus = app_gpus()
+        offs = {c: card_off_reason(c, gpus) for c in wanted}
+        off = [offs[c] for c in wanted if offs[c]]
+        usable = [c for c in wanted if not offs[c]]
+        if mode == "all" and off:
+            raise CardUnavailable("; ".join(off))
+        if mode == "any" and not usable:
+            raise CardUnavailable("; ".join(off))
         jobs = app_jobs()
-        reasons = {c: card_busy_reason(c, jobs) for c in wanted}
-        free = [c for c in wanted if reasons[c] is None]
+        reasons = {c: card_busy_reason(c, jobs, gpus) for c in usable}
+        free = [c for c in usable if reasons[c] is None]
         target = None
         if mode == "all" and len(free) == len(wanted):
             target = list(wanted)
@@ -290,7 +341,10 @@ def append_claim(card, session, minutes, command):
 
 
 def free_if_empty(card):
-    if queue_counts(card) != (0, 0):
+    counts = queue_counts(card)
+    if counts is None:
+        return  # engine not answering (stopped): nothing loaded to free
+    if counts != (0, 0):
         log(f"card {card} queue not empty; leaving models loaded")
         return
     try:
@@ -314,7 +368,12 @@ def cmd_run(args):
         wanted, mode = list(CARDS), "any"
     else:
         wanted, mode = [args.card.upper()], "all"
-    held = acquire(wanted, mode, args.session, command)
+    try:
+        held = acquire(wanted, mode, args.session, command)
+    except CardUnavailable as e:
+        log(f"not run: {e}. Switch the card on in the app (or start its engine), or use --card any "
+            "to take the other card.")
+        return EXIT_CARD_UNAVAILABLE
     try:
         for c in held:
             append_claim(c, args.session, args.minutes, command)
@@ -331,6 +390,7 @@ def cmd_run(args):
 
 def cmd_status(_args):
     jobs = app_jobs()
+    gpus = app_gpus()
     for c, port in CARDS.items():
         counts = queue_counts(c)
         q = "not reachable" if counts is None else f"{counts[0]} running, {counts[1]} pending"
@@ -341,8 +401,11 @@ def cmd_status(_args):
             alive = info.get("pid", -1) > 0 and pid_alive(info["pid"])
             lock = f"{info.get('session')} pid {info.get('pid')} ({'alive' if alive else 'stale'})"
         j = jobs[c]
+        g = (gpus or {}).get(c)
+        app_state = "app unreachable" if gpus is None else (
+            f"app state {g.get('state', '?')}, enabled {g.get('enabled', '?')}" if g else "not in the app")
         print(f"card {c} (port {port}): queue {q}; lock {lock}; "
-              f"app jobs {j['running']} running, {j['queued']} queued")
+              f"app jobs {j['running']} running, {j['queued']} queued; {app_state}")
     return 0
 
 

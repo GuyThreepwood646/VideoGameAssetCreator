@@ -342,7 +342,8 @@ def apply_roof_lift(tex: np.ndarray, uvmesh: dict[str, np.ndarray], plan: dict[s
 
 
 def match_base_colour(glb: Path | str, picture: Path | str, base_png: Path | str, view: str | None = None,
-                      step1: Path | str | None = None, route: str | None = None, chroma: bool = False) -> dict[str, Any]:
+                      step1: Path | str | None = None, route: str | None = None, chroma: bool = False,
+                      regions: bool = False) -> dict[str, Any]:
     """Measure the model's lightness against its picture at the build view `view`'s turn and, when it is off, shift
     base_png and the GLB's own base colour image by the same move. When the build view's tone drifted from the step-1
     picture `step1` by more than DRIFT_MAX, the target is the step-1 picture instead, measured at the front turn.
@@ -375,9 +376,216 @@ def match_base_colour(glb: Path | str, picture: Path | str, base_png: Path | str
         cp = chroma_plan(mesh, out, pic, pic_mask, lp["yaw"], lp.get("iou", 0.0))
         rec["chroma"] = cp
         out = apply_chroma(out, cp)
-    if lp.get("mode") != "l_shift" and rec.get("roof_lift", {}).get("mode") != "roof_lift" and rec.get("chroma", {}).get("mode") != "chroma":
+        if regions:  # the four-view humanoid build only: per-region moves after the chroma stage
+            gp = region_plan(mesh, out, pic, pic_mask, lp["yaw"], lp.get("iou", 0.0))
+            rec["regions"] = gp
+            out = apply_regions(out, gp)
+    if lp.get("mode") != "l_shift" and rec.get("roof_lift", {}).get("mode") != "roof_lift" and rec.get("chroma", {}).get("mode") != "chroma" and rec.get("regions", {}).get("mode") != "regions":
         return rec
     Image.fromarray(face.to_uint8(out)).save(base_png)
     imaging.glb_replace_images(glb, base_color=base_png)
     rec["applied"] = True
     return rec
+
+
+# Region stage (PL-113): per-region lightness, chroma and hue moves after the chroma stage.
+R_K = 6                # colour regions found in the render
+R_MIN_SHARE = 0.015    # a region under this share of the masked render is never moved (small details stay as they are)
+R_MIN_DE = 4.0         # a region already within this delta E of its target is left alone
+R_L_CAP = 25.0         # most a region's mean L* moves
+R_SCALE = (0.6, 1.6)   # chroma scale range
+R_ROT_MAX = 25.0       # hue turn, degrees
+R_CARRY_MIN = 0.6      # share of a region's pixels that must land inside the picture's cut-out
+R_SPREAD_MAX = 20.0    # the picture's colours under a region must lie this close (mean delta E) to their own mean
+R_MIN_CHROMA = 5.0     # hue is turned only when both chromas are at least this
+R_FLAT = 1.5           # texels within this many region widths of a region's centre take its whole move
+R_SAMPLE = 20000       # pixels used to find the regions
+
+
+def _kmeans(x: np.ndarray, k: int, seed: int = 0, iters: int = 25) -> tuple[np.ndarray, np.ndarray]:
+    """k-means on rows of x with a k-means++ start and a fixed seed -> (centres sorted by L*, labels of every row)."""
+    rng = np.random.default_rng(seed)
+    sub = x if len(x) <= R_SAMPLE else x[rng.choice(len(x), R_SAMPLE, replace=False)]
+    c = [sub[rng.integers(len(sub))]]
+    for _ in range(k - 1):
+        d = np.min([((sub - ci) ** 2).sum(1) for ci in c], axis=0)
+        c.append(sub[rng.choice(len(sub), p=d / d.sum())] if d.sum() > 0 else sub[rng.integers(len(sub))])
+    c = np.array(c)
+    for _ in range(iters):
+        lab = np.argmin(((sub[:, None] - c[None]) ** 2).sum(2), axis=1)
+        new = np.array([sub[lab == i].mean(0) if (lab == i).any() else c[i] for i in range(k)])
+        if np.allclose(new, c, atol=1e-3):
+            break
+        c = new
+    c = c[np.argsort(c[:, 0])]
+    out = np.empty(len(x), dtype=int)
+    for s in range(0, len(x), 50000):
+        out[s:s + 50000] = np.argmin(((x[s:s + 50000, None] - c[None]) ** 2).sum(2), axis=1)
+    return c, out
+
+
+def _region_move(rc: np.ndarray, tc: np.ndarray) -> dict[str, float]:
+    """The capped move taking a region's mean Lab rc to its target tc: L* shift, chroma scale, hue turn (degrees)."""
+    dl = float(np.clip(tc[0] - rc[0], -R_L_CAP, R_L_CAP))
+    rch, tch = float(np.hypot(*rc[1:])), float(np.hypot(*tc[1:]))
+    scale, rot = 1.0, 0.0
+    if rch >= 1.0 and tch >= 1.0:
+        scale = float(np.clip(tch / rch, *R_SCALE))
+        if rch >= R_MIN_CHROMA and tch >= R_MIN_CHROMA:
+            gap = np.degrees(np.angle(complex(*tc[1:]) / complex(*rc[1:])))
+            rot = float(np.clip(gap, -R_ROT_MAX, R_ROT_MAX))
+    return {"dl": dl, "scale": scale, "rotate": rot}
+
+
+def _region_name(centre: np.ndarray, y_frac: float) -> str:
+    """Plain colour and place words for a region: lightness, hue family, and which third of the height it sits in."""
+    l, a, b = centre
+    if float(np.hypot(a, b)) < 8:
+        col = "black" if l < 25 else "dark grey" if l < 45 else "grey" if l < 75 else "white"
+    else:
+        h = float(np.degrees(np.arctan2(b, a)) % 360)
+        fam = "red" if h < 25 or h >= 340 else "orange" if h < 50 else "yellow" if h < 100 else "green" if h < 180 else "blue" if h < 270 else "purple"
+        col = ("dark " if l < 40 else "light " if l > 70 else "") + fam
+    return "%s, %s" % (col, "top third" if y_frac < 0.34 else "middle third" if y_frac < 0.67 else "bottom third")
+
+
+def _skin_like(centre: np.ndarray) -> bool:
+    l, a, b = centre
+    h = float(np.degrees(np.arctan2(b, a)) % 360)
+    return bool(l > 45 and a > 4 and b > 8 and 25 <= h <= 85)
+
+
+def apply_regions(rgb: np.ndarray, plan: dict[str, Any] | None) -> np.ndarray:
+    """The region moves of region_plan() on an sRGB 0..1 image (..., 3). Each texel is weighted towards each region by its
+    Lab distance to the region's centre (Gaussian, the region's own width); the weights are summed without normalising
+    below 1, so a texel far from every region stays put; the moves are blended by those weights. A region without a move
+    still pulls its own texels, so they are not taken by a neighbour's move."""
+    if not plan or plan.get("mode") != "regions":
+        return rgb
+    lab = face.to_lab(rgb).astype(np.float64)
+    shape = lab.shape[:-1]
+    flat = lab.reshape(-1, 3)
+    ws, dls, fs = [], [], []
+    for reg in plan["regions"]:
+        d2 = ((flat - np.array(reg["centre"])) ** 2).sum(1)
+        sg = float(reg["sigma"])
+        # flat top inside R_FLAT widths, Gaussian fall-off beyond: the core of a region takes its whole move
+        out_d = np.maximum(np.sqrt(d2) - R_FLAT * sg, 0.0)
+        ws.append(np.exp(-out_d ** 2 / (2.0 * (0.7 * sg) ** 2)))
+        mv = reg.get("move") or {"dl": 0.0, "scale": 1.0, "rotate": 0.0}
+        dls.append(mv["dl"])
+        fs.append(mv["scale"] * np.exp(1j * np.radians(mv["rotate"])))
+    ws = np.array(ws)
+    norm = np.maximum(ws.sum(0), 1.0)
+    dl = (ws * np.array(dls)[:, None]).sum(0) / norm
+    fac = 1.0 + (ws * (np.array(fs)[:, None] - 1.0)).sum(0) / norm
+    out = flat.copy()
+    room = np.where(dl > 0, 100.0 - out[:, 0], out[:, 0])
+    out[:, 0] = out[:, 0] + dl * np.clip(room / TAPER, 0.0, 1.0)
+    ab = (out[:, 1] + 1j * out[:, 2]) * fac
+    out[:, 1], out[:, 2] = ab.real, ab.imag
+    return from_lab(out.reshape(shape + (3,)))
+
+
+def region_plan(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, pic_mask: np.ndarray,
+                yaw: float, iou: float) -> dict[str, Any]:
+    """The region stage, run after the chroma stage on its texture `tex`. The model's flat render at the lightness stage's
+    turn `yaw` is split into R_K colour regions (k-means on Lab). Each pixel is carried to the picture by the two
+    silhouettes' bounding boxes and the picture's mean Lab under a region is its target. A region is moved only when
+    enough of it lands inside the cut-out (R_CARRY_MIN), the picture's colours under it agree (R_SPREAD_MAX), it holds at
+    least R_MIN_SHARE of the render and is more than R_MIN_DE from the target. Moves are capped (R_L_CAP, R_SCALE,
+    R_ROT_MAX). Every region is then checked on a re-render: one whose own delta E got worse goes back to no move, and
+    when the share-weighted delta E over the regions did not drop the whole pass is dropped.
+    -> {mode: none|regions, regions: [{name, share, centre, sigma, carried, target, spread, de_before, de_after, move,
+    skin, reason}], de_before, de_after, reason}."""
+    if iou < L_IOU_MIN:
+        return {"mode": "none", "reason": "fit_too_loose"}
+    ys, xs = np.nonzero(pic_mask)
+    if len(ys) < 100:
+        return {"mode": "none", "reason": "no_cutout"}
+    extent = float(max(np.ptp(xs), np.ptp(ys)) + 1) * L_SIZE / max(pic.shape[:2])
+    cam = texfidelity._frame_camera(mesh, yaw, extent, L_SIZE)
+    r = face.render_view(mesh, tex, cam, background=0.0)
+    border = max(1, int(round(texfidelity.BORDER_PX * max(pic.shape[:2]) / L_SIZE)))
+    rm, pm = face.erode(r["mask"], texfidelity.BORDER_PX), face.erode(pic_mask, border)
+    if rm.sum() < L_MASK_MIN_PX or pm.sum() < L_MASK_MIN_PX * (max(pic.shape[:2]) / L_SIZE) ** 2:
+        return {"mode": "none", "reason": "mask_too_small"}
+    ry, rx = np.nonzero(rm)
+    full_y, full_x = np.nonzero(r["mask"])
+    rlab = face.to_lab(face.to_uint8(r["image"]).astype(np.float64) / 255.0)[rm]
+    centres, lab = _kmeans(rlab, R_K)
+    py0, py1, px0, px1 = ys.min(), ys.max(), xs.min(), xs.max()
+    u = (rx - full_x.min() + 0.5) / max(np.ptp(full_x) + 1, 1)
+    v = (ry - full_y.min() + 0.5) / max(np.ptp(full_y) + 1, 1)
+    sx = np.clip(np.round(px0 + u * (px1 - px0 + 1) - 0.5).astype(int), 0, pic.shape[1] - 1)
+    sy = np.clip(np.round(py0 + v * (py1 - py0 + 1) - 0.5).astype(int), 0, pic.shape[0] - 1)
+    inside = pm[sy, sx]
+    plab = face.to_lab(pic[sy, sx])
+    top, height = full_y.min(), max(np.ptp(full_y) + 1, 1)
+    regions: list[dict[str, Any]] = []
+    ids: list[int] = []
+    for i in range(R_K):
+        m = lab == i
+        n = int(m.sum())
+        if n == 0:
+            continue
+        share = n / len(lab)
+        rc = rlab[m].mean(0)
+        sigma = float(max(np.sqrt(((rlab[m] - rc) ** 2).sum(1).mean() / 3.0), 6.0))
+        reg: dict[str, Any] = {"name": _region_name(rc, float((ry[m].mean() - top) / height)), "share": round(share, 4),
+                               "centre": [round(float(x), 3) for x in rc], "sigma": round(sigma, 3), "skin": _skin_like(rc),
+                               "carried": round(float(inside[m].mean()), 3)}
+        if share < R_MIN_SHARE:
+            reg["reason"] = "small"
+        elif reg["carried"] < R_CARRY_MIN:
+            reg["reason"] = "carry_unreliable"
+        else:
+            pl = plab[m & inside]
+            tc = pl.mean(0)
+            reg["target"] = [round(float(x), 3) for x in tc]
+            reg["spread"] = round(float(np.sqrt(((pl - tc) ** 2).sum(1)).mean()), 2)
+            reg["de_before"] = round(float(np.linalg.norm(rc - tc)), 2)
+            if reg["spread"] > R_SPREAD_MAX:
+                reg["reason"] = "picture_mixed"
+            elif reg["de_before"] <= R_MIN_DE:
+                reg["reason"] = "no_gain"
+            else:
+                reg["move"] = _region_move(rc, tc)
+                reg["reason"] = "applied"
+        regions.append(reg)
+        ids.append(i)
+    if not any(g.get("move") for g in regions):
+        return {"mode": "none", "reason": "no_region_to_move", "regions": regions}
+    plan: dict[str, Any] = {"mode": "regions", "regions": regions, "reason": "applied", "yaw": yaw}
+
+    def remeasure() -> None:
+        r2 = face.render_view(mesh, apply_regions(tex, plan), cam, background=0.0)
+        l2 = face.to_lab(face.to_uint8(r2["image"]).astype(np.float64) / 255.0)[rm]
+        for i, g in zip(ids, regions):
+            if "target" in g:
+                g["de_after"] = round(float(np.linalg.norm(l2[lab == i].mean(0) - np.array(g["target"]))), 2)
+
+    remeasure()
+    for g in regions:  # a region whose own delta E got worse goes back to no move
+        if g.get("move") and g["de_after"] > g["de_before"]:
+            g["move"], g["reason"] = None, "worse_dropped"
+    if not any(g.get("move") for g in regions):
+        return {"mode": "none", "reason": "all_worse", "regions": regions}
+    remeasure()
+    for g in regions:  # dropping a neighbour can change a region's own result: it is checked again, and set back if worse
+        if g.get("move") and g["de_after"] > g["de_before"]:
+            g["move"], g["reason"] = None, "worse_dropped"
+    if not any(g.get("move") for g in regions):
+        return {"mode": "none", "reason": "all_worse", "regions": regions}
+    remeasure()
+    scored = [g for g in regions if "target" in g]
+    tw = sum(g["share"] for g in scored)
+    plan["de_before"] = round(sum(g["share"] * g["de_before"] for g in scored) / tw, 2)
+    plan["de_after"] = round(sum(g["share"] * g.get("de_after", g["de_before"]) for g in scored) / tw, 2)
+    for g in scored:
+        if not g.get("move"):
+            g["de_after"] = g.get("de_after", g["de_before"])
+    if plan["de_after"] >= plan["de_before"]:
+        return {"mode": "none", "reason": "whole_not_better", "regions": regions,
+                "de_before": plan["de_before"], "de_after": plan["de_after"]}
+    return plan
