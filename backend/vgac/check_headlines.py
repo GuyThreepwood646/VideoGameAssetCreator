@@ -47,6 +47,7 @@ HEADLINES: dict[str, str] = {
     "texture_sharp": "The colour texture is softer than the picture",
     "texture_matches_picture": "The model's texture does not match the picture",
     "texture_colour_matches_picture": "The model's colours differ from the picture",
+    "texture_speckle": "The colour texture is speckled in rainbow colours",
     "bake_matches": "The surface detail was made for an earlier copy of the model",
     "picture_projection": "The picture was not painted onto the model",
     "neck_join": "The seam between face and body paint may show at the neck",

@@ -987,6 +987,12 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
                 "{tone} than the picture.",
         "vars": lambda c: {"tone": "lighter" if float((c.get("vars") or {}).get("delta_l") or 0) > 0 else "darker"},
     },
+    "texture_speckle": {
+        "severity": "warn",
+        "ok": "The colour texture is calm: the colours inside small areas stay close together (hue scatter {value:pct}).",
+        "fail": ("In small areas of the colour texture the colours jump between many different hues (hue scatter {value:pct}, it should "
+                 "stay at most {limit:pct}), so the model may look speckled in rainbow colours."),
+    },
     "texture_padding": {
         "severity": "warn",
         "ok": "Texture pieces (UV islands) have {value:n} px of space around them (UV padding), enough for distant views.",

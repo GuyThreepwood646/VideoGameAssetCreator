@@ -27,7 +27,8 @@ What it cannot see: the back and the sides (the picture shows one side), anythin
 the normal, metal and roughness maps, and lighting. A picture that is itself shaded is compared as shaded.
 
 Also here: texture_checks_for(), two report-only quality checks (severity warn, so they never block a run):
-texture_sharp and texture_colour_matches_picture.
+texture_sharp and texture_colour_matches_picture; and speckle_check(), texture_speckle (warn): the colour texture's
+hue scattered over small areas (a rainbow speckle), measured on the texture alone.
 """
 
 from __future__ import annotations
@@ -67,6 +68,16 @@ WIDE_EDGE_TRIES = 3   # the best wider fits whose edges are checked, best outlin
 # Report-only limits for the two checks (set from the bake-off baseline, docs/TEXTURE-FIDELITY-PLAN.md).
 SHARP_RATIO_MIN = 0.5
 DELTA_E_MAX = 12.0
+# texture_speckle (PL-129): the atlas cut into blocks one hundredth of its side wide; in each block that is nearly all
+# covered by UV islands and has enough saturated texels, the hue's circular variance (0 one hue, 1 hues all round). The
+# check's number is the mean over those blocks. A speckled atlas (many hues inside one small block) scores about 0.04
+# to 0.1, planted noise 0.1 to 0.25; clean builds measured 0.0 to 0.015. Limit 0.025, the geometric mean of the lowest
+# speckled and the highest clean sample (bakeoff/pl129).
+SPECKLE_BLOCK = 0.01
+SPECKLE_CHROMA = 20.0   # Lab chroma a texel needs to count towards a block's hue
+SPECKLE_SHARE = 0.3     # share of a block's texels that must be that saturated for the block to count
+SPECKLE_COVER = 0.9     # share of a block that UV islands must cover
+SPECKLE_MAX = 0.025
 
 
 # --- shared atlas and view measures (moved from the bake-off scripts) -----------------------------------------
@@ -100,6 +111,58 @@ def view_sharpness(mesh: dict[str, np.ndarray], tex: np.ndarray, size: int = VIE
         r = face.render_view(mesh, tex, face.Camera(target=centre, yaw_deg=yaw, scale=scale, size=size), background=0.5)
         out.append({"yaw": yaw, "image": r["image"], "mask": r["mask"], "sharpness": face.sharpness(r["image"], r["mask"])})
     return out
+
+
+def hue_speckle(tex: np.ndarray, cover: np.ndarray) -> float:
+    """Mean hue circular variance over the atlas's small blocks (see SPECKLE_BLOCK); 0.0 when no block counts (a grey or
+    unsaturated atlas has no hue to scatter)."""
+    size = tex.shape[0]
+    b = max(4, int(round(size * SPECKLE_BLOCK)))
+    n = size // b
+    if n < 1:
+        return 0.0
+    lab = face.to_lab(tex[:n * b, :n * b])
+    chroma = np.hypot(lab[..., 1], lab[..., 2])
+    hue = np.arctan2(lab[..., 2], lab[..., 1])
+    sat = (chroma > SPECKLE_CHROMA).astype(np.float64)
+
+    def tiles(a: np.ndarray) -> np.ndarray:
+        return a.reshape(n, b, n, b).sum(axis=(1, 3))
+
+    count = tiles(sat)
+    covered = tiles(cover[:n * b, :n * b].astype(np.float64)) / (b * b)
+    ok = (covered >= SPECKLE_COVER) & (count >= SPECKLE_SHARE * b * b)
+    if not ok.any():
+        return 0.0
+    resultant = np.hypot(tiles(sat * np.cos(hue)), tiles(sat * np.sin(hue))) / np.maximum(count, 1.0)
+    return float((1.0 - resultant[ok]).mean())
+
+
+def speckle_measure(glb: Path | str, base_color: Path | str | None = None) -> dict[str, Any]:
+    """{"hue_scatter": float} for a textured GLB's base colour map, or {"error": ...}. CPU only; no picture is needed.
+    Never raises: a measure must never break a stage."""
+    try:
+        mesh = face.load_mesh(glb)
+        if mesh is None:
+            return {"error": "the model has no texture layout"}
+        tex = load_texture(glb, base_color)
+        if tex is None:
+            return {"error": "the model has no base colour"}
+        cover = face.erode(uv_cover(mesh, tex.shape[0]), 3)
+        return {"hue_scatter": round(hue_speckle(tex, cover), 4)}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:200]}
+
+
+def speckle_check(measure: dict[str, Any] | None) -> dict[str, Any]:
+    """texture_speckle (warn) from speckle_measure(); "not measured" (never silently missing) when the measure failed."""
+    from . import quality
+
+    what = "whether the colour texture is speckled"
+    if not measure or measure.get("hue_scatter") is None:
+        return quality.not_measured("texture_speckle", what, "the colour texture could not be read")
+    v = float(measure["hue_scatter"])
+    return quality.check("texture_speckle", v <= SPECKLE_MAX, v, SPECKLE_MAX)
 
 
 # --- inputs -------------------------------------------------------------------------------------------------
