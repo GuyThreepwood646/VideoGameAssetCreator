@@ -142,6 +142,21 @@ def rebuilds_wanted(category: str | None) -> bool:
     return route_of(category) in REBUILD_ROUTES
 
 
+def soft_fold_over(category: str | None, folded: float | None) -> bool:
+    """Whether a build that passes the shape gate still has more folded edges than its category's soft limit
+    (`soft_fold_rebuild` in the category file, a share). Such a build is built once more and the lower share kept. False
+    for a category with no soft limit, a route that does not rebuild, or a build that could not be measured."""
+    if folded is None or not rebuilds_wanted(category):
+        return False
+    from . import reference  # late: reference loads the data files
+
+    try:
+        limit = reference.category(category or "").get("soft_fold_rebuild")
+    except KeyError:
+        return False
+    return limit is not None and float(folded) > float(limit)
+
+
 def pick_best(builds: list[dict[str, Any]]) -> int:
     """The build to keep out of the tries: each has "seed", "folded" (the folded-edge share; None when it could not be
     measured, which counts as worst), "passed" (the geometry verdict; None or absent when not measured, which counts as

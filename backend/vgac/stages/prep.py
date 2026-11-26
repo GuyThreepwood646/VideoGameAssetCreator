@@ -1111,11 +1111,12 @@ def apply_look(look: dict[str, Any], uvf: dict[str, Any], maps: dict[str, Path],
             # per island: each texel is averaged from its own UV island only, then the islands are grown into the empty
             # space, so no island takes in a neighbour's colour or the background (the box filter blended them)
             base = np.clip(np.asarray(new_base, dtype=np.float32), 0.0, 1.0)
-            files["base_color"] = imaging.write_map(imaging.shrink_by_island(base, uvf, target), out_dir / "base_color.png")
+            files["base_color"] = imaging.write_map(imaging.shrink_by_island(base, uvf, target, linear=True), out_dir / "base_color.png")
             imaging.dilate_png(files["base_color"], imaging.rasterise_uv(uvf, target)["labels"] > 0, imaging.dilation_px(target))
         else:
-            im = Image.fromarray((np.clip(new_base, 0, 1) * 255).round().astype("uint8"), "RGB").resize((target, target), Image.BOX)
-            files["base_color"] = imaging.write_map(np.asarray(im, dtype="float32") / 255.0, out_dir / "base_color.png")
+            lin = imaging.srgb_to_linear(np.clip(new_base, 0, 1))
+            chans = [np.asarray(Image.fromarray(lin[..., c]).resize((target, target), Image.BOX), dtype=np.float32) for c in range(3)]
+            files["base_color"] = imaging.write_map(imaging.linear_to_srgb(np.stack(chans, axis=-1)), out_dir / "base_color.png")
     keys = ("metallic", "roughness", "ao") + (("normal",) if look.get("normal_map", True) else ())
     for key in keys:
         src = files.get(key) or maps.get(key)

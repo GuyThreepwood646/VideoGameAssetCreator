@@ -55,6 +55,9 @@ remesh_default: true
 # (Low-poly: 1,500 triangles, 512 px). The builder keeps thin parts (awnings, crates, window frames) at the larger size;
 # its own reduction to 1,500 crumpled them.
 build_at_platform_budget: true
+# A build whose folded-edge share is over this (0.9 percent; whole builds read 0.35 to 0.63 percent, the folded ones 1.06
+# to 1.63) is built once more with the next seed and the lower folded share is kept (stages/mesh.py _shape_gate).
+soft_fold_rebuild: 0.009
 budgets:
   mobile_low: {triangles: 3000, texture: 1024}
   pc_mid: {triangles: 15000, texture: 2048}

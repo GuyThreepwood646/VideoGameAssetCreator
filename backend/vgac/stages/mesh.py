@@ -523,13 +523,19 @@ async def _shape_gate(sc: StageContext, kept: dict[str, Any], build_again, tries
     passed = None if report is None else meshgeom.passes(category, report)
     tried = [_shape_try(kept, report, passed)]
     builds = [kept]
-    if passed is not False:  # whole, or not measurable: nothing to rebuild
+    soft = passed is not False and meshgeom.soft_fold_over(category, tried[0]["folded"])
+    if passed is not False and not soft:  # whole, or not measurable: nothing to rebuild
         return kept, [], {"tries": tried, "kept_try": 1, "extra_builds": 0, "kept_passed": passed}
+    # A torn model gets up to REBUILD_MAX more builds; one that is whole but over the category's soft folded limit gets one.
+    most = meshgeom.REBUILD_MAX if passed is False else 1
     extra: list[dict[str, Any]] = []
-    for i in range(1, meshgeom.REBUILD_MAX + 1):
+    for i in range(1, most + 1):
         _keep_aside(sc.dir, tries_dir / f"shape{i}")
         seed = texcolour.try_seed(int(kept["seed"]), i)
-        sc.progress(0.05, f"The 3D model came out torn, so it is being built again (extra build {i} of {meshgeom.REBUILD_MAX})")
+        if soft:
+            sc.progress(0.05, "The 3D model has more folded surface than usual, so it is being built once more and the better one kept")
+        else:
+            sc.progress(0.05, f"The 3D model came out torn, so it is being built again (extra build {i} of {meshgeom.REBUILD_MAX})")
         with steptime.part(sc, "shape_rebuild"):
             build = await build_again(seed, texcolour.MAX_TRIES + i - 1)
         report = await _health(sc, sc.dir / "model.glb", f"try{i + 1}")
@@ -543,8 +549,10 @@ async def _shape_gate(sc: StageContext, kept: dict[str, Any], build_again, tries
     if best != len(builds) - 1:
         _keep_aside(sc.dir, tries_dir / f"shape{len(builds)}")
         _bring_back(tries_dir / f"shape{best + 1}", sc.dir)
-    return builds[best], extra, {"tries": tried, "kept_try": best + 1, "extra_builds": len(extra),
-                                 "kept_passed": tried[best]["passed"]}
+    record = {"tries": tried, "kept_try": best + 1, "extra_builds": len(extra), "kept_passed": tried[best]["passed"]}
+    if soft:
+        record["soft_rebuild"] = True
+    return builds[best], extra, record
 
 
 # --- The head built on its own (vgac/headgraft.py, docs/HEAD-BUILD-PLAN.md) -------------------------------------
