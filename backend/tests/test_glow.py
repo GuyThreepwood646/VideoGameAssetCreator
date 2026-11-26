@@ -135,3 +135,27 @@ def test_window_is_decided_whole_by_its_lit_share():
         return glow_worker.window_lit_share(rgb, hsv, (10, 10, 30, 30), mask)
 
     assert share(12) >= glow_worker.WINDOW_LIT_SHARE > share(4)
+
+
+def test_missed_windows_are_caught_only_when_window_shaped_and_like_the_named_ones():
+    from PIL import Image
+
+    from vgac import glow_worker
+
+    rgb = np.full((120, 160, 3), 0.45, np.float32)            # a mid wall
+    warm = (1.0, 0.7, 0.2)
+    named = np.zeros((120, 160), bool)
+    lit = []
+    for k in range(5):                                         # five named lit windows, 12 x 20
+        m = np.zeros_like(named)
+        m[10:30, 6 + k * 18:18 + k * 18] = True
+        rgb[m] = warm
+        named |= m
+        lit.append(m)
+    rgb[60:80, 10:22] = warm                                   # a missed window, same size and colour
+    rgb[60:64, 40:140] = warm                                  # a long thin warm bar: not a window
+    rgb[90:110, 100:112] = (1.0, 0.2, 0.2)                     # a bright red patch: not the windows' colour
+    hsv = np.asarray(Image.fromarray((rgb * 255).astype(np.uint8), "RGB").convert("HSV"))
+    found = glow_worker.missed_windows(rgb, hsv, named, lit)
+    assert len(found) == 1 and found[0][1][60:80, 10:22].all() and not found[0][1][60:64, 40:140].any()
+    assert glow_worker.missed_windows(rgb, hsv, named, lit[:4]) == []   # too few named windows to learn from
