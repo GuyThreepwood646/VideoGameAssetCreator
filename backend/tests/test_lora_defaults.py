@@ -126,7 +126,7 @@ def test_new_version_records_the_defaults_and_the_job_gets_them(mine_settings, m
     class Q:
         settings, supervisor, disabled = None, None, set()
 
-        def place(self, stage, category, params=None):
+        def place(self, stage, category, params=None, pin=None):
             return "A", None
 
         def submit(self, instance, kind, aid, vid, body, message=None):
