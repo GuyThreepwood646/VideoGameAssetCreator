@@ -149,3 +149,65 @@ def test_an_existing_refs_file_is_never_changed(project, monkeypatch):
     assert finder_setup.run(check_only=True, say=lambda s: None) == 0
     finder_setup.write_refs(dl.Spec(id="x", name="x", urls=[], dest=snap / "model.bin"))
     assert (refs / "main").read_text(encoding="utf-8") == "b" * 40
+
+
+PS1 = Path(__file__).resolve().parents[2] / "setup" / "Setup-ItemFinder.ps1"
+PIN_FILE = Path(__file__).resolve().parents[2] / "setup" / "finder-requirements.txt"
+
+
+def test_the_committed_pin_file_is_the_finder_environment_with_no_local_lines():
+    pins = finder_setup.read_pins(PIN_FILE.read_text(encoding="utf-8"))
+    assert pins["torch"] == "2.15.0+cpu"
+    assert pins["transformers"] == "5.24.1" and pins["timm"] == "1.0.31" and pins["pillow"] == "13.0.0"
+    assert pins["numpy"] == "2.5.5"
+    for line in PIN_FILE.read_text(encoding="utf-8").splitlines():
+        assert not line.startswith("-e") and "@" not in line and "file:" not in line, line
+
+
+def test_the_install_uses_the_pin_file_and_the_torch_cpu_index_with_the_same_torch_pin():
+    text = PS1.read_text(encoding="utf-8")
+    assert r"$reqFile = Join-Path $root 'setup\finder-requirements.txt'" in text
+    assert "pip install --quiet -r $reqFile" in text
+    assert "pip install --quiet torch==2.15.0+cpu --index-url https://download.pytorch.org/whl/cpu" in text
+    assert "transformers timm pillow numpy" not in text  # no unpinned install left
+    pins = finder_setup.read_pins(PIN_FILE.read_text(encoding="utf-8"))
+    assert f"torch=={pins['torch']} --index-url" in text
+
+
+def test_drift_lists_missing_and_different_pins_and_ignores_extra_packages():
+    pins = {"torch": "2.15.0+cpu", "numpy": "2.5.5", "timm": "1.0.31"}
+    have = {"torch": "2.15.0+cpu", "numpy": "2.6.0", "extra-thing": "1.0"}
+    drift = finder_setup.pin_drift(pins, have)
+    assert drift == ["numpy is 2.6.0, pinned 2.5.5", "timm 1.0.31 is not installed"]
+
+
+def test_pin_names_compare_in_the_canonical_form():
+    assert finder_setup.read_pins("Pillow==13.0.0\nhf_xet==1.8.0\n") == {"pillow": "13.0.0", "hf-xet": "1.8.0"}
+
+
+def test_run_reports_drift_from_the_environments_own_freeze_and_changes_nothing(project, monkeypatch):
+    url = "https://huggingface.co/x/y/resolve/" + COMMIT + "/model.bin"
+    fake_list(monkeypatch, {"model.bin": (DATA, url)})
+    (project / "setup" / "finder-requirements.txt").write_text("numpy==2.5.5\ntimm==1.0.31\n", encoding="utf-8")
+    py = project / "local" / "finder" / "venv" / ("Scripts" if finder_setup.os.name == "nt" else "bin") / (
+        "python.exe" if finder_setup.os.name == "nt" else "python")
+    py.parent.mkdir(parents=True)
+    py.write_text("", encoding="utf-8")
+    monkeypatch.setattr(finder_setup, "installed_versions", lambda p: {"numpy": "2.5.5"})
+    monkeypatch.setattr(dl, "default_open", lambda *a: pytest.fail("a check must not download"))
+    lines = []
+    finder_setup.run(check_only=True, say=lines.append)
+    assert any("timm 1.0.31 is not installed" in line for line in lines)
+    assert not any("numpy" in line and "differ" in line for line in lines)
+
+
+def test_run_says_the_packages_match_when_the_freeze_matches(project, monkeypatch):
+    url = "https://huggingface.co/x/y/resolve/" + COMMIT + "/model.bin"
+    fake_list(monkeypatch, {"model.bin": (DATA, url)})
+    (project / "setup" / "finder-requirements.txt").write_text("numpy==2.5.5\n", encoding="utf-8")
+    monkeypatch.setattr(finder_setup, "venv_python", lambda: project / "venv-python")
+    (project / "venv-python").write_text("", encoding="utf-8")
+    monkeypatch.setattr(finder_setup, "installed_versions", lambda p: {"numpy": "2.5.5"})
+    lines = []
+    finder_setup.run(check_only=True, say=lines.append)
+    assert "Item finder packages match setup/finder-requirements.txt." in lines
