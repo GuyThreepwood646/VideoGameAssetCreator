@@ -18,6 +18,7 @@ what is missing and how to get it (missing_look_addons); the setup check lists t
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,18 @@ def face_sentence(sc: StageContext, params: dict[str, Any], description: str) ->
     if not params.get("face_block", True):
         return ""
     return hairpic.face_sentence(description, getattr(sc, "style", None), getattr(sc, "category", None))
+
+
+_QUOTED_WORDS = re.compile(r"[\"“][^\"“”]*[A-Za-z0-9][^\"“”]*[\"”]")
+
+
+def pose_block_for(category: dict[str, Any], description: str) -> str:
+    """The category's pose block; its lettered variant (`pose_block_lettered`) when the description puts words in quotes,
+    so a sign is lettered with exactly those words. Without quoted words the plain block applies."""
+    lettered = category.get("pose_block_lettered")
+    if lettered and _QUOTED_WORDS.search(description or ""):
+        return lettered
+    return category.get("pose_block") or ""
 
 
 def full_stop(text: str) -> str:
@@ -133,7 +146,7 @@ def prompt_and_view(sc: StageContext, params: dict[str, Any]) -> tuple[str, str 
     if params.get("readiness_block", True) and (held or {}).get("pose_block"):
         parts.append(held["pose_block"])
     elif params.get("readiness_block", True) and sc.category.get("pose_block"):
-        parts.append(sc.category["pose_block"])
+        parts.append(pose_block_for(sc.category, base))
         category_wording = True
     if (held or {}).get("sentence"):
         parts.append(held["sentence"])
