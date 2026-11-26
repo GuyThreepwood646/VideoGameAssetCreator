@@ -187,3 +187,39 @@ def test_buildings_limit_is_the_six_percent_rerun_2_limit():
     assert meshgeom.LIMITS["buildings"]["folded"] == 0.06
     assert meshgeom.passes("environment", _report(0.0474)) is True  # the highest judged-usable build of rerun 2
     assert meshgeom.passes("environment", _report(0.113)) is False  # the lowest judged-damaged one
+
+
+def test_soft_limit_builds_a_whole_but_folded_model_once_more_and_keeps_the_lower(gate):
+    state, run = gate
+    state["folded"] = [0.0106, 0.0063]  # whole (under 0.06) but over the scenery soft limit of 0.009
+    sc = run({"seed": 50})
+    assert state["seeds"] == [50, texcolour.try_seed(50, 1)]
+    rec = sc.version.metrics["shape_rebuild"]
+    assert rec["extra_builds"] == 1 and rec["kept_try"] == 2 and rec["soft_rebuild"] is True
+    assert (sc.dir / "model.glb").read_text() == f"glb {texcolour.try_seed(50, 1)}"
+
+
+def test_soft_limit_keeps_the_first_when_the_extra_build_is_worse_and_never_builds_a_third(gate):
+    state, run = gate
+    state["folded"] = [0.0106, 0.0163, 0.0001]
+    sc = run({"seed": 50})
+    assert state["seeds"] == [50, texcolour.try_seed(50, 1)]  # one extra build only
+    rec = sc.version.metrics["shape_rebuild"]
+    assert rec["kept_try"] == 1 and rec["extra_builds"] == 1
+    assert (sc.dir / "model.glb").read_text() == "glb 50"
+
+
+def test_soft_limit_does_not_fire_at_or_under_the_limit(gate):
+    state, run = gate
+    state["folded"] = [0.009]
+    sc = run({"seed": 50})
+    assert state["seeds"] == [50]
+    assert "soft_rebuild" not in sc.version.metrics["shape_rebuild"]
+
+
+def test_soft_limit_is_scenery_only():
+    assert meshgeom.soft_fold_over("environment", 0.0106) is True
+    assert meshgeom.soft_fold_over("environment", 0.0063) is False
+    assert meshgeom.soft_fold_over("environment", None) is False
+    assert meshgeom.soft_fold_over("humanoid", 0.5) is False
+    assert meshgeom.soft_fold_over("foliage", 0.15) is False
