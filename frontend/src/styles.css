@@ -4371,11 +4371,16 @@ button.preset-card:hover:not(:disabled) {
   align-items: flex-start;
 }
 .viewer-toolbar .viewer-light-pop {
-  position: absolute;
+  position: fixed;
   top: calc(100% + var(--s1));
   left: 0;
   z-index: var(--z-pop);
   min-width: 260px;
+}
+@media (hover: none) {
+  .viewer-light-tile {
+    min-height: 44px;
+  }
 }
 .viewer-toolbar .viewer-light-btn {
   padding: var(--s1) 10px;
@@ -5209,6 +5214,14 @@ textarea::placeholder {
 @media (max-width: 700px) {
   :root {
     --control-md: 40px;
+  }
+  /* A link in the top bar gets a tap area of 28 px, and a drop-down with a long choice never runs past the window. */
+  .topnav a {
+    display: inline-block;
+    padding: 5px 0;
+  }
+  select {
+    max-width: 100%;
   }
   /* An asset page scrolls as one page. The step list becomes a strip of compact steps that scrolls sideways in its
      own box, so each step starts right under it and nothing sits in a second scroll box. */

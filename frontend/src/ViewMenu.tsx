@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { isOutsideClick } from './popMenu'
 
 // The View menu at the right end of the top bar: Reload, Force reload and Full screen.
 // Zoom is left out: the page has no way to change WebView2's zoom (Ctrl+plus and Ctrl+minus already work there),
@@ -24,11 +25,12 @@ export function ViewMenu() {
   // Click outside closes the menu. Escape is handled on the wrapper so it works from the button and from the items.
   useEffect(() => {
     if (!open) return
-    const onDown = (e: PointerEvent) => {
-      if (!wrap.current?.contains(e.target as Node)) setOpen(false)
+    // A click, not a pointerdown, so a touch that starts a scroll leaves the menu open.
+    const onClick = (e: MouseEvent) => {
+      if (wrap.current && isOutsideClick(wrap.current, e.target)) setOpen(false)
     }
-    document.addEventListener('pointerdown', onDown)
-    return () => document.removeEventListener('pointerdown', onDown)
+    document.addEventListener('click', onClick)
+    return () => document.removeEventListener('click', onClick)
   }, [open])
 
   function items(): HTMLButtonElement[] {
