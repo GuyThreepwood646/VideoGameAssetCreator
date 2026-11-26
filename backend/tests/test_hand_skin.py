@@ -22,19 +22,31 @@ def test_bones_are_sorted_by_role_and_side():
     assert cols == {"hand": 4, "finger": [5], "fore": [2, 3]}
 
 
-def test_region_is_the_skin_near_the_hand_from_a_little_behind_the_wrist():
-    P = np.array([[0, 0, 0.5], [0, 0, 0.64], [0, 0, 0.95], [0.5, 0, 0.5], [0, 0, 0.7], [0.05, 0, 0.5]])
+def test_region_is_the_skin_near_the_hand_and_stops_just_behind_the_wrist():
+    P = np.array([[0, 0, 0.5], [0, 0, 0.618], [0, 0, 0.95], [0.5, 0, 0.5], [0, 0, 0.7], [0.05, 0, 0.5], [0, 0, 0.64]])
     mask, a, hl = hs.hand_region(P, (0, 0, 0.6), (0, 0, 0.5), (0, 0, 0.9))
-    assert mask.tolist() == [True, True, False, False, False, False]
+    assert mask.tolist() == [True, True, False, False, False, False, False]  # 0.64 is 0.4 hl behind the joint: outside
     assert hl == pytest.approx(0.1)
-    assert a[0] == pytest.approx(0.1) and a[1] == pytest.approx(-0.04)
+    assert a[0] == pytest.approx(0.1) and a[1] == pytest.approx(-0.018)
 
 
-def test_ramp_is_smooth_half_at_its_centre_and_whole_from_the_joint_on():
-    s = hs.target_share(np.array([-0.1, -0.06, -0.03, 0.0, 0.1]), 0.1)
+def test_ramp_is_smooth_zero_at_the_bound_half_in_the_middle_and_whole_from_a_tenth_past_the_joint():
+    s = hs.target_share(np.array([-0.04, -0.02, -0.005, 0.01, 0.05]), 0.1)
     assert s[0] == 0.0 and s[1] == 0.0 and s[2] == pytest.approx(0.5) and s[3] == 1.0 and s[4] == 1.0
-    ramp = hs.target_share(np.linspace(-0.06, 0.0, 20), 0.1)
+    ramp = hs.target_share(np.linspace(-0.02, 0.01, 20), 0.1)
     assert np.all(np.diff(ramp) >= 0) and np.max(np.abs(np.diff(ramp))) < 0.2
+    assert hs.HAND_BACK == -0.2 and hs.target_share(np.array([hs.HAND_BACK * 0.1]), 0.1)[0] == 0.0
+
+
+def test_nothing_behind_the_bound_changes():
+    cols = hs.side_columns(NAMES, "L")
+    P = np.array([[0, 0, 0.63], [0, 0, 0.61], [0, 0, 0.58]])  # a = -0.3, -0.1, 0.2 hl
+    mask, a, hl = hs.hand_region(P, (0, 0, 0.6), (0, 0, 0.5), (0, 0, 0.9))
+    W = np.zeros((3, len(NAMES)))
+    W[:, [2, 4]] = [0.8, 0.2]
+    rows = hs.hand_skin_rows(W, mask, cols, np.array([True, True, True]))
+    W2, _ = hs.move_to_hand(W, rows, hs.target_share(a[rows], hl), cols)
+    assert np.array_equal(W2[0], W[0]) and rows.tolist() == [1, 2]
 
 
 def test_cloth_round_the_wrist_with_no_hand_weight_is_not_hand_skin():
