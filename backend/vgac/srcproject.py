@@ -3035,9 +3035,10 @@ async def upscale_sources(sc: Any, files: dict[str, Path | None], work: Path) ->
 
     t0 = time.time()
     info: dict[str, Any] = {"upscaled": [], "model": None}
-    inst = face_detail.image_instance(sc)
+    inst = await face_detail.live_image_instance(sc)
     if inst is None:
         return files, {**info, "skipped": "no card to draw on"}
+    others = [c for c in face_detail.image_instances(sc) if c != inst]
     cv = sc.stage_version("concept")
     photo = getattr(sc.asset, "style_preset", None) == "realistic_pbr" or (
         cv is not None and (cv.params or {}).get("source") in ("upload", "upload_edit"))
@@ -3062,11 +3063,23 @@ async def upscale_sources(sc: Any, files: dict[str, Path | None], work: Path) ->
             with Image.open(p) as im:
                 w, h = im.size
             f = PIC_N_BIG / float(side)
-            name = await sc.stage_input(p, f"vgac_{sc.version.id[:8]}_srcproject_{key}.png", instance=inst)
             model = model_for(key)
-            graph = concept.upscale_graph(name, model, int(round(w * f)), int(round(h * f)), sc.prefix(f"srcproject_{key}"))
-            entry = await sc.comfy(graph, instance=inst, message="Sharpening the pictures to paint from")
-            raw = await sc.download_image(entry, "save", work / f"up_{key}_raw.png", instance=inst)
+
+            async def on_card(card: str) -> Path:
+                name = await sc.stage_input(p, f"vgac_{sc.version.id[:8]}_srcproject_{key}.png", instance=card)
+                g = concept.upscale_graph(name, model, int(round(w * f)), int(round(h * f)), sc.prefix(f"srcproject_{key}"))
+                entry = await sc.comfy(g, instance=card, message="Sharpening the pictures to paint from")
+                return await sc.download_image(entry, "save", work / f"up_{key}_raw.png", instance=card)
+
+            try:
+                raw = await on_card(inst)
+            except (JobCancelled, asyncio.CancelledError):
+                raise
+            except Exception:  # noqa: BLE001  (the card went away part way: the next card that may draw pictures, once)
+                if not others:
+                    raise
+                raw = await on_card(others[0])
+                inst, others = others[0], [inst]
             out[key] = done[str(p)] = await asyncio.to_thread(_with_alpha_of, Path(raw), Path(p), work / f"up_{key}.png")
             info["upscaled"].append(key)
             used.add(model)
@@ -3152,6 +3165,8 @@ async def run_stage(sc: Any, glb: Path, current: dict[str, Path], params: dict[s
         up = {"upscaled": [], "skipped": f"failed: {str(e)[:160]}"}
         up["note"] = upscale_note(up)
     sc.set_metrics(srcproject_upscale=up)
+    if hasattr(sc, "progress"):  # the sharpening label must not stay up while the pictures are painted
+        sc.progress(None, "Painting the pictures onto the model")
     big = any(p is not None and Path(p).is_file() and _longer_side(Path(p)) >= UPSCALE_BELOW for p in srcs.values())
     picture, source, front_view = srcs["picture"], srcs["source"], srcs["front"]
     turn = {v: srcs.get(v) for v in painted_views(params)}
