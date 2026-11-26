@@ -10,7 +10,7 @@ export const UNDO_BYTES = 256 * 1024 * 1024
 
 export type Rect = { x: number; y: number; w: number; h: number }
 // What the stroke was set to, for the stroke log saved with the picture (WP-23). Sizes are in centimetres on the model.
-export type PaintTargetName = 'colour' | 'shine' | 'metal'
+export type PaintTargetName = 'colour' | 'shine' | 'metal' | 'glow'
 export type StrokeRecord = {
   mode: 'paint' | 'erase' | 'smudge' | 'fill'
   target?: PaintTargetName // what the stroke painted; colour when absent (WP-32 shine and metal)
@@ -26,7 +26,7 @@ type Entry = { rect: Rect; before: Uint8Array; after: Uint8Array; stroke: Stroke
 // The step name shown on Undo and Redo: what the step was.
 function stepLabel(stroke: StrokeRecord | null): string {
   if (!stroke) return "back to the model's own picture"
-  const what = stroke.target === "shine" ? "shine " : stroke.target === "metal" ? "metal " : ""
+  const what = stroke.target === "shine" ? "shine " : stroke.target === "metal" ? "metal " : stroke.target === "glow" ? "glow " : ""
   if (stroke.mode === "erase") return what ? `a ${what}eraser stroke` : "an eraser stroke"
   if (stroke.mode === "smudge") return `a ${what}smudge stroke`
   if (stroke.mode === "fill") return `a ${what}fill`
