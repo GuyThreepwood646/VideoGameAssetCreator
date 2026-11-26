@@ -32,7 +32,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import face, hair, hairmat, imaging, quality
+from .. import face, hair, hair_outline, hairmat, imaging, quality
 from ..tools import ToolError
 from .base import StageContext
 
@@ -213,7 +213,11 @@ async def find(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
     seed = seed_of(params, sc.asset.id)
     sc.progress(0.72, "Finding the hair")
     try:
-        found = await asyncio.to_thread(hair.find_hair, glb, Path(base), maps.get("metallic"), pictures(sc), seed, skin_metal=skin_metal)
+        pics = pictures(sc)
+        outlines, finder_rec = await asyncio.to_thread(hair_outline.find, sc.settings, pics, out_dir / "outline")  # {} when no finder
+        found = await asyncio.to_thread(hair.find_hair, glb, Path(base), maps.get("metallic"), pics, seed, skin_metal=skin_metal,
+                                        outlines=outlines or None)
+        found["finder"] = finder_rec
     except Exception as e:  # noqa: BLE001  (never fails the clean-up step)
         return {"plan": None, "record": {"ran": False, "skipped": "error", "error": str(e)[:300]}, "t0": t0}
     measures = {k: v for k, v in found.items() if k not in ("tris", "centres", "tri_label", "found", "reason", "hair_i", "skin_i")}

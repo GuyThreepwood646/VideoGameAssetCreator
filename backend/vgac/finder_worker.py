@@ -4,7 +4,8 @@ For each rendered view (`<view>_color.png`): Grounding DINO (tiny, Apache-2.0) f
 SAM 2.1 (hiera small, Apache-2.0) makes the mask from that box. Writes `<view>_mask.npy` (bool) and detection.json.
 The vote over polygons is done by the backend (item_suggest.py), which holds the id maps.
 
-Run: <finder python> finder_worker.py <views_dir> "<phrase>" <models_dir>
+Run: <finder python> finder_worker.py <views_dir> "<phrase>" <models_dir> [name,name,...]
+The optional names list replaces the worn-item views (the hair outline, hair_outline.py, names the turnaround pictures).
 Models: Hugging Face cache under <models_dir> (HF_HOME is set here, before transformers is imported).
 Prints FINDER_OK on success; a failure exits non-zero with the reason on stderr.
 """
@@ -22,6 +23,7 @@ MAX_BOX_SHARE = 0.4  # a box over this share of the picture is the whole figure,
 
 def main() -> int:
     views_dir, phrase, models_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+    views = [v for v in sys.argv[4].split(",") if v] if len(sys.argv) > 4 else VIEWS
     os.environ["HF_HOME"] = models_dir
     import numpy as np
     import torch
@@ -35,7 +37,7 @@ def main() -> int:
     smodel = Sam2Model.from_pretrained(SAM2, local_files_only=True).eval()
     prompt = phrase.strip().rstrip(".") + "."
     detections = {}
-    for v in VIEWS:
+    for v in views:
         img = Image.open(os.path.join(views_dir, f"{v}_color.png")).convert("RGB")
         W, H = img.size
         inputs = gproc(images=img, text=prompt, return_tensors="pt")
