@@ -370,7 +370,7 @@ Versions and the picture steps
 - PUT /api/my-addons/{aid}/start-on: sets the categories and uses where one of the person's LoRAs starts on [user_addons.py].
 
 Clean-up, paint and shape (step 4 and the mesh tab)
-- POST /api/versions/{vid}/paint: saves touch-up paint as a new clean-up version [main.py].
+- POST /api/versions/{vid}/paint: saves touch-up paint as a new clean-up version; the colour, shine, metal and glow pictures are each sent with an edit mask, and the glow picture holds 0 where untouched and 1 + 254 x strength where the Glow brush went [main.py].
 - POST /api/versions/{vid}/smooth: smooths the paint of a painted clean-up, as a new version [main.py].
 - POST /api/versions/{vid}/shape/preview: where each arm's cut would start on this rig; computes only, no job and no version [main.py].
 - POST /api/versions/{vid}/shape: separates a fused arm; a new clean-up version from the one the rig was made from [main.py].

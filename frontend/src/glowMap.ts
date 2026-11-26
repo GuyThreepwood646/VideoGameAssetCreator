@@ -32,3 +32,47 @@ export function applyGlow(materials: Iterable<THREE.Material | THREE.Material[]>
   }
   return n
 }
+
+// What the viewer shows while a person paints glow: the parent's glow picture, with the Glow brush's edits laid over it.
+// `edits` is the brush picture (0 where untouched, 1 + 254 x strength where the brush went; see paintSession.glowByte) and
+// `colour` the colour picture; a touched texel glows in the colour under it at the painted strength, as a save does.
+// Where the colour was repainted (it differs from `colourOriginal`) over parent glow, the glow keeps its strength and takes
+// the new colour, as a save does (paintsave.carry_glow). `parent` is the parent's glow picture bytes (RGBA, same size) or
+// null. Writes RGBA into `out`.
+const GLOW_FLOOR = 0.02 * 255
+
+export function composeGlow(out: Uint8Array, parent: Uint8Array | null, edits: Uint8Array, colour: Uint8Array, colourOriginal?: Uint8Array): void {
+  const n = out.length / 4
+  for (let i = 0; i < n; i++) {
+    const o = i * 4
+    const e = edits[o]
+    if (e > 0) {
+      const s = (e - 1) / 254
+      out[o] = Math.round(colour[o] * s)
+      out[o + 1] = Math.round(colour[o + 1] * s)
+      out[o + 2] = Math.round(colour[o + 2] * s)
+    } else if (parent) {
+      const r = parent[o]
+      const g = parent[o + 1]
+      const b = parent[o + 2]
+      const peak = Math.max(r, g, b)
+      if (peak > 0 && colourOriginal && (colour[o] !== colourOriginal[o] || colour[o + 1] !== colourOriginal[o + 1] || colour[o + 2] !== colourOriginal[o + 2])) {
+        const oldPeak = Math.max(colourOriginal[o], colourOriginal[o + 1], colourOriginal[o + 2])
+        if (oldPeak >= GLOW_FLOOR) {
+          const gain = Math.min(1, peak / oldPeak)
+          out[o] = Math.round(colour[o] * gain)
+          out[o + 1] = Math.round(colour[o + 1] * gain)
+          out[o + 2] = Math.round(colour[o + 2] * gain)
+          out[o + 3] = 255
+          continue
+        }
+      }
+      out[o] = r
+      out[o + 1] = g
+      out[o + 2] = b
+    } else {
+      out[o] = out[o + 1] = out[o + 2] = 0
+    }
+    out[o + 3] = 255
+  }
+}

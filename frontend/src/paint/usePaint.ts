@@ -27,13 +27,13 @@ export type PaintState = {
   // Called after a save: the picture as it is now counts as saved.
   markSaved: () => void
   notice: string | null
-  // The pictures a save sends (colour, and shine and metal when the model has them), or null when not saveable yet.
+  // The pictures a save sends (colour, glow, and shine and metal when the model has them), or null when not saveable yet.
   saveMaps: () => SaveMaps | null
   saveable: boolean
   // Whether a save can work for this model at all; known before painting starts.
   modelSaveable: boolean
-  // Which pictures this model has to paint: shine and metal need the model's metallic-roughness picture (WP-32).
-  maps: { shine: boolean; metal: boolean }
+  // Which pictures this model has to paint: shine and metal need the model's metallic-roughness picture (WP-32); glow needs none.
+  maps: { shine: boolean; metal: boolean; glow: boolean }
 }
 
 type Active = { model: ViewerModel; session: PaintSession; tool: ViewerTool; baseline: string }
@@ -50,7 +50,7 @@ export function usePaint(model: ViewerModel | null, look: string | null): PaintS
   const warnings = useMemo(() => (model ? checkPaint(model, look) : []), [model, look])
   const blocked = warnings.some((w) => w.blocks)
   const canSave = useMemo(() => (model ? modelSaveable(model) : true), [model])
-  const maps = useMemo(() => (model ? paintableMaps(model) : { shine: false, metal: false }), [model])
+  const maps = useMemo(() => (model ? paintableMaps(model) : { shine: false, metal: false, glow: false }), [model])
 
   const start = () => {
     if (!model || active?.model === model) return
