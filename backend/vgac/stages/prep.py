@@ -872,7 +872,7 @@ def grid_metrics(g: dict[str, Any]) -> dict[str, Any]:
     dims = [round(float(v), 4) for v in (g.get("dims_m") or [])]
     return {"grid_m": g.get("grid_m"), "grid_footprint_cells": g.get("footprint"), "grid_cells": g.get("cells"),
             "grid_size_m": dims, "grid_height_m": round(float(g.get("height_m") or 0), 4), "grid_kind": g.get("kind"),
-            "grid_fit": bool(g.get("fit")), "grid_states": g.get("states"), "grid_scale": g.get("scale"),
+            "grid_fit": bool(g.get("fit")), "grid_chosen": gridfit.is_chosen(g), "grid_states": g.get("states"), "grid_scale": g.get("scale"),
             "grid_size_before_m": [round(float(v), 4) for v in (g.get("dims_before_m") or [])],
             "tile_gap_cm": g.get("tile_gap_cm"), "pivot_corner": True}
 

@@ -941,6 +941,7 @@ const CHECK_TEXT: Record<string, CheckText> = {
     const g = metres(vars.grid ?? vars.grid_m)
     if (ok) {
       const size = `${metres(w)} x ${metres(d)} x ${metres(h)} m`
+      if (vars.free) return `The piece is ${size} and stands on its own, so it is not set on the ${g} m grid. Choose a footprint or a grid size under Fine tune to set it on one.`
       return vars.small ? `The piece is ${size}, smaller than one ${g} m square, so it sits inside one square.` : `The piece is ${size} and lines up with the ${g} m grid.`
     }
     const i = sideIndex(vars.side)
