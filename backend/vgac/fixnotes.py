@@ -136,6 +136,9 @@ NOTES.update({
 NOTES["outline_kept"] = ("by_hand", "Look at the model from the side and from above in the viewer. If a thin part or a hole is gone, build the 3D model again, "
                          "or choose a platform with a larger triangle budget so Clean up keeps more of it; if it looks right, accept it.")
 
+# PL-131 triangle floor: the budget is the look's or the platform's, so the line says what is honest.
+NOTES["triangle_floor"] = ("by_hand", "Look at the model in the viewer and accept it if it looks right. A platform with a bigger triangle budget keeps more of the shape.")
+
 # Checks that are not in CHECK_GUIDE and carry their own fix when the app has one (rig.py fingers_check, limbjoins).
 OWN_FIX = {"fingers", "limb_joins"}
 

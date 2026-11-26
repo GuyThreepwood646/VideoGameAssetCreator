@@ -70,7 +70,7 @@ for _tier, _ids in (("likely", _LIKELY), ("look", _LOOK), ("advice", _ADVICE), (
         TABLE[_i] = _tier
 
 # WP-16 outline check: the clean-up changed the outline from the sides or the top (worth a look, never advice or likely).
-for _i in ("outline_kept",):
+for _i in ("outline_kept", "triangle_floor"):
     assert _i not in TABLE, _i
     TABLE[_i] = "look"
 
