@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import random
 import re
 import shutil
@@ -20,6 +21,9 @@ from ..graphs.birefnet import cutout_graph
 from ..imaging import alpha_bbox, white_composite
 from ..jobs import JobContext, stalled_message
 from ..tools import run_blender, run_unity
+
+
+log = logging.getLogger("vgac.stages")
 
 
 def _lineage_entry(v: Version) -> dict[str, Any]:
@@ -190,6 +194,7 @@ class StageContext:
                     base: float = 0.0, span: float = 1.0) -> dict[str, Any]:
         """Queue a graph and wait, reporting elapsed time as the job message."""
         client = self.client(instance)
+        self.note_card(client.name)
         self.progress(base, f"{message or 'running'} on instance {client.name}")
 
         def on_poll(elapsed: float) -> None:
@@ -206,6 +211,30 @@ class StageContext:
             # The card's part is over; what follows (the pictures painted onto the model, saving) runs on this computer,
             # and the label said "on instance b" for ten minutes after the draws were done.
             self.progress(base + span, f"{message}: finished, now working on the result on this computer" if message else None)
+
+    def note_card(self, instance: str) -> None:
+        """A graph is going to this card: remember it, in the order cards were first used (record_cards)."""
+        used = self.__dict__.setdefault("_cards_used", [])
+        if instance not in used:
+            used.append(instance)
+
+    def record_cards(self) -> None:
+        """Write metrics.cards = [{instance, gpu}] for every card this run drew on (none: no card was used), and the
+        plain note a same-seed repeat carries when its card was not available (payload seed_card_note). Never fails a job."""
+        try:
+            from ..jobs import gpu_name
+
+            used = list(self.__dict__.get("_cards_used") or [])
+            values: dict[str, Any] = {}
+            if used:
+                values["cards"] = [{"instance": n, "gpu": gpu_name(n, self.settings)} for n in used]
+            note = (self.ctx.payload or {}).get("seed_card_note")
+            if note:
+                values["seed_card_note"] = note
+            if values:
+                self.set_metrics(**values)
+        except Exception:  # noqa: BLE001  (a record never fails a job)
+            log.exception("could not record the cards used")
 
     async def stage_input(self, path: Path | str, name: str, instance: str | None = None) -> str:
         return await self.client(instance).stage_input(path, name)

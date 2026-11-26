@@ -109,6 +109,11 @@
 // joints of the library walk as it stands on this character and writes speed_mps on that row (source "library"), so a short
 // character's walk plays at its own stride and not at the library's 1.4. A row without a speed keeps the default. The run keeps 3.5.
 //
+// Version 27 (PL-98): glow map for scenery. emission.png in the input (signs and lit windows, backend/vgac/glow.py) goes on the
+// material's emission slot (URP Lit and Standard: _EmissionMap, white _EmissionColor, _EMISSION on, baked-emissive GI). It imports
+// as an sRGB colour texture like the base colour. An input without emission.png leaves the slot empty, and none is left over
+// from an earlier import.
+//
 // Version: raise it with every change. The backend (stages/export.py) copies this file into a user's Unity project
 // when the copy there is missing or has a lower Version (docs/GREAT-ASSETS-PLAN.md 2.6).
 using System;
@@ -124,7 +129,7 @@ using UnityEngine.Rendering;
 
 public static class VgacImport
 {
-    public const string Version = "26";
+    public const string Version = "27";
     public const string HairShaderName = "VGAC/Hair";
     public const string HairCutoutShaderName = "VGAC/HairCutout";
 
@@ -421,8 +426,14 @@ public static class VgacImport
             if (!File.Exists(fbxSrc)) fbxSrc = Directory.GetFiles(input, "*.fbx").FirstOrDefault() ?? fbxSrc;
             if (File.Exists(fbxSrc)) File.Copy(fbxSrc, Path.Combine(assetDir, name + ".fbx"), true);
             var msName = "T_" + name + "_MetallicSmoothness.png";
-            foreach (var f in new[] { "base_color.png", "normal.png", "metallic.png", "roughness.png", "ao.png" })
+            foreach (var f in new[] { "base_color.png", "normal.png", "metallic.png", "roughness.png", "ao.png", "emission.png" })
             {
+                if (f == "emission.png" && !File.Exists(Path.Combine(input, f)))
+                {
+                    var stale = assetDir + "/" + f;  // Version 27: no glow map this time, and none left from an earlier import
+                    if (File.Exists(stale)) AssetDatabase.DeleteAsset(stale);
+                    continue;
+                }
                 if (f == "normal.png" && !a.normalMap)
                 {
                     // A look without surface bumps: no normal map, and none left over from an earlier import.
@@ -1538,14 +1549,14 @@ public static class VgacImport
         report.textureFilter = "Bilinear";
         report.textureMipmaps = true;
         report.textureCompression = "Compressed";
-        var names = new List<string> { "base_color.png", "normal.png", "metallic.png", "roughness.png", "ao.png", msName };
+        var names = new List<string> { "base_color.png", "normal.png", "metallic.png", "roughness.png", "ao.png", "emission.png", msName };
         var hairMs = "T_" + msName.Substring(2, msName.Length - 2 - "_MetallicSmoothness.png".Length) + "_Hair_MetallicSmoothness.png";
         names.AddRange(new[] { "hair_base_color.png", "hair_normal.png", "hair_ao.png", "hair_flow.png", hairMs });
         foreach (var t in names)
         {
             var ti = AssetImporter.GetAtPath(assetDir + "/" + t) as TextureImporter;
             if (ti == null) continue;
-            if (t == "base_color.png" || t == "hair_base_color.png")
+            if (t == "base_color.png" || t == "hair_base_color.png" || t == "emission.png")
             {
                 ti.textureType = TextureImporterType.Default;
                 ti.sRGBTexture = true;
@@ -1622,9 +1633,9 @@ public static class VgacImport
     }
 
     static Material BuildMaterial(string assetDir, string msName, Report report) =>
-        BuildMaterialFrom(assetDir, "base_color.png", "normal.png", "ao.png", msName, report);
+        BuildMaterialFrom(assetDir, "base_color.png", "normal.png", "ao.png", msName, report, "emission.png");
 
-    static Material BuildMaterialFrom(string assetDir, string baseName, string normalName, string aoName, string msName, Report report)
+    static Material BuildMaterialFrom(string assetDir, string baseName, string normalName, string aoName, string msName, Report report, string emissionName = null)
     {
         var shader = PickShader();
         var mat = new Material(shader);
@@ -1652,6 +1663,16 @@ public static class VgacImport
             if (mat.HasProperty("_OcclusionStrength")) mat.SetFloat("_OcclusionStrength", 1f);
             mat.EnableKeyword("_OCCLUSIONMAP");
             report.texturesAssigned.Add("ao");
+        }
+        var emTex = emissionName == null ? null : AssetDatabase.LoadAssetAtPath<Texture2D>(assetDir + "/" + emissionName);
+        if (emTex && mat.HasProperty("_EmissionMap"))
+        {
+            // Version 27: the glow map (signs, lit windows): the emission slot, full white colour so the map sets the strength.
+            mat.SetTexture("_EmissionMap", emTex);
+            if (mat.HasProperty("_EmissionColor")) mat.SetColor("_EmissionColor", Color.white);
+            mat.EnableKeyword("_EMISSION");
+            mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.BakedEmissive;
+            report.texturesAssigned.Add("emission");
         }
         if (msTex && mat.HasProperty("_MetallicGlossMap"))
         {

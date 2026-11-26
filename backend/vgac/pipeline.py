@@ -105,7 +105,12 @@ def submit(db: Session, asset: Asset, v: Version, op: str, payload: dict[str, An
     "Waiting for ... to be turned back on" message and the version stays queued."""
     q = queue()
     kind = job_kind(v.stage, op, asset.category)
-    instance, message = q.place(v.stage, asset.category, payload.get("params"))
+    pin = jobs.seed_pin(db, v, q.settings)
+    instance, message = q.place(v.stage, asset.category, payload.get("params"), pin=pin)
+    if pin:
+        # A repeat of a seed goes back to the card that made it; when that card is not available the job runs elsewhere
+        # and the version says so in plain words.
+        payload = {**payload, **({"card_pin": pin} if instance == pin else {"seed_card_note": guidance.SEED_OTHER_CARD})}
     if v.stage == "rig" and message is not None and not jobs.configured_card_can("rig", q.settings):
         # No configured card can rig at all, so waiting would never end: fail now. Cards that are only off still
         # queue the rig, as every other step does.

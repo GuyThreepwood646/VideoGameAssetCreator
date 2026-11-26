@@ -52,7 +52,7 @@ from ..imaging import contact_sheet, image_size
 from ..sprites import pack_sprites
 from .base import StageContext, manifest_provenance, slug
 
-TEXTURE_KEYS = ("base_color", "normal", "metallic", "roughness", "ao")
+TEXTURE_KEYS = ("base_color", "normal", "metallic", "roughness", "ao", "emission")
 PACK_KEYS = ("metallic_smoothness", "orm")
 MOVEMENT_SHAPES = ("auto", "upright", "along", "box", "none")
 HITBOX_NOTE = ("Hit boxes are trigger colliders on the bones; Unity sends trigger events only when one of the two "
@@ -331,7 +331,7 @@ HANDOFF_REQUEST = "vgac_import.json"
 HANDOFF_DONE = "vgac_import.done.json"
 HANDOFF_NOTE = "Sent to your open Unity project. It finishes importing when you switch to Unity."
 # The importer's own texture inputs (VgacImport.Import copies these from its input folder).
-HANDOFF_TEXTURES = ("base_color.png", "normal.png", "metallic.png", "roughness.png", "ao.png",
+HANDOFF_TEXTURES = ("base_color.png", "normal.png", "metallic.png", "roughness.png", "ao.png", "emission.png",
                     "hair_base_color.png", "hair_normal.png", "hair_ao.png", "hair_flow.png")
 
 
@@ -568,7 +568,7 @@ def socket_category(sc: Any) -> str | None:
 
 def pack_args(src: Any, out_dir: Any, name: str, lods: list[float], pack_mode: str, formats: list[str], look: dict[str, str],
               collider_obj: Any = None, base_color: Any = None, normal: Any = None, orm: Any = None, uv_source: Any = None,
-              socket_cat: str | None = None, hair: dict[str, Any] | None = None) -> list[Any]:
+              socket_cat: str | None = None, hair: dict[str, Any] | None = None, emission: Any = None) -> list[Any]:
     """pack.py's command line. "none" for --lods asks for LOD0 only (leaving it out would fall back to pack.py's own
     default chain); --sockets only for a rigged character; the hair's own material when `hair` has its layout and
     base colour ({layout, base_color, normal, orm})."""
@@ -576,7 +576,7 @@ def pack_args(src: Any, out_dir: Any, name: str, lods: list[float], pack_mode: s
                        "--formats", ",".join(formats), "--shading", look["shading"]]
     if pack_mode == "parts" and collider_obj:
         args += ["--collider-obj", collider_obj]
-    for flag, p in (("--base-color", base_color), ("--normal", normal), ("--orm", orm), ("--uv-source", uv_source)):
+    for flag, p in (("--base-color", base_color), ("--normal", normal), ("--orm", orm), ("--uv-source", uv_source), ("--emission", emission)):
         if p is not None:
             args += [flag, p]
     if socket_cat:
@@ -722,7 +722,12 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
             if stale.is_file():
                 stale.unlink()
             continue
-        p = sc.lineage_file(key, ("prep", "mesh"))
+        if key == "emission":
+            # only the nearest clean-up's own glow map: an older clean-up's would be stale on a model made again or painted since
+            near = next((v for v in sc.iter_lineage(include_self=False) if v.stage == "prep"), None)
+            p = library.version_file(near, key, sc.settings) if near is not None else None
+        else:
+            p = sc.lineage_file(key, ("prep", "mesh"))
         if p is not None:
             textures[key] = sc.copy_in(p, f"{key}.png")
             sc.register(key, textures[key])
@@ -769,7 +774,8 @@ async def _pack(sc: StageContext, params: dict[str, Any], name: str) -> dict[str
         if lib_hair is not None:
             hair_arg.update(library=lib_hair, mesh=hair_in.get("hair_mesh"))
     args = pack_args(src, sc.dir, name, lods, pack_mode, formats, look, col_plan.get("obj") if pack_mode == "parts" else None,
-                     textures.get("base_color"), textures.get("normal"), packs.get("orm"), uv_src, sock_cat, hair_arg)
+                     textures.get("base_color"), textures.get("normal"), packs.get("orm"), uv_src, sock_cat, hair_arg,
+                     textures.get("emission"))
     await sc.blender("pack.py", args, log_name="pack.log")
     report = json.loads((sc.dir / "report.json").read_text())
     hr = report.get("hair_material") or None
@@ -1659,7 +1665,7 @@ def write_provenance(sc: StageContext, name: str) -> Path:
     return path
 
 
-DELIVER_KEYS = ("fbx", "glb", "glb_godot", "manifest", "provenance", "sockets", "springs", "attachments", "glb_equipped", "grip", "base_color", "normal", "metallic", "roughness", "ao", "metallic_smoothness", "orm",
+DELIVER_KEYS = ("fbx", "glb", "glb_godot", "manifest", "provenance", "sockets", "springs", "attachments", "glb_equipped", "grip", "base_color", "normal", "metallic", "roughness", "ao", "emission", "metallic_smoothness", "orm",
                 "hair_base_color", "hair_normal", "hair_roughness", "hair_ao", "hair_flow", "hair_metallic_smoothness", "hair_orm", "readme",
                 "height", "tile_preview", "sprite_atlas", "unity_strip", "zip")
 
