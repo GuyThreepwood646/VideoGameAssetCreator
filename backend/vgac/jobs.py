@@ -163,7 +163,8 @@ def effective_capabilities(instance: str, settings: Settings | None = None, allo
 
 def route(stage: str, category: str, settings: Settings | None = None, disabled: Any = (),
           allowed_kinds: dict[str, Any] | None = None, default: str | None = None,
-          params: dict[str, Any] | None = None, load: dict[str, tuple[int, int] | None] | None = None) -> str | None:
+          params: dict[str, Any] | None = None, load: dict[str, tuple[int, int] | None] | None = None,
+          pin: str | None = None) -> str | None:
     """Where a job for `stage` (or "judge") goes while the cards in `disabled` are turned off and each card may do
     only its `allowed_kinds`: the preferred instance unless it is off or not allowed that kind of work, else the
     first card that is on, allowed, and can run it (instance_capabilities), else None (nothing can take it now).
@@ -172,6 +173,9 @@ def route(stage: str, category: str, settings: Settings | None = None, disabled:
     `load`: per card, (work other senders hold in its engine, this app's own unfinished jobs on it), or None when
     unknown. When the chosen card holds other senders' work and another card that could run the step has strictly
     less in all, the step goes to that card (spread_by_load). Unknown readings and ties keep the choice.
+    `pin`: the card that made the version whose seed this job repeats (pipeline.seed_pin). When that card is on, allowed
+    and capable it wins over the default card and the load spread, whatever other work it holds; otherwise the usual
+    choice is made (the caller says in plain words that another card gives another result from the same seed).
     """
     from .stages.rig import rig_skips  # late: the stage module loads the graph and image code
 
@@ -185,6 +189,8 @@ def route(stage: str, category: str, settings: Settings | None = None, disabled:
     def can(name: str) -> bool:
         return name not in off and kind_allowed(name, need, allowed_kinds) and need in capabilities(name, settings)
 
+    if pin and pin in settings.instances and can(pin):
+        return pin
     chosen: str | None = None
     if default and default in settings.instances and can(default):
         chosen = default
@@ -195,6 +201,70 @@ def route(stage: str, category: str, settings: Settings | None = None, disabled:
     if chosen is not None and load and stage != "mesh":
         chosen = spread_by_load(chosen, [n for n in settings.instances if can(n)], load)
     return chosen
+
+
+def version_card(db: Any, v: Any, settings: Settings | None = None) -> str | None:
+    """The one card a finished version was made on, or None when it is not known to be exactly one. Read from
+    metrics.cards (every card its step drew on); a version older than that record falls back to the finished job's
+    Job.result.cards, counting only the cards the job itself ran on (role own) and none when a second card was lent
+    or drawn on. Only a configured card counts (not the host)."""
+    settings = settings or get_settings()
+    cards = (v.metrics or {}).get("cards")
+    if isinstance(cards, list) and cards:
+        names = {c.get("instance") for c in cards if isinstance(c, dict)}
+        names.discard(None)
+        one = next(iter(names)) if len(names) == 1 else None
+        return one if one in settings.instances else None
+    job = db.get(Job, v.job_id) if getattr(v, "job_id", None) else None
+    res = job.result if job is not None and isinstance(job.result, dict) else {}
+    entries = [c for c in res.get(cardlog.CARDS) or [] if isinstance(c, dict) and c.get("role") in (cardlog.OWN, cardlog.LENT, cardlog.DREW)]
+    names = {c.get("card") for c in entries}
+    if len(names) != 1 or any(c.get("role") != cardlog.OWN for c in entries) or res.get(cardlog.LENT_KEY):
+        return None
+    one = next(iter(names))
+    return one if one in settings.instances else None
+
+
+_SEED_KEYS = ("seed", "first_seed")
+
+
+def _same_input(a: Any, b: Any) -> bool:
+    """Whether two versions of one step were built from the same input, so the same seed can repeat the result: the
+    same parent version, and with no parent at all the same settings apart from the seed."""
+    if a.parent_version_id != b.parent_version_id:
+        return False
+    if a.parent_version_id is not None:
+        return True
+    strip = lambda p: {k: x for k, x in (p or {}).items() if k not in _SEED_KEYS}  # noqa: E731
+    return strip(a.params) == strip(b.params)
+
+
+def seed_pin(db: Any, v: Any, settings: Settings | None = None) -> str | None:
+    """The card a job for `v` goes back to because it repeats a seed: the card that made the version being repeated.
+    The version being repeated is `v`'s parent when that is a finished version of the same step with the same seed
+    (redo, adjust and refine of it); otherwise, with no such parent, the latest finished version of the same asset and
+    step with the same seed and the same input (same parent version; no parent: same settings). None for a new seed, a version never made on one known card, or a step with no seed."""
+    seed = (v.params or {}).get("seed")
+    if seed is None:
+        return None
+    parent = db.get(Version, v.parent_version_id) if getattr(v, "parent_version_id", None) else None
+    if parent is not None and parent.stage == v.stage:
+        source = parent if parent.status == "done" and (parent.params or {}).get("seed") == seed else None
+    else:
+        rows = db.scalars(select(Version).where(Version.asset_id == v.asset_id, Version.stage == v.stage,
+                                                Version.id != v.id, Version.status == "done")
+                          .order_by(Version.created_at.desc())).all()
+        source = next((r for r in rows if (r.params or {}).get("seed") == seed and _same_input(r, v)), None)
+    return version_card(db, source, settings) if source is not None else None
+
+
+def card_pinned(job: Any) -> bool:
+    """A queued job a same-seed repeat sent back to the card that made the version (payload `card_pin`): sharing and the
+    default card leave it where it is. A card turned off still hands its queued jobs on."""
+    try:
+        return bool((job.payload or {}).get("card_pin")) and (job.payload or {}).get("card_pin") == job.instance
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def spread_by_load(chosen: str, candidates: list[str], load: dict[str, tuple[int, int] | None]) -> str:
@@ -1226,14 +1296,19 @@ class JobQueue:
     def instances(self) -> list[str]:
         return list(self.settings.instances) + [HOST]
 
-    def place(self, stage: str, category: str, params: dict[str, Any] | None = None) -> tuple[str, str | None]:
+    def place(self, stage: str, category: str, params: dict[str, Any] | None = None,
+              pin: str | None = None) -> tuple[str, str | None]:
         """Where a new job for `stage` (or "judge") goes now: (instance, None) from route(), or, when no card that is
         on can run it, (the preferred instance, the waiting message): the job waits there until that card is back.
-        `params`: the step's params (a rig step that will skip rigging goes to the host, see route())."""
+        `params`: the step's params (a rig step that will skip rigging goes to the host, see route()).
+        `pin`: the card a same-seed job goes back to (route()); it is also the answer when it can run the step, with no
+        look at the card load."""
         from . import firstrun
 
         off = self.unavailable() | firstrun.unusable_cards(self.settings, self.supervisor)
-        target = route(stage, category, self.settings, off, self.allowed_kinds, self.default_instance, params)
+        target = route(stage, category, self.settings, off, self.allowed_kinds, self.default_instance, params, pin=pin)
+        if target is not None and pin and target == pin:
+            return target, None
         if target is not None:
             load: dict[str, tuple[int, int] | None] = {}
             try:
@@ -1439,10 +1514,18 @@ class JobQueue:
                     job = db.get(Job, v.job_id) if v.job_id else None
                     if job is None or job.status != "cancelled" or parse_kind(job.kind)[1] == "judge":
                         continue
-                    instance, message = self.place(v.stage, a.category, (job.payload or {}).get("params"))
+                    from . import guidance  # late: guidance loads the data files
+
+                    pin = seed_pin(db, v, self.settings)
+                    instance, message = self.place(v.stage, a.category, (job.payload or {}).get("params"), pin=pin)
                     # The same settings includes the random seeds the stopped run had already picked (the step's own,
                     # and the face detail pass's two picture jobs in the clean-up step).
                     payload = dict(job.payload or {})
+                    payload.pop("card_pin", None)
+                    payload.pop("seed_card_note", None)
+                    if pin:
+                        payload.update({"card_pin": pin} if instance == pin else {"seed_card_note": guidance.SEED_OTHER_CARD})
+                    job.payload = payload
                     for key in RESUME_SEEDS:
                         seed = (v.params or {}).get(key)
                         if seed is not None and isinstance(payload.get("params"), dict) and payload["params"].get(key) is None:
@@ -1732,7 +1815,7 @@ class JobQueue:
             rows = db.scalars(select(Job).where(Job.status == "queued", Job.instance.in_(sorted(self.settings.instances)),
                                                 Job.instance != target)).all()
             for j in rows:
-                if self._can_take(target, j.kind):
+                if self._can_take(target, j.kind) and not card_pinned(j):
                     cardlog.add_move(j, j.instance, target, "the default card")
                     j.instance = target
                     j.message = default_moved_message(target, self.settings)
@@ -1774,7 +1857,7 @@ class JobQueue:
             rows = db.scalars(select(Job).where(Job.status == "queued", Job.instance.in_(busy))
                               .order_by(Job.created_at, Job.id).limit(200)).all()
             for j in rows:
-                if not self._can_take(instance, j.kind):
+                if not self._can_take(instance, j.kind) or card_pinned(j):
                     continue
                 source = j.instance
                 cardlog.add_move(j, source, instance, "sharing: the card it was queued on is busy")

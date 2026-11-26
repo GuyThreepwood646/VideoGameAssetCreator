@@ -150,6 +150,7 @@ async def execute(ctx: JobContext, kind: str, payload: dict[str, Any]) -> None:
             raise ValueError(f"unknown op {op!r}")
         if op in ("run", "refine", "adjust", "upload", "upscale"):   # the picture steps too (F20)
             steptime.finish(sc)   # WP-91: metrics.timing, parts and total
+            sc.record_cards()     # PL-108: metrics.cards, the cards this run drew on
         sc.save()
 
 

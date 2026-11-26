@@ -2,7 +2,7 @@
 
 Run:  blender -b --python mesh_health.py -- <in.glb> <out_dir> [size=384]
 Joins the seam duplicates glTF makes at texture seams (vertices closer than 1e-5 of the model's largest side), then
-measures the surface: open edges (one face), bad joins (three or more faces on an edge), the share of edges folded back
+measures the surface: the share of faces that are level (see LEVEL_TOLERANCE), open edges (one face), bad joins (three or more faces on an edge), the share of edges folded back
 on themselves, the share of sliver triangles, the number of separate pieces and the largest piece's share of the
 surface area. Writes <out_dir>/health.json and grey_<yaw>.png for yaw 0, 90, 180, 270 (Workbench, one grey colour, studio
 light, so a texture cannot hide damage). Distances are measured on the model scaled to a largest side of 1.
@@ -24,6 +24,7 @@ FOLD_ANGLES = (100, 120, 135, 150)
 FOLD_DOTS = [math.cos(math.radians(a)) for a in FOLD_ANGLES]
 SLIVER_QUALITY = 0.1  # 4*sqrt(3)*area / sum of squared side lengths: 1 for an equilateral triangle, near 0 for a sliver
 JOIN_DISTANCE = 1e-5
+LEVEL_TOLERANCE = 5  # degrees: a face is "level" when its normal is within this of horizontal (a wall) or of straight up or down
 
 argv = _common.after_double_dash()
 src, out_dir = os.path.abspath(argv[0]), os.path.abspath(argv[1])
@@ -70,10 +71,14 @@ for e in bm.edges:
                 folded[i] += 1
 
 tris = slivers = 0
-area_total = 0.0
+area_total = level_area = 0.0
+LEVEL_SIN = math.sin(math.radians(LEVEL_TOLERANCE))
 for f in bm.faces:
     area = f.calc_area()
     area_total += area
+    ny = abs(f.normal.z)  # Blender's up axis
+    if ny < LEVEL_SIN or ny > math.cos(math.radians(LEVEL_TOLERANCE)):
+        level_area += area
     n = len(f.verts) - 2  # triangles this face makes
     tris += n
     if len(f.verts) == 3:
@@ -104,6 +109,7 @@ report = {
     "triangles": tris, "edges": edges, "open_edges": open_edges, "bad_join_edges": bad_joins,
     "folded": {str(a): round(folded[i] / max(1, edges), 5) for i, a in enumerate(FOLD_ANGLES)},
     "sliver_share": round(slivers / max(1, len(bm.faces)), 5),
+    "level_share": round(level_area / area_total, 5) if area_total else 1.0,
     "pieces": len(piece_areas),
     "largest_piece_area": round(piece_areas[0] / area_total, 5) if piece_areas and area_total else 0.0,
 }

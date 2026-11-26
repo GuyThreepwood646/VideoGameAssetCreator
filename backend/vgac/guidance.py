@@ -62,7 +62,7 @@ for _stage, _names in reference.STAGE_NAMES.items():
 
 PARAM_HELP: dict[str, dict[str, Any]] = {
     "model": {"simple": True, "help": {"meaning": "Which image model paints the first picture.", "why": "Each has a different look and speed; the suggestion picks one for your style and platform.", "technical": "Diffusion model (the options are the concept models in models.yaml)"}},
-    "seed": {"simple": False, "help": {"meaning": "A number that makes the same request give the same picture.", "why": "Change it to get a different take on the same description.", "technical": "Random seed"}},
+    "seed": {"simple": False, "help": {"meaning": "A number that makes the same request give the same picture on the same graphics card.", "why": "Change it to get a different take on the same description. Another card gives a different result from the same seed, so a repeat goes back to the card that made the version when it can.", "technical": "Random seed"}},
     "width": {"simple": False, "help": {"meaning": "Picture width in pixels.", "why": "Bigger is slower; 1024 is right for most assets.", "technical": "Latent width"}},
     "height": {"simple": False, "help": {"meaning": "Picture height in pixels.", "why": "Bigger is slower; 1024 is right for most assets.", "technical": "Latent height"}},
     "steps": {"simple": False, "help": {"meaning": "How many refinement passes the model makes.", "why": "More can add detail but takes longer; the model default is tuned.", "technical": "Sampler steps"}},
@@ -570,12 +570,12 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
     # automatic build stops on it (decision D23: never); on buildings the 3D step builds again first (meshgeom.REBUILD_ROUTES).
     "model_whole": {
         "severity": "warn",
-        "ok": "The 3D model is whole: no torn surface, folded edges or loose pieces beyond what a {route_words} normally has.",
-        "fail": lambda c: ("The 3D model looks damaged, like torn paper: {problem_list}. The app built it again {rebuilds} more "
+        "ok": "The 3D model is whole: no torn surface, folded edges, bent walls or loose pieces beyond what a {route_words} normally has.",
+        "fail": lambda c: ("The 3D model looks damaged, like torn paper or melted wax: {problem_list}. The app built it again {rebuilds} more "
                            "time(s) with new random draws and kept the least damaged, and it is still damaged. A picture with the texture on "
                            "can hide this, so look at the grey views under the model."
                            if (_var(c, "rebuilds") or 0) > 0 else
-                           "The 3D model looks damaged, like torn paper: {problem_list}. A picture with the texture on can hide this, so look at "
+                           "The 3D model looks damaged, like torn paper or melted wax: {problem_list}. A picture with the texture on can hide this, so look at "
                            "the grey views under the model."),
         # Scenery built with the rebuild off is the case seen: it comes out torn and the rebuild on made it whole. Every other
         # case gets the new-draw button from fixnotes.EXTRA_FIXES.
@@ -1731,6 +1731,13 @@ def stage_guide(stage_id: str) -> dict[str, Any]:
 
 def param_help(name: str) -> dict[str, Any]:
     return PARAM_HELP.get(name, {"simple": False, "help": {"meaning": name.replace("_", " "), "why": "", "technical": name}})
+
+
+# --- A same-seed repeat whose card is not available (jobs.seed_pin, pipeline.submit; metrics.seed_card_note) ---
+
+SEED_OTHER_CARD = ("The graphics card that made the version this repeats is turned off or cannot do this work now, so another card "
+                   "made this one. A different card gives a different result from the same seed.")
+BUILT_ON_LABEL = "Built on"
 
 
 # --- Rigging with no card: a rig that needs a card fails at once when no card that is on can rig (pipeline.submit) ---

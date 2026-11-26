@@ -708,6 +708,7 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
                   )}
                 </div>
                 <MetricChips metrics={active.metrics} max={24} />
+                <BuiltOnLine metrics={active.metrics} />
                 {/* Your own LoRAs this version used, per use (face close-up included), and any it could not use. */}
                 {[...editLoraApplied(active), ...editLoraNotes(active)].map((line) => (
                   <div key={line} className="muted small edit-lora-line">
@@ -729,6 +730,21 @@ export function StagePanel({ asset, stage, jobs, suggestion, baseName, autopilot
         )}
       </section>
       {finishedBarShown(asset, stage, autopilot, jobs, selected) && checksBelowBar(stage) && <FinishedChecks asset={asset} stage={stage} />}
+    </div>
+  )
+}
+
+// Which graphics card or cards made this version (metrics.cards), and the plain note a same-seed repeat carries when
+// the card that made the version it repeats could not be used (metrics.seed_card_note).
+function BuiltOnLine({ metrics }: { metrics: Record<string, unknown> }) {
+  const cards = Array.isArray(metrics.cards) ? (metrics.cards as { instance?: string; gpu?: string }[]) : []
+  const names = cards.map((c) => c.gpu || c.instance).filter((n): n is string => !!n)
+  const note = typeof metrics.seed_card_note === 'string' ? metrics.seed_card_note : ''
+  if (!names.length && !note) return null
+  return (
+    <div className="muted small">
+      {names.length > 0 && <>Built on {names.join(' and ')}. </>}
+      {note}
     </div>
   )
 }

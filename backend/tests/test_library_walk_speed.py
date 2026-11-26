@@ -35,4 +35,4 @@ def test_library_walk_row_carries_the_planted_feet_speed_and_the_run_does_not(tm
 
 def test_importer_reads_the_speed_for_a_library_row_and_the_version_is_raised():
     assert 'string.Equals(c.source, "library"' in IMPORTER  # MeasuredSpeed accepts the shared clip of a library row
-    assert 'Version = "26"' in IMPORTER
+    assert 'Version = "27"' in IMPORTER
