@@ -418,14 +418,16 @@ async def paint(sc: Any, params: dict[str, Any]) -> None:
     shutil.copyfile(inputs["strokes"], strokes_out)
     sc.register("paint_strokes", strokes_out)
     carried = {k: v for k, v in (parent.metrics or {}).items() if k not in _RUN_METRICS}
-    sc.set_metrics(**carried, painted=True, painted_of=parent.id, geometry_of=(parent.metrics or {}).get("geometry_of") or parent.id,
-                   paint_strokes=len(json.loads(strokes_out.read_text(encoding="utf-8"))), paint_texture_size=size,
-                   paint_texels=int(edits["colour"].sum()) if has_colour else 0,
-                   paint_island_texels=counts.get("painted_on_island", 0),
-                   paint_padding_texels=counts.get("padding_texels", 0),
-                   paint_shine_texels=int(edits["shine"].sum()) if "shine" in edits else None,
-                   paint_metal_texels=int(edits["metal"].sum()) if "metal" in edits else None,
-                   paint_glow_texels=int(edits["glow"].sum()) if "glow" in edits else None)
+    # One dict, so a painted parent's own painted, painted_of and paint_* metrics are replaced rather than clashing.
+    sc.set_metrics(**{**carried, "painted": True, "painted_of": parent.id,
+                      "geometry_of": (parent.metrics or {}).get("geometry_of") or parent.id,
+                      "paint_strokes": len(json.loads(strokes_out.read_text(encoding="utf-8"))), "paint_texture_size": size,
+                      "paint_texels": int(edits["colour"].sum()) if has_colour else 0,
+                      "paint_island_texels": counts.get("painted_on_island", 0),
+                      "paint_padding_texels": counts.get("padding_texels", 0),
+                      "paint_shine_texels": int(edits["shine"].sum()) if "shine" in edits else None,
+                      "paint_metal_texels": int(edits["metal"].sum()) if "metal" in edits else None,
+                      "paint_glow_texels": int(edits["glow"].sum()) if "glow" in edits else None})
     for p in inputs.values():
         p.unlink(missing_ok=True)
     sc.set_params(paint_of=parent.id)

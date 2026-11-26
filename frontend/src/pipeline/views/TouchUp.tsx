@@ -124,7 +124,7 @@ export function TouchUp({ paint, painting, onStart, onStop, onSave, saving, save
               </label>
             )}
           </div>
-          <div className="small muted">{s.target === 'glow' && s.mode === 'erase' ? 'Turns glow off under the brush.' : MODES.find((m) => m.id === s.mode)?.hint}</div>
+          <div className="small muted">{s.target === 'glow' ? (s.mode === 'erase' ? 'Turns glow off under the brush.' : s.mode === 'fill' ? 'One click lights the surface you click, where the colour is close to the colour under the click.' : 'Lights up what you paint over.') : MODES.find((m) => m.id === s.mode)?.hint}</div>
           <div className="touch-up-row">
             {s.mode !== 'fill' && (
               <>

@@ -1030,3 +1030,19 @@ def test_paint_job_colour_repaint_keeps_the_glow_in_the_new_colour(version_files
                        mask=_png_b64(Image.fromarray((edit * 255).astype(np.uint8), "L")))
     got = np.array(Image.open(child.files["emission"]).convert("RGB"))
     assert np.abs(got[edit].astype(int) - np.array([100, 20, 20])).max() <= 1
+
+
+def test_paint_job_on_an_already_painted_version_replaces_its_paint_metrics(version_files, tmp_path):
+    base = _picture()
+    island = _island(tmp_path)
+    rows, cols = np.where(island)
+    edit = np.zeros((SIZE, SIZE), bool)
+    edit[rows[:10], cols[:10]] = True
+    parent = _glow_parent(tmp_path, base, None)
+    parent.metrics = {"painted": True, "painted_of": "grandparent", "paint_texels": 7, "paint_glow_texels": 3, "geometry_of": "grandparent"}
+    child = _run_paint(tmp_path, parent, glow=_png_b64(Image.fromarray(_glow_picture(1.0, edit))),
+                       glow_mask=_png_b64(Image.fromarray((edit * 255).astype(np.uint8), "L")))
+    assert child.metrics["painted_of"] == parent.id
+    assert child.metrics["geometry_of"] == "grandparent"
+    assert child.metrics["paint_texels"] == 0
+    assert child.metrics["paint_glow_texels"] == int(edit.sum())

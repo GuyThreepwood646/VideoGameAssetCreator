@@ -8,6 +8,7 @@
 import * as THREE from 'three'
 import type { SurfaceHit, ViewerModel, ViewerTool } from '../viewerTool'
 import { fillRegion, paintDab, smudgeDab, type Brush, type Dab, type DabTarget } from './paintDab'
+import { composeGlow } from '../glowMap'
 import { PaintLayer, type PaintTargetName, type StrokeRecord } from './paintLayer'
 
 export type PaintMode = 'paint' | 'erase' | 'pick' | 'smudge' | 'fill'
@@ -254,6 +255,8 @@ export class PaintSession {
   private readonly shineByMesh = new Map<THREE.Mesh, PaintLayer>()
   private readonly metalByMesh = new Map<THREE.Mesh, PaintLayer>()
   private readonly glowByMesh = new Map<THREE.Mesh, PaintLayer>()
+  // What the model shows as glow while painting: the parent's glow with the brush's edits laid over it (see composeGlow).
+  private readonly glowShows: { layer: PaintLayer; colour: PaintLayer; parent: Uint8Array | null; texture: THREE.DataTexture }[] = []
   private readonly targets = new Map<PaintLayer, DabTarget[]>()
   private readonly mirrorX: number
   // The order of the steps across the pictures (WP-32): one entry per step, naming the picture it changed. Undo and redo
@@ -310,10 +313,14 @@ export class PaintSession {
       // The glow picture: empty, the size of the colour picture it lights, on the same layout.
       let glow = glowOf.get(layer)
       if (!glow) {
-        glow = new PaintLayer(layer.width, layer.height, new Uint8Array(layer.width * layer.height * 4), true)
+        // Opaque (alpha 255), so the picture keeps its values when it is encoded as a PNG for the save.
+        const empty = new Uint8Array(layer.width * layer.height * 4)
+        for (let i = 3; i < empty.length; i += 4) empty[i] = 255
+        glow = new PaintLayer(layer.width, layer.height, empty, true)
         glowOf.set(layer, glow)
       }
       add(this.glowLayers, this.glowByMesh, glow, mesh)
+      this.showGlow(mat, glow, layer)
       // Shine (green channel) and metal (blue channel) of the metallic-roughness picture (WP-32).
       if (mat.roughnessMap && (mat.roughnessMap.channel ?? 0) === 0) {
         const key = `${mat.roughnessMap.uuid}:1`
@@ -349,6 +356,48 @@ export class PaintSession {
       }
     }
     this.mirrorX = Number.isFinite(minX) ? (minX + maxX) / 2 : 0
+  }
+
+  // Puts a live glow picture on the material: it starts as the glow the model already shows (the parent's), and refreshGlow
+  // keeps it in step with the brush. One per glow layer; parts sharing a colour picture share it.
+  private showGlow(mat: THREE.MeshStandardMaterial, glow: PaintLayer, colour: PaintLayer): void {
+    let show = this.glowShows.find((g) => g.layer === glow)
+    if (!show) {
+      let parent: Uint8Array | null = null
+      if (mat.emissiveMap) {
+        try {
+          const pic = readPicture(mat.emissiveMap)
+          if (pic.width === glow.width && pic.height === glow.height) parent = pic.pixels
+        } catch {
+          parent = null
+        }
+      }
+      const texture = new THREE.DataTexture(new Uint8Array(glow.width * glow.height * 4), glow.width, glow.height, THREE.RGBAFormat)
+      texture.colorSpace = THREE.SRGBColorSpace
+      texture.flipY = false
+      texture.generateMipmaps = true
+      texture.minFilter = THREE.LinearMipmapLinearFilter
+      texture.magFilter = THREE.LinearFilter
+      texture.wrapS = mat.map?.wrapS ?? THREE.RepeatWrapping
+      texture.wrapT = mat.map?.wrapT ?? THREE.RepeatWrapping
+      show = { layer: glow, colour, parent, texture }
+      this.glowShows.push(show)
+      composeGlow(texture.image.data as unknown as Uint8Array, parent, glow.pixels, colour.pixels, colour.original)
+      texture.needsUpdate = true
+    }
+    mat.emissiveMap = show.texture
+    mat.emissive.set(0xffffff)
+    mat.emissiveIntensity = 1
+    mat.needsUpdate = true
+  }
+
+  // Brings the glow shown on the model up to date with the glow picture (after a stroke, an undo, a redo or a reset).
+  refreshGlow(only?: PaintLayer): void {
+    for (const g of this.glowShows) {
+      if (only && g.layer !== only) continue
+      composeGlow(g.texture.image.data as unknown as Uint8Array, g.parent, g.layer.pixels, g.colour.pixels, g.colour.original)
+      g.texture.needsUpdate = true
+    }
   }
 
   get canUndo(): boolean {
@@ -393,6 +442,7 @@ export class PaintSession {
     this.undoOrder.splice(this.undoOrder.lastIndexOf(layer), 1)
     layer.undo()
     layer.upload(renderer)
+    this.refreshGlow()
     this.redoOrder.push(layer)
     return true
   }
@@ -403,6 +453,7 @@ export class PaintSession {
     this.redoOrder.splice(this.redoOrder.lastIndexOf(layer), 1)
     layer.redo()
     layer.upload(renderer)
+    this.refreshGlow()
     this.undoOrder.push(layer)
     return true
   }
@@ -421,6 +472,7 @@ export class PaintSession {
       if (layer.undoCount > before) this.noteStep(layer)
       layer.upload(renderer)
     }
+    this.refreshGlow()
   }
 
   // The average colour of the picture around a spot (a 5 by 5 block), as sRGB bytes.
@@ -491,7 +543,10 @@ export class PaintSession {
       return layer
     }
     const flush = () => {
-      if (active) active.upload(hooks.renderer())
+      if (active) {
+        active.upload(hooks.renderer())
+        this.refreshGlow(active)
+      }
     }
     const finish = () => {
       if (!active) return
@@ -500,6 +555,7 @@ export class PaintSession {
       last = null
       strokeFace = null
       if (layer.endStroke()) {
+        this.refreshGlow()
         this.noteStep(layer)
         hooks.changed()
       }

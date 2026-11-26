@@ -315,6 +315,7 @@ test('glow: the brush lays down its strength, the eraser a zero strength, and un
   const glow = session.saveableMaps()!.glow!
   assert.deepEqual(px(glow, 32, 32), [glowByte(0.5), glowByte(0.5), glowByte(0.5)])
   assert.deepEqual(px(glow, 2, 2), [0, 0, 0], 'untouched texels stay at 0')
+  assert.equal(glow.pixels[(2 * SIZE + 2) * 4 + 3], 255, 'the glow picture is opaque, so a PNG keeps its values')
   assert.deepEqual(px(session.saveableMaps()!.colour, 32, 32), [255, 255, 255], 'the colour is not painted')
   lay({ ...base, mode: 'erase' })
   assert.deepEqual(px(glow, 32, 32), [1, 1, 1], 'the eraser is a touched texel of strength 0, not the original')
