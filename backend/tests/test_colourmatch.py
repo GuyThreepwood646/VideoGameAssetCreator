@@ -362,3 +362,77 @@ def test_the_chroma_stage_is_off_unless_asked_for(tmp_path):
     before = png.read_bytes()
     rec = colourmatch.match_base_colour(glb, picture, png)
     assert "chroma" not in rec and not rec["applied"] and png.read_bytes() == before
+
+
+# --- the region stage (PL-113) ------------------------------------------------------------------------------------
+
+
+def _two_tone(tex, dark_to=0.12, light_to=0.55):
+    """tex with the left half of the atlas one flat tone and the right half another (plus the original noise)."""
+    out = np.array(tex, dtype=np.float64)
+    out[:, :128] = np.clip(tex[:, :128] - tex[:, :128].mean() + dark_to, 0, 1)
+    out[:, 128:] = np.clip(tex[:, 128:] - tex[:, 128:].mean() + light_to, 0, 1)
+    return out
+
+
+def test_region_move_is_capped():
+    mv = colourmatch._region_move(np.array([10.0, 0.0, 0.0]), np.array([80.0, 40.0, 0.0]))
+    assert mv["dl"] == colourmatch.R_L_CAP
+    mv = colourmatch._region_move(np.array([50.0, 20.0, 0.0]), np.array([50.0, 20.0, 40.0]))  # turned 63 degrees away
+    assert abs(mv["rotate"]) == colourmatch.R_ROT_MAX and colourmatch.R_SCALE[0] <= mv["scale"] <= colourmatch.R_SCALE[1]
+
+
+def test_apply_regions_moves_only_the_region_with_a_move_and_keeps_its_contrast():
+    rng = np.random.default_rng(1)
+    dark = np.clip(0.10 + rng.normal(0, 0.02, (40, 3)), 0, 1)
+    light = np.clip(0.80 + rng.normal(0, 0.02, (40, 3)), 0, 1)
+    far = np.array([[0.9, 0.1, 0.1]])  # a colour no region is near
+    ld, ll = face.to_lab(dark), face.to_lab(light)
+    plan = {"mode": "regions", "regions": [
+        {"centre": list(ld.mean(0)), "sigma": 8.0, "move": {"dl": 15.0, "scale": 1.0, "rotate": 0.0}},
+        {"centre": list(ll.mean(0)), "sigma": 8.0, "move": None}]}
+    od, ol, of = (face.to_lab(colourmatch.apply_regions(x, plan)) for x in (dark, light, far))
+    assert 12.0 < (od[:, 0] - ld[:, 0]).mean() < 16.0  # the dark region went up by about its move
+    assert np.abs(ol - ll).max() < 1.0  # the region without a move stays
+    assert np.abs(of - face.to_lab(far)).max() < 0.5  # a texel far from every region stays
+    assert abs(od[:, 0].std() - ld[:, 0].std()) < 0.5 * ld[:, 0].std() + 0.5  # the region's own spread is kept
+    assert colourmatch.apply_regions(dark, {"mode": "none"}) is dark
+
+
+def test_the_region_stage_lifts_a_dark_region_towards_the_picture_and_leaves_a_matching_one(tmp_path):
+    from PIL import Image
+
+    from vgac import texfidelity
+
+    glb, png, tex = _box_glb(tmp_path, level=0.45)
+    built = _two_tone(tex, dark_to=0.12, light_to=0.60)
+    shown = _two_tone(tex, dark_to=0.30, light_to=0.60)  # the picture's dark part is lighter than the build's
+    Image.fromarray(face.to_uint8(built)).save(png)
+    picture = _picture_of(glb, shown, tmp_path, l_shift=0.0)
+    pic, pm = texfidelity.load_picture(picture)
+    mesh = face.load_mesh(glb)
+    lp = colourmatch.lightness_plan(mesh, built, pic, pm, "front")
+    plan = colourmatch.region_plan(mesh, built, pic, pm, lp["yaw"], lp["iou"])
+    assert plan["mode"] == "regions" and plan["de_after"] < plan["de_before"]
+    moved = [g for g in plan["regions"] if g.get("move")]
+    assert moved and all(g["move"]["dl"] > 0 for g in moved)  # only lightening, no region of the matching tone moved
+    assert all(g["de_after"] <= g["de_before"] for g in moved)  # a region that got worse would have been set back
+    assert all("skin" in g and "name" in g for g in plan["regions"])
+
+
+def test_the_region_stage_is_off_unless_asked_for(tmp_path):
+    glb, png, tex = _box_glb(tmp_path, level=0.45)
+    picture = _picture_of(glb, tex, tmp_path, l_shift=0.0)
+    rec = colourmatch.match_base_colour(glb, picture, png, chroma=True)
+    assert "regions" not in rec
+    rec = colourmatch.match_base_colour(glb, picture, png, chroma=False, regions=True)
+    assert "regions" not in rec  # the region stage rides on the chroma stage
+
+
+def test_a_default_call_is_the_lightness_stage_alone_and_leaves_a_matching_build_byte_identical(tmp_path):
+    """Every route but the four-view humanoid build calls with neither switch: no chroma or region record, no rewrite."""
+    glb, png, tex = _box_glb(tmp_path, level=0.45)
+    picture = _picture_of(glb, tex, tmp_path, l_shift=0.0)
+    before = png.read_bytes()
+    rec = colourmatch.match_base_colour(glb, picture, png, view="front", route=None)
+    assert "chroma" not in rec and "regions" not in rec and not rec["applied"] and png.read_bytes() == before
