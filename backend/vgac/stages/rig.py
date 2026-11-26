@@ -633,6 +633,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         await steptime.run(sc, "fingers", _fingers(sc, rig_glb, params))
         await steptime.run(sc, "finger_rigid", _finger_rigid(sc, rig_glb, params))
         await steptime.run(sc, "palm_down", _palm_down(sc, rig_glb, params))
+        await steptime.run(sc, "hand_skin", _hand_skin(sc, rig_glb))
         await steptime.run(sc, "sleeve_skin", _sleeve_skin(sc, rig_glb))
         await steptime.run(sc, "worn_region", _worn_region(sc, rig_glb, params))
     sc.register("glb", rig_glb)
@@ -771,6 +772,7 @@ async def _fix_weights_again(sc: StageContext, rig_glb: Path) -> None:
         if out.is_file() and out.stat().st_size > 0:
             shutil.move(str(out), str(rig_glb))
             sc.set_metrics(weights_fix=WEIGHTS_FIX, stray_weights=int((rep.get("stray_weights") or {}).get("verts") or 0), weights_fixed_again=True)
+            await _hand_skin(sc, rig_glb)  # the clean-up may have moved hand weight back to the forearm
             await _sleeve_skin(sc, rig_glb)  # the clean-up gave the sleeve its first weights back
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(weights_fix_error=str(e)[:300])
@@ -1615,6 +1617,29 @@ async def _leg_skin(sc: StageContext, rig_glb: Path, params: dict[str, Any]) -> 
             sc.set_metrics(leg_skin={"ok": False, "reason": rep.get("reason") or "not run"})
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(leg_skin={"error": str(e)[:300]})
+
+
+async def _hand_skin(sc: StageContext, rig_glb: Path) -> None:
+    """Hand skin pass (blender/hand_skin.py, PL-126): skin around the hand moves its forearm and twist weight onto the Hand
+    bone, with a smooth ramp across the wrist; finger weights stay. In place, only when something changed; the rig before it
+    is kept as rig_before_hand_skin.glb. metrics.hand_skin: {ok, changed, vertices, sides} or {reason}. Never raises."""
+    out = sc.dir / "rig_hand_skin.glb"
+    report = sc.dir / "hand_skin.json"
+    try:
+        await sc.blender("hand_skin.py", [rig_glb, out, "--report", report], log_name="hand_skin.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        if rep.get("ok") and rep.get("changed") and out.is_file() and out.stat().st_size > 0:
+            shutil.copy2(rig_glb, sc.dir / "rig_before_hand_skin.glb")
+            shutil.move(str(out), str(rig_glb))
+        sc.set_metrics(hand_skin={"ok": True, "changed": int(rep.get("changed") or 0), "vertices": int(rep.get("changed_vertices") or 0),
+                                  "sides": rep.get("sides") or {}}
+                       if rep.get("ok") else {"ok": False, "reason": rep.get("reason") or "not run"})
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(hand_skin={"error": str(e)[:300]})
+    finally:
+        report.unlink(missing_ok=True)
+        out.unlink(missing_ok=True)
 
 
 async def _sleeve_skin(sc: StageContext, rig_glb: Path) -> None:
