@@ -4,7 +4,7 @@ SAM 2.1 small, both Apache-2.0), never in the backend venv.
 For each picture `<dir>/view_<i>.png` it asks the detector for neon signs, neon figures and lit windows, makes a SAM mask for
 each box, and writes `<dir>/view_<i>_gain.npy`: float32 (H, W), how much of the picture's own colour glows there. Neon
 figures glow fully; signs and windows glow at PANEL_GAIN, rising to 1 for their brightest pixels (the letters). A window glows
-only where its pixels are lit (lit_pixels), so dark glass stays dark. Nothing
+as a whole when enough of its mask is lit (lit_pixels, WINDOW_LIT_SHARE), else not at all, so dark glass stays dark. Nothing
 else glows (boxes, awnings and plain bright paint are never named).
 
 Run: <finder python> glow_worker.py <dir> <count> <models_dir>      Prints GLOW_OK on success.
@@ -21,6 +21,7 @@ THREADS = 2
 PANEL_GAIN = 0.6
 WINDOW_LIT_OVER = 0.12   # a window pixel is lit when this much brighter than the wall round the window (V, 0..1) ...
 WARM_HUE = (12.0, 75.0)   # ... or warm (orange to yellow-green degrees), bright and saturated
+WINDOW_LIT_SHARE = 0.35   # a named window glows (all of it) when at least this share of its mask is lit, else none of it
 WARM_STRONG = (0.6, 0.4)   # (V, S) at least: a saturated warm pane, even a little shaded
 WARM_PALE = (0.75, 0.15)   # (V, S) at least: a pale cream or yellow pane, which is bright rather than saturated
 GDINO = "IDEA-Research/grounding-dino-tiny"
@@ -51,6 +52,11 @@ def lit_pixels(rgb, hsv, box, mask):
     sat = hsv[..., 1] / 255.0
     warm = (hue >= WARM_HUE[0]) & (hue <= WARM_HUE[1]) & (((v >= WARM_STRONG[0]) & (sat >= WARM_STRONG[1])) | ((v >= WARM_PALE[0]) & (sat >= WARM_PALE[1])))
     return (v > wall + WINDOW_LIT_OVER) | warm
+
+
+def window_lit_share(rgb, hsv, box, mask) -> float:
+    """The share of a named window's mask that is lit (lit_pixels)."""
+    return float((lit_pixels(rgb, hsv, box, mask) & mask).sum()) / max(int(mask.sum()), 1)
 
 
 def main() -> int:
@@ -88,7 +94,9 @@ def main() -> int:
         v = rgb.max(-1)
         hsv = np.asarray(img.convert("HSV"))
         gain = np.zeros((H, W), np.float32)
+        shares = []
         for kind, sc, b in kept:
+            share = None
             si = sp(images=img, input_boxes=[[b]], return_tensors="pt")
             with torch.no_grad():
                 so = sm(**si, multimask_output=False)
@@ -101,11 +109,15 @@ def main() -> int:
             else:   # panel at PANEL_GAIN, its brightest pixels (letters, lit panes) up to 1
                 base = float(np.median(v[m])) if m.any() else 0.0
                 g = m * (PANEL_GAIN + (1 - PANEL_GAIN) * np.clip((v - base - 0.03) / 0.12, 0, 1))
-                if kind == "window":
-                    g = g * lit_pixels(rgb, hsv, b, m)
+                if kind == "window":   # decided per window: lit enough as a whole, or dark glass
+                    share = window_lit_share(rgb, hsv, b, m)
+                    if share < WINDOW_LIT_SHARE:
+                        g = g * 0
             gain = np.maximum(gain, g.astype(np.float32))
+            shares.append(None if share is None else round(share, 3))
         np.save(os.path.join(work, f"view_{i}_gain.npy"), gain)
-        report[i] = [{"kind": k, "score": round(s, 3), "box": [round(x) for x in b]} for k, s, b in kept]
+        report[i] = [{"kind": k, "score": round(s, 3), "box": [round(x) for x in b], **({"lit_share": sh} if sh is not None else {})}
+                     for (k, s, b), sh in zip(kept, shares)]
     json.dump(report, open(os.path.join(work, "glow_report.json"), "w"))
     print("GLOW_OK")
     return 0

@@ -118,3 +118,20 @@ def test_window_glows_only_where_lit():
     mask[8:37, 8:37] = True
     lit = glow_worker.lit_pixels(rgb, hsv, (8, 8, 37, 37), mask)
     assert lit[10:20, 10:20].all() and not lit[25:35, 10:20].any() and not lit[10:20, 25:35].any()
+
+
+def test_window_is_decided_whole_by_its_lit_share():
+    from PIL import Image
+
+    from vgac import glow_worker
+
+    def share(lit_cols):
+        rgb = np.full((40, 40, 3), 0.5, np.float32)             # a mid wall
+        rgb[10:30, 10:10 + lit_cols] = (1.0, 0.7, 0.2)          # warm lit part, the rest of the pane stays wall-coloured grey
+        rgb[10:30, 10 + lit_cols:30] = 0.3
+        hsv = np.asarray(Image.fromarray((rgb * 255).astype(np.uint8), "RGB").convert("HSV"))
+        mask = np.zeros((40, 40), bool)
+        mask[10:30, 10:30] = True
+        return glow_worker.window_lit_share(rgb, hsv, (10, 10, 30, 30), mask)
+
+    assert share(12) >= glow_worker.WINDOW_LIT_SHARE > share(4)
