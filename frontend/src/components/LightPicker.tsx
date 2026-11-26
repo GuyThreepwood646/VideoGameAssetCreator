@@ -1,8 +1,9 @@
 // The "Light" button over the 3D viewer: five picture tiles (Studio, Outdoors, Overcast, Night, Flat).
 // Only the preview changes; the files and the game are untouched.
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { LIGHTS, lightById, type LightId } from '../previewLight'
 import { Info } from './Info'
+import { isOutsideClick, popPlacement } from '../popMenu'
 
 type Props = { value: LightId; onChange: (id: LightId) => void; note?: string | null }
 
@@ -10,6 +11,8 @@ export function LightPicker({ value, onChange, note }: Props) {
   const [open, setOpen] = useState(false)
   const wrap = useRef<HTMLDivElement>(null)
   const btn = useRef<HTMLButtonElement>(null)
+  const pop = useRef<HTMLDivElement>(null)
+  const [place, setPlace] = useState<CSSProperties | undefined>(undefined)
   const id = useId()
   const current = lightById(value)
 
@@ -21,14 +24,33 @@ export function LightPicker({ value, onChange, note }: Props) {
         btn.current?.focus()
       }
     }
-    const onDown = (e: PointerEvent) => {
-      if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false)
+    // A click, not a pointerdown: a touch that starts a scroll or a drag never becomes a click, so it cannot close the menu.
+    const onClick = (e: MouseEvent) => {
+      if (isOutsideClick(wrap.current, e.target)) setOpen(false)
     }
     document.addEventListener('keydown', onKey)
-    document.addEventListener('pointerdown', onDown)
+    document.addEventListener('click', onClick)
     return () => {
       document.removeEventListener('keydown', onKey)
-      document.removeEventListener('pointerdown', onDown)
+      document.removeEventListener('click', onClick)
+    }
+  }, [open])
+
+  // Wide windows: fix the pop-up to the window beside its button, so the viewer's overflow:hidden cannot cut it off.
+  // Narrow windows: the stylesheet makes it a bottom sheet.
+  useLayoutEffect(() => {
+    if (!open) return
+    const update = () => {
+      if (!btn.current || !pop.current) return
+      const p = popPlacement(btn.current.getBoundingClientRect(), { width: pop.current.offsetWidth, height: pop.current.scrollHeight }, { width: window.innerWidth, height: window.innerHeight })
+      setPlace(p ? { position: 'fixed', top: p.top, left: p.left, maxHeight: p.maxHeight, overflowY: 'auto' } : undefined)
+    }
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
     }
   }, [open])
 
@@ -38,7 +60,7 @@ export function LightPicker({ value, onChange, note }: Props) {
         Light: {current?.label ?? 'Studio'}
       </button>
       {open && (
-        <div className="viewer-light-pop" id={id} role="group" aria-label="Preview light">
+        <div className="viewer-light-pop" id={id} ref={pop} style={place} role="group" aria-label="Preview light">
           <div className="viewer-light-head">
             Preview light
             <Info term="term.preview_light" />
