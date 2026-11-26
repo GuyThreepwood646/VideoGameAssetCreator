@@ -809,15 +809,32 @@ def palette_names(palette: Any, limit: int = 8) -> list[str]:
     return out[:limit]
 
 
-def shrink_by_island(base: np.ndarray, uvmesh: dict[str, np.ndarray], size: int) -> np.ndarray:
-    """A colour map (S, S, 3) shrunk to size x size by area, each texel averaged only from the source texels of its own
+def srgb_to_linear(c: np.ndarray) -> np.ndarray:
+    """sRGB-encoded values (0..1) to linear light (the sRGB transfer curve)."""
+    c = np.asarray(c, dtype=np.float32)
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4).astype(np.float32)
+
+
+def linear_to_srgb(c: np.ndarray) -> np.ndarray:
+    """Linear light (0..1) to sRGB-encoded values."""
+    c = np.clip(np.asarray(c, dtype=np.float32), 0.0, 1.0)
+    return np.where(c <= 0.0031308, c * 12.92, 1.055 * c ** (1 / 2.4) - 0.055).astype(np.float32)
+
+
+def shrink_by_island(base: np.ndarray, uvmesh: dict[str, np.ndarray], size: int, linear: bool = False) -> np.ndarray:
+    """A map (S, S, C) shrunk to size x size by area, each texel averaged only from the source texels of its own
     UV island (rasterise_uv labels at both sizes), so a piece never takes in its neighbour's colour or the background
     where the pieces lie a texel apart after shrinking (Retro 64: packed 4 texels apart at 1024, 1 at 256). Texels no
-    island covers take the plain average. S must be a whole multiple of size, else the plain area average (box)."""
+    island covers take the plain average. S must be a whole multiple of size, else the plain area average (box).
+    linear: the values are sRGB-encoded colour, averaged in linear light (an average of encoded values darkens and
+    shifts the edge between two colours); data maps leave it off, as their values are not light."""
+    if linear:
+        return linear_to_srgb(shrink_by_island(srgb_to_linear(base), uvmesh, size))
     S = base.shape[0]
     if S % size or S == size:
-        return np.asarray(Image.fromarray(np.clip(np.round(base * 255), 0, 255).astype(np.uint8)).resize((size, size), Image.BOX),
-                          dtype=np.float32) / 255.0
+        chans = [np.asarray(Image.fromarray(np.clip(base[..., c], 0, 1).astype(np.float32)).resize((size, size), Image.BOX),
+                            dtype=np.float32) for c in range(base.shape[-1])]
+        return np.stack(chans, axis=-1)
     k = S // size
     big = rasterise_uv(uvmesh, S)["labels"].reshape(size, k, size, k)
     small = rasterise_uv(uvmesh, size)["labels"]
