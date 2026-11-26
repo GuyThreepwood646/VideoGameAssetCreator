@@ -60,7 +60,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .. import buildpose, colourmatch, facing, guidance, hairlib, headgraft, headtris, imaging, library, meshgeom, normalfix, quality, reference, steptime, texcolour, texfidelity
+from .. import buildpose, colourmatch, facing, guidance, hairlib, headgraft, headtris, imaging, library, meshgeom, normalfix, quality, reference, spikecheck, steptime, texcolour, texfidelity
 from ..comfy import ComfyClient
 from ..graphs.hy3d import HY3D_VIEWS, hy3d_graph
 from ..graphs.pixal3d import FOV_NODE, PIXAL3D_VIEWS, pixal3d_graph
@@ -836,6 +836,10 @@ async def audit(sc: StageContext) -> None:
     except Exception as e:  # Blender missing or render failed: keep the mesh, record the problem
         sc.set_metrics(audit_error=str(e)[:500])
     await measure_geometry(sc, glb)
+    if sc.asset.category == "humanoid":
+        spikes = await asyncio.to_thread(spikecheck.measure_glb, glb)
+        if spikes is not None:
+            sc.set_metrics(eye_spikes=spikes)
     if hairlib.is_library(sc):
         await rank_hair(sc, glb)
     await judge(sc)
@@ -1018,6 +1022,9 @@ async def judge(sc: StageContext) -> None:
     pb = build_view_check(sc.version.metrics)
     if pb:
         checks.append(pb)
+    es = quality.eye_spike_check((sc.version.metrics or {}).get("eye_spikes"))
+    if es:
+        checks.append(es)
     hg = (sc.version.metrics or {}).get("hand_guard")
     if hg:
         checks.append(buildpose.redraw_guard_check("hand_guard", "The hand redraw", hg, int(hg.get("tries") or 1) > 1,

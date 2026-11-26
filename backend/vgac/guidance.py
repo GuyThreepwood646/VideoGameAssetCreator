@@ -1450,6 +1450,12 @@ CHECK_GUIDE.update({
         "fail": ("{flipped:n} of {shells:n} separate pieces of the surface face inward, {value:pct} of the surface (it should be at most "
                  "{limit:pct}); in the game they may look missing or dark from the front."),
     },
+    "eye_spikes": {
+        "severity": "warn",
+        "ok": "The surface round the eyes is smooth: the tallest bump is {value:m} mm on a 1.75 m person.",
+        "fail": ("Thin flaps stand out of the face round the eyes, up to {value:m} mm on a 1.75 m person (it should be at most {limit:m} mm); "
+                 "they show as spikes on the lids when the model is lit from the side."),
+    },
     "unreached_texels": {
         "severity": "warn",
         "ok": "The texture was filled everywhere it is used ({value:pct} left empty).",

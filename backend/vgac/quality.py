@@ -402,6 +402,19 @@ def mesh_measure_checks(mm: dict[str, Any] | None) -> list[Check]:
     return out
 
 
+# Eye spikes (vgac/spikecheck.py): the tallest bump of surface within about 5 cm (on a 1.75 m person) of an eye, over its
+# neighbourhood. The PL-116 baseline model measured 6.5 mm; a clean face is under 2 mm.
+EYE_SPIKE_MAX_MM = 2.0
+
+
+def eye_spike_check(m: dict[str, Any] | None, limit: float = EYE_SPIKE_MAX_MM) -> Check | None:
+    """eye_spikes: None when the head was not measured (no face found), so a missing measure makes no check."""
+    mx = (m or {}).get("max_mm")
+    if not isinstance(mx, (int, float)) or isinstance(mx, bool):
+        return None
+    return check("eye_spikes", float(mx) <= limit, round(float(mx), 2), limit, vars={"flagged": m.get("flagged_verts")})
+
+
 def unreached_check(u: Any, limit: float = UNREACHED_TEXELS_MAX) -> Check | None:
     """unreached_texels: the share of covered texels the re-bake's rays never reached (blender/rebake.measure_unreached)."""
     share = (u or {}).get("share") if isinstance(u, dict) else None
