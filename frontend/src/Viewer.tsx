@@ -20,6 +20,7 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { applyGlow } from './glowMap'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { pointerRay, SurfacePicker, type SurfaceHit, type ViewerModel, type ViewerTool } from './viewerTool'
 import { buildRegionOverlay, disposeRegionOverlay, type RegionHighlight } from './regionOverlay'
@@ -92,6 +93,8 @@ type Props = {
   // Where the camera looks (the model's own space, with a radius to fit). Set when a tool needs a part of the model in view (the
   // Shape tab's arm). Null leaves the camera as the model framed it.
   focus?: { point: [number, number, number]; radius: number } | null
+  // The version's glow picture (emission.png); the preview model carries no emissive, so it is laid on the model here.
+  glowUrl?: string | null
 }
 
 type SceneHandles = {
@@ -580,7 +583,7 @@ function applyPointerOwnership(c: OrbitControls, move: boolean, toolOn: boolean)
   c.touches.ONE = toolOn ? (-1 as THREE.TOUCH) : move ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE
 }
 
-export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip, hitboxes, clipInfo, look: lookProp, attachments, clipRequest, tool, onToolExit, onModelLoaded, highlight, focus }: Props) {
+export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, showBonesDefault = true, className = '', turntableDefault = false, defaultClip, hitboxes, clipInfo, look: lookProp, attachments, clipRequest, tool, onToolExit, onModelLoaded, highlight, focus, glowUrl }: Props) {
   // Preview light (previewLight.ts): Outdoors for Photoreal, Studio for other looks, then the person's last choice.
   const lookCtx = useContext(ViewerLookContext)
   const look = lookProp ?? lookCtx
@@ -1016,6 +1019,16 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
         frameModel(hh, model)
         if (focusRef.current) focusCamera(hh, focusRef.current, model)
         setShading(model, shading, originalsRef.current)
+        if (glowUrl) {
+          new THREE.TextureLoader().load(
+            glowUrl,
+            (tex) => {
+              if (!cancelled) applyGlow(originalsRef.current.values(), tex)
+            },
+            undefined,
+            (err) => console.warn('Glow picture did not load', err),
+          )
+        }
         // Pickable meshes are the file's own: hit boxes, sockets and attachments are added later and are left out.
         const pickable: THREE.Mesh[] = []
         model.traverse((o) => {
@@ -1122,7 +1135,7 @@ export default function Viewer({ url, bones, bonesSpace = 'gltf', height = 420, 
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url])
+  }, [url, glowUrl])
 
   function removeSkeletonGroup(h: SceneHandles) {
     if (skelGroupRef.current) h.scene.remove(skelGroupRef.current)

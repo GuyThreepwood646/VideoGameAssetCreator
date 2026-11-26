@@ -64,3 +64,74 @@ def test_touch_up_keeps_glow_except_where_painted(tmp_path):
     arr = np.asarray(Image.open(out))
     assert arr[:4].max() == 0 and arr[4:].min() == 50
     assert glow.carry(tmp_path / "none.png", tmp_path / "o2.png") is None
+
+
+def _wide_glow(monkeypatch, share_texels):
+    """emission_map over a 10 x 10 texture of which `share_texels` texels glow, with the layout and the paint stubbed out."""
+    class FakeAtlas:
+        shared = 0
+        idx = np.arange(100).reshape(10, 10)
+        is_gut = np.zeros((10, 10), dtype=bool)
+
+        def __init__(self, mesh, size):
+            pass
+
+    em = np.zeros((10, 10, 3))
+    em.reshape(-1, 3)[:share_texels] = 1.0
+    monkeypatch.setattr(glow, "Atlas", FakeAtlas)
+    monkeypatch.setattr(glow.srcproject, "compose", lambda *a, **k: {"base_color": em, "alpha": np.ones((10, 10))})
+    view = type("V", (), {"alpha_img": None})()
+    kept = {"views": [view], "images": [np.zeros((4, 4, 3))], "n_primary": 1}
+    return kept
+
+
+def test_share_guard_holds_the_colour_rule_but_not_the_finders_named_parts(monkeypatch):
+    kept = _wide_glow(monkeypatch, 60)   # 0.6 of the painted texels glow, over MAX_SHARE
+    monkeypatch.setattr(glow, "mask_picture", lambda im, al=None: (np.ones((4, 4, 3)), {"signs": 1}))
+    em, rec = glow.emission_map({}, kept, 10)
+    assert em is None and rec["reason"] == "bright and saturated over most of the picture"
+    em, rec = glow.emission_map({}, kept, 10, gains=[np.ones((4, 4))])
+    assert em is not None and rec["made"] and rec["glow_share"] == 0.6
+
+
+def test_window_glows_only_where_lit():
+    from PIL import Image
+
+    from vgac import glow_worker
+
+    rgb = np.full((40, 40, 3), 0.7, np.float32)          # a pale wall
+    rgb[10:20, 10:20] = 0.2                              # dark glass
+    rgb[25:35, 10:20] = (1.0, 0.7, 0.2)                  # a warm lit pane
+    hsv = np.asarray(Image.fromarray((rgb * 255).astype(np.uint8), "RGB").convert("HSV"))
+    mask = np.zeros((40, 40), bool)
+    mask[8:37, 8:22] = True
+    lit = glow_worker.lit_pixels(rgb, hsv, (8, 8, 22, 37), mask)
+    assert not lit[10:20, 10:20].any() and lit[25:35, 10:20].all()
+
+    # a pale cream pane beside a bright wall is lit (bright and warm); a shaded brown patch and a grey-green pane are not
+    rgb[:] = 0.92
+    rgb[10:20, 10:20] = (0.84, 0.80, 0.66)    # cream: H about 44, S 0.21, V 0.84
+    rgb[25:35, 10:20] = (0.49, 0.34, 0.25)    # shaded brown: H 17, V 0.49
+    rgb[10:20, 25:35] = (0.74, 0.78, 0.70)    # grey-green glass
+    hsv = np.asarray(Image.fromarray((rgb * 255).astype(np.uint8), "RGB").convert("HSV"))
+    mask[:] = False
+    mask[8:37, 8:37] = True
+    lit = glow_worker.lit_pixels(rgb, hsv, (8, 8, 37, 37), mask)
+    assert lit[10:20, 10:20].all() and not lit[25:35, 10:20].any() and not lit[10:20, 25:35].any()
+
+
+def test_window_is_decided_whole_by_its_lit_share():
+    from PIL import Image
+
+    from vgac import glow_worker
+
+    def share(lit_cols):
+        rgb = np.full((40, 40, 3), 0.5, np.float32)             # a mid wall
+        rgb[10:30, 10:10 + lit_cols] = (1.0, 0.7, 0.2)          # warm lit part, the rest of the pane stays wall-coloured grey
+        rgb[10:30, 10 + lit_cols:30] = 0.3
+        hsv = np.asarray(Image.fromarray((rgb * 255).astype(np.uint8), "RGB").convert("HSV"))
+        mask = np.zeros((40, 40), bool)
+        mask[10:30, 10:30] = True
+        return glow_worker.window_lit_share(rgb, hsv, (10, 10, 30, 30), mask)
+
+    assert share(12) >= glow_worker.WINDOW_LIT_SHARE > share(4)
