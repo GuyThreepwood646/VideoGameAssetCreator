@@ -57,7 +57,7 @@ pictures_sharpened movement_shape
 
 # WP-86 and WP-92 (warnings only; never "likely" until each is calibrated per category).
 _NEW_LOOK = """
-painted_share texel_density_spread flipped_shells unreached_texels eye_spikes
+painted_share texel_density_spread flipped_shells unreached_texels eye_spikes texture_speckle
 """
 _NEW_ADVICE = """
 slivers uv_transfer_offset

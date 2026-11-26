@@ -185,3 +185,23 @@ def test_sharp_check_reads_the_density_ratio_not_the_raw_one():
     old = {k: v for k, v in base.items() if k != "density_sharpness_ratio"}
     got = {c["id"]: c for c in texfidelity.fidelity_checks(old)}["texture_sharp"]
     assert got["vars"]["measured"] is False and not got["passed"]
+
+
+def test_speckle_check_flags_scattered_hues_and_passes_calm_colour():
+    """texture_speckle: a calm texture passes, random-hue patches over it fail (a measure that can fail), and an atlas
+    with no saturated texels has no hue to scatter."""
+    rng = np.random.default_rng(5)
+    size = 256
+    cover = np.ones((size, size), bool)
+    calm = np.zeros((size, size, 3))
+    calm[..., 0], calm[..., 1], calm[..., 2] = 0.7, 0.45, 0.3           # one saturated orange
+    calm[:, size // 2:, :] = (0.3, 0.5, 0.7)                             # and one saturated blue, in big areas
+    assert texfidelity.hue_speckle(calm, cover) < texfidelity.SPECKLE_MAX
+    speckled = calm.copy()
+    patches = np.kron(rng.random((size // 4, size // 4)) < 0.5, np.ones((4, 4), bool))
+    speckled[patches] = rng.random((int(patches.sum()), 3))
+    assert texfidelity.hue_speckle(speckled, cover) > 2 * texfidelity.SPECKLE_MAX
+    assert texfidelity.hue_speckle(np.full((size, size, 3), 0.5), cover) == 0.0
+    c = texfidelity.speckle_check({"hue_scatter": 0.043})
+    assert c["id"] == "texture_speckle" and not c["ok"] and c["severity"] == "warn" and c.get("help")
+    assert texfidelity.speckle_check({"error": "x"})["value"] == "not measured"

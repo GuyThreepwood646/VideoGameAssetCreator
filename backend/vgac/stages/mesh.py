@@ -1049,7 +1049,7 @@ def head_build_check(metrics: dict[str, Any]) -> dict[str, Any] | None:
 
 
 async def fidelity_checks(sc: StageContext, rec: dict[str, Any], input_view: str | None) -> list[dict[str, Any]]:
-    """texture_sharp and texture_colour_matches_picture (vgac/texfidelity.py), report-only: the model's flat colour from
+    """texture_sharp, texture_colour_matches_picture and texture_speckle (vgac/texfidelity.py), report-only: the model's flat colour from
     the picture's side against the picture, measured once and kept in the metrics (texture_fidelity). Nothing for
     materials and models without a base colour. Used by the 3D step and by prep. Never fails the job."""
     if sc.asset.category == "material":
@@ -1091,7 +1091,10 @@ async def fidelity_checks(sc: StageContext, rec: dict[str, Any], input_view: str
         except Exception as e:  # noqa: BLE001  (no picture to compare with)
             fid = {"error": str(e)[:200]}
         sc.set_metrics(texture_fidelity=fid)
-    return texfidelity.fidelity_checks(sc.version.metrics.get("texture_fidelity") or {})
+    if "texture_speckle" not in (sc.version.metrics or {}):
+        sc.set_metrics(texture_speckle=await asyncio.to_thread(texfidelity.speckle_measure, glb, base))
+    checks = texfidelity.fidelity_checks(sc.version.metrics.get("texture_fidelity") or {})
+    return checks + [texfidelity.speckle_check(sc.version.metrics.get("texture_speckle"))]
 
 
 async def colour_check(sc: StageContext) -> dict[str, Any] | None:
