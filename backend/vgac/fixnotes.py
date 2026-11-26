@@ -126,6 +126,7 @@ NOTES.update({
     "slivers": ("by_hand", "Build the 3D model again for another try, or accept it: thin triangles only matter where the model bends or is lit closely."),
     "texel_density_spread": ("by_hand", "Run Clean up for the game again; if the same parts stay blurry, accept it or build the 3D model again."),
     "flipped_shells": ("by_hand", "Build the 3D model again for another try, and look at hair, leaves and cloth in the viewer from both sides."),
+    "eye_spikes": ("by_hand", "Smooth the area round the eyes by hand, or build the 3D model again for another try; it only shows close up."),
     "unreached_texels": ("by_hand", "Run Clean up for the game again, or accept it if the empty patches are out of sight."),
 })
 
