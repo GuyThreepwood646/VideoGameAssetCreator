@@ -7,6 +7,10 @@ Hugging Face cache layout under local/finder/hf (the finder reads them with loca
     python -m vgac.finder_setup           fetch what is missing; check what is already there
     python -m vgac.finder_setup --check   check only; downloads nothing
 
+The environment's Python packages are checked too, against setup/finder-requirements.txt (the pinned versions,
+committed): the installed versions are read with the environment's own pip freeze. A difference is printed with the
+fix; it does not change the exit code, which is about the model files.
+
 A file already in place is hashed against its pin and left alone when it matches. A file that differs stops the run
 (nothing is deleted or replaced: the person moves it aside). A missing file comes through downloader.fetch, which
 refuses any file that does not match its pin. Exit codes: 0 all present and matching (or fetched), 1 some missing in
@@ -15,7 +19,9 @@ refuses any file that does not match its pin. Exit codes: 0 all present and matc
 from __future__ import annotations
 
 import logging
+import os
 import re
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -47,11 +53,83 @@ def write_refs(spec: downloader.Spec) -> None:
     refs.write_text(m.group("commit"), encoding="utf-8")
 
 
+REQUIREMENTS = "setup/finder-requirements.txt"
+
+
+def requirements_path() -> Path:
+    return downloader.project_dir() / REQUIREMENTS
+
+
+def venv_python() -> Path:
+    """The item finder's own Python (local/finder/venv), not the backend's."""
+    base = downloader.project_dir() / "local" / "finder" / "venv"
+    return base / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def _canon(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def read_pins(text: str) -> dict[str, str]:
+    """name -> version for each name==version line. Comments, options and local or URL lines are not pins."""
+    pins = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("-") or "@" in line or "==" not in line:
+            continue
+        name, version = line.split("==", 1)
+        pins[_canon(name)] = version.strip()
+    return pins
+
+
+def installed_versions(py: Path) -> dict[str, str] | None:
+    """The packages the environment has now, from its own pip freeze; None when that cannot be read."""
+    try:
+        out = subprocess.run([str(py), "-m", "pip", "freeze"], capture_output=True, text=True, timeout=300,
+                             check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return read_pins(out)
+
+
+def pin_drift(pins: dict[str, str], have: dict[str, str]) -> list[str]:
+    """One line per pinned package that is missing or at another version. Packages not in the file are not judged."""
+    out = []
+    for name, version in pins.items():
+        if name not in have:
+            out.append(f"{name} {version} is not installed")
+        elif have[name] != version:
+            out.append(f"{name} is {have[name]}, pinned {version}")
+    return out
+
+
+def check_environment(say) -> None:
+    """Print what differs between the environment and the pin file. Nothing is changed."""
+    py = venv_python()
+    if not py.exists():
+        return
+    have = installed_versions(py)
+    if have is None:
+        say(f"Could not read the packages of the item finder environment ({py}); its pins were not checked.")
+        return
+    req = requirements_path()
+    if not req.exists():
+        say(f"The pin file {REQUIREMENTS} is missing.")
+        return
+    drift = pin_drift(read_pins(req.read_text(encoding="utf-8")), have)
+    if drift:
+        say("Item finder packages differ from " + REQUIREMENTS + ": " + "; ".join(drift)
+            + ". Rebuild the environment: move local/finder/venv aside, then run setup/Setup-ItemFinder.ps1 -Install.")
+    else:
+        say(f"Item finder packages match {REQUIREMENTS}.")
+
+
 def run(check_only: bool = False, say=print) -> int:
     specs = finder_specs()
     if not specs:
         say("The list has no item finder files (setup/downloads.json, finder_* entries).")
         return 3
+    check_environment(say)
     cancel = threading.Event()
     wrong = []
     for s in specs:

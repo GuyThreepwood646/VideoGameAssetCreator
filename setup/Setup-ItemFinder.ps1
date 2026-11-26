@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Default mode CHANGES NOTHING. It prints what is there and what -Install would download.
-  -Install  creates local\finder\venv (CPU PyTorch, transformers, Pillow, numpy) and fetches the two models' files into
+  -Install  creates local\finder\venv (the exact versions in setup\finder-requirements.txt, PyTorch as the CPU build) and fetches the two models' files into
             local\finder\hf. The files come through the app's own downloader (backend\vgac\finder_setup.py): each one is
             checked against the SHA-256 pinned in setup\downloads.json (finder_* entries), from its official Hugging Face
             address. A file already in place is checked, not fetched again; a file that does not match is never used.
@@ -39,6 +39,7 @@ $finder = Join-Path $root 'local\finder'
 $venv = Join-Path $finder 'venv'
 $venvPy = Join-Path $venv 'Scripts\python.exe'
 $hf = Join-Path $finder 'hf'
+$reqFile = Join-Path $root 'setup\finder-requirements.txt'
 $backend = Join-Path $root 'backend'
 $backendPy = Join-Path $backend '.venv\Scripts\python.exe'
 
@@ -73,7 +74,7 @@ if (-not $Install) {
 
 $steps = @(
   "make the environment at $venv with $Python",
-  'install PyTorch (CPU build), transformers, timm, Pillow and numpy into it (about 300 MB)',
+  'install the pinned packages in setup\finder-requirements.txt into it, PyTorch as the CPU build (about 300 MB)',
   "fetch the model files into $hf through the app's downloader (missing files only, each checked against its pinned SHA-256; about 875 MB)"
 )
 if ($DryRun) {
@@ -87,8 +88,8 @@ New-Item -ItemType Directory -Force -Path $finder, $hf | Out-Null
 if (-not $haveEnv) {
   & $Python -m venv $venv
   & $venvPy -m pip install --quiet --upgrade pip
-  & $venvPy -m pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
-  & $venvPy -m pip install --quiet transformers timm pillow numpy
+  & $venvPy -m pip install --quiet torch==2.15.0+cpu --index-url https://download.pytorch.org/whl/cpu
+  & $venvPy -m pip install --quiet -r $reqFile
 }
 
 $filesCode = Invoke-FinderFiles

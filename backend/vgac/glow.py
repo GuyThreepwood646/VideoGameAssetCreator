@@ -31,7 +31,8 @@ MIN_LETTERS = 0.02             # a panel is a sign only when this share of it is
 FINDER_SIDE = 1024               # the longer side the finder sees
 MAX_LETTER_AREA = 0.004        # share of the picture: the largest hole in a panel that still counts as a letter
 PANEL_GAIN = 0.6               # the panel glows less than its letters
-# When more than this share of the painted texels would glow, the picture is colourful all over, not lit in places: no map.
+# Colour rule only: when more than this share of the painted texels would glow, the picture is colourful all over, not lit in
+# places: no map. A map from the item finder's named parts is not held to it.
 MAX_SHARE = 0.25
 # A map with fewer glowing texels than this share is empty (noise).
 MIN_SHARE = 0.0005
@@ -148,7 +149,7 @@ def emission_map(mesh: dict[str, np.ndarray], kept: dict[str, Any], size: int,
     glow = em.max(axis=-1) > GLOW_AT
     share = float(((em.reshape(-1, 3)[atlas.idx].max(axis=-1) > GLOW_AT) & own & alpha).sum()) / painted
     rec = {"made": True, "glow_share": round(share, 4), "size": size, "signs": signs}
-    if share > MAX_SHARE:
+    if gains is None and share > MAX_SHARE:   # the guard is for the colour rule; the finder named the lit parts
         return None, {**rec, "made": False, "reason": "bright and saturated over most of the picture"}
     if share < MIN_SHARE or not glow.any():
         return None, {**rec, "made": False, "reason": "nothing bright and saturated enough"}

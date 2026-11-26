@@ -23,6 +23,7 @@ class FakeWorld:
         self.jobs = {"running": [], "queued": []}
         self.posts = []
         self.down = set()
+        self.gpus = []  # GET /api/gpus entries: {"instance", "enabled", "state"}
 
     def __call__(self, url, method="GET", body=None, timeout=10):
         if method == "POST":
@@ -30,6 +31,8 @@ class FakeWorld:
             return None
         if "/api/jobs" in url:
             return list(self.jobs[url.split("status=")[1]])
+        if url.endswith("/api/gpus"):
+            return list(self.gpus)
         port = int(url.split(":")[2].split("/")[0])
         if port in self.down:
             raise OSError("down")
@@ -192,6 +195,98 @@ class CardqTests(unittest.TestCase):
         with mock.patch.object(cardq.subprocess, "run", lambda c: SimpleNamespace(returncode=0)):
             self.run_cli("--card", "A", "--", "x")
         self.assertFalse(any("interrupt" in u or "queue" in u for u, _ in self.world.posts))
+
+    def set_card(self, letter, enabled=True, state="running"):
+        self.world.gpus = [g for g in self.world.gpus if g["instance"] != letter]
+        self.world.gpus.append({"instance": letter, "enabled": enabled, "state": state})
+
+    def test_card_switched_off_in_app_is_not_waited_for(self):
+        self.set_card("A", enabled=False, state="off")
+        self.world.queue[8188] = ([["x"]], [])  # its queue can never drain: a hang before this change
+        ran = []
+        with mock.patch.object(cardq.subprocess, "run", lambda c: ran.append(c) or SimpleNamespace(returncode=0)):
+            rc = self.run_cli("--card", "A", "--", "x")
+        self.assertEqual(rc, cardq.EXIT_CARD_UNAVAILABLE)
+        self.assertEqual(ran, [])
+        self.assertEqual(self.sleeps, [])
+        self.assertIsNone(cardq.read_lock("A"))
+        self.assertEqual(self.claims(), [])
+
+    def test_stopped_engine_is_free_and_runs_without_waiting(self):
+        self.set_card("A", enabled=True, state="stopped")
+        self.world.down.add(8188)  # its port is not answering: the engine is stopped
+        with mock.patch.object(cardq.subprocess, "run", lambda c: SimpleNamespace(returncode=0)):
+            rc = self.run_cli("--card", "A", "--", "x")
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.claims()[0]["card"], 8188)
+        self.assertEqual(self.sleeps, [])
+        self.assertEqual(self.world.posts, [])  # nothing to free on a stopped engine
+
+    def test_stopped_engine_is_not_refused_with_quiet(self):
+        self.set_card("A", enabled=True, state="stopped")
+        self.world.down.add(8188)
+        with mock.patch.object(cardq.subprocess, "run", lambda c: SimpleNamespace(returncode=0)):
+            rc = self.run_cli("--card", "A", "--quiet", "--", "x")
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.sleeps, [])
+
+    def test_stopped_engine_still_waits_for_a_live_lock(self):
+        self.set_card("A", enabled=True, state="stopped")
+        self.world.down.add(8188)
+        cardq.take_lock("A", "other", ["x"])
+        self.alive = {cardq.read_lock("A")["pid"]}
+        self.assertIn("locked by other", cardq.card_busy_reason("A", cardq.app_jobs(), cardq.app_gpus()))
+
+    def test_off_card_with_stopped_other_runs_on_the_other(self):
+        self.set_card("A", enabled=False, state="off")
+        self.set_card("B", enabled=True, state="stopped")
+        self.world.down.add(8189)
+        with mock.patch.object(cardq.subprocess, "run", lambda c: SimpleNamespace(returncode=0)):
+            rc = self.run_cli("--card", "any", "--", "x")
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.claims()[0]["card"], 8189)
+        self.assertEqual(self.sleeps, [])
+
+    def test_any_with_every_card_off_exits_without_waiting(self):
+        self.set_card("A", enabled=False, state="off")
+        self.set_card("B", enabled=True, state="off")
+        with mock.patch.object(cardq.subprocess, "run", lambda c: self.fail("must not run")):
+            rc = self.run_cli("--card", "any", "--", "x")
+        self.assertEqual(rc, cardq.EXIT_CARD_UNAVAILABLE)
+        self.assertEqual(self.sleeps, [])
+
+    def test_quiet_with_one_card_off_exits_without_waiting(self):
+        self.set_card("B", enabled=False, state="off")
+        with mock.patch.object(cardq.subprocess, "run", lambda c: self.fail("must not run")):
+            rc = self.run_cli("--card", "A", "--quiet", "--", "x")
+        self.assertEqual(rc, cardq.EXIT_CARD_UNAVAILABLE)
+        self.assertEqual(self.sleeps, [])
+
+    def test_card_that_failed_is_still_waited_for(self):
+        self.set_card("A", enabled=True, state="failed")
+        self.world.queue[8188] = ([["x"]], [])
+
+        def clear(n):
+            self.world.queue[8188] = ([], [])
+
+        self.on_sleep = clear
+        with mock.patch.object(cardq.subprocess, "run", lambda c: SimpleNamespace(returncode=0)):
+            rc = self.run_cli("--card", "A", "--", "x")
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_app_unreachable_keeps_the_old_wait(self):
+        with mock.patch.object(cardq, "app_gpus", lambda: None):
+            self.world.queue[8188] = ([["x"]], [])
+
+            def clear(n):
+                self.world.queue[8188] = ([], [])
+
+            self.on_sleep = clear
+            with mock.patch.object(cardq.subprocess, "run", lambda c: SimpleNamespace(returncode=0)):
+                rc = self.run_cli("--card", "A", "--", "x")
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(self.sleeps), 1)
 
     def test_status_is_read_only(self):
         with mock.patch("builtins.print") as pr:

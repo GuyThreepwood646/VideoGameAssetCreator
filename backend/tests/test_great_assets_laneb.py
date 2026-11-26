@@ -119,6 +119,7 @@ SAMPLES = {
     "texel_density_spread": ((1.5, 4.0), (9.0, 4.0)),
     "flipped_shells": ((0.0, 0.05), (0.5, 0.05)),
     "unreached_texels": ((0.01, 0.02), (0.17, 0.02)),
+    "eye_spikes": ((0.8, 2.0), (6.5, 2.0)),  # the tallest bump near the eyes in mm, passing then failing
     "straight_on": ((1.1, 2.0), (3.5, 2.0)),
     "body_marks": ((0, 0), (3, 0)),  # marks on the body still to check (bodymarks.py)
     "moving_parts": ((2, 2), (1, 2)),  # WP-29: moving parts cut free against the parts declared (stages/rig.py)

@@ -132,6 +132,7 @@ HEADLINES.update({
     "slivers": "Many triangles are long and thin",
     "texel_density_spread": "Some parts of the texture are much blurrier than others",
     "flipped_shells": "Some pieces of the surface face inward",
+    "eye_spikes": "Thin flaps stand out of the face round the eyes",
     "unreached_texels": "Patches of the texture were left empty when it was re-made",
 })
 
