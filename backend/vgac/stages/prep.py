@@ -344,8 +344,10 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         sc.set_params(hair_source=hairlib.LIBRARY, hair_style=hair["style"], hair_style_source=hair["style_source"],
                       hair_allowance=hair["allowance"], hair_cover=hair["cover"])
     sc.set_metrics(size_source=size["size_source"], shading_applied=shading["shading"], shading_source=shading["source"],
-                   triangle_limit=tri_limit["limit"], triangle_limit_source=tri_limit["source"], triangle_floor=floor_plan,
+                   triangle_limit=tri_limit["limit"], triangle_limit_source=tri_limit["source"],
                    recipe=reference.recipe_record(rec, "mesh", "surface"), **facing_)
+    if floor_plan is not None:
+        sc.set_metrics(triangle_floor=floor_plan)
     sc.use_model("blender")
     out = sc.dir / "prep.glb"
     args: list[Any] = [src, out, "mesh", "--size", size["size_m"], "--size-axis", size["size_axis"], "--yaw", facing_["face_yaw_applied"],
