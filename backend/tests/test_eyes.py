@@ -63,6 +63,11 @@ def test_squares_are_placed_in_free_texture_and_none_when_full():
     assert eyes.place({"uv": full, "faces": np.array([[0, 1, 2], [0, 2, 3]])}, 1024) is None
 
 
+def test_the_eye_square_falls_back_in_steps_down_to_80_pixels():
+    assert eyes.TEXTURE_PIECE_PX == tuple(sorted(eyes.TEXTURE_PIECE_PX, reverse=True))
+    assert eyes.TEXTURE_PIECE_PX[-1] == 80
+
+
 def test_writing_a_square_changes_only_that_part(tmp_path):
     path = tmp_path / "map.png"
     Image.fromarray(np.zeros((64, 64, 3), np.uint8), "RGB").save(path)
