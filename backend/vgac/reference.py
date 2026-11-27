@@ -127,7 +127,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("tex_steps", "select", 24, options=[12, 24]),
         # The head built on its own (vgac/headgraft.py): people on the bald route (hair from the library) only.
         _param("head_build", "boolean", None, categories=["humanoid"], label="Build the head on its own",
-               description="With hair from the library: a second build from a close crop of the head, joined at the neck; about 5 minutes more. On when empty"),
+               description="With hair from the library: a second build from a close crop of the head, joined at the neck; about 5 minutes more. Off when empty"),
         _param("head_crop", "number", None, min=0.18, max=0.4, step=0.02, categories=["humanoid"], label="Head crop (share of the height)",
                description="How much of the figure, from the top, the head build sees; 0.26 when empty"),
         # Hands redrawn before the build (docs/HANDS-PLAN.md, phase 0: the only change that gave the build separate fingers).
