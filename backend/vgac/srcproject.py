@@ -2983,13 +2983,14 @@ MODES = ("detail", "full", "off")
 DEFAULT_MODE = "full"
 
 
-# Categories that paint by themselves: characters, buildings and rigid props (whose pictures from a corner do not paint,
-# CORNER_MAX_DEG). Articulated props stay off: their paint is slow and changes little.
-AUTO_CATEGORIES = ("humanoid", "environment", "prop_rigid")
+# Categories that paint by themselves: characters, creatures (quadruped, winged, serpent), buildings and rigid props
+# (whose pictures from a corner do not paint, CORNER_MAX_DEG). Vehicles and articulated props stay off: their paint is
+# slow and changes little, and a vehicle's side views paint window frames onto panels that have none.
+AUTO_CATEGORIES = ("humanoid", "quadruped", "winged", "serpent", "environment", "prop_rigid")
 
 
 def on(params: dict[str, Any], category: str | None = None, look: dict[str, Any] | None = None) -> bool:
-    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character, a building or a rigid prop.
+    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character, a creature, a building or a rigid prop.
     `look` is no longer read; it stays so the callers need not change."""
     if params.get(PARAM) is not None:
         return bool(params.get(PARAM))
