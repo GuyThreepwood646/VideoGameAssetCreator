@@ -75,9 +75,21 @@ def face_sentence(sc: StageContext, params: dict[str, Any], description: str) ->
 _QUOTED_WORDS = re.compile(r"[\"“][^\"“”]*[A-Za-z0-9][^\"“”]*[\"”]")
 
 
+def long_body(category: dict[str, Any], description: str) -> bool:
+    """True when the description names one of the category's long limbless animals (`long_body_words`, whole words,
+    singular or plural), which are painted in the category's rest pose."""
+    words = category.get("long_body_words") or []
+    if not words:
+        return False
+    return re.search(rf"\b(?:{'|'.join(map(re.escape, words))})(?:e?s)?\b", description or "", re.IGNORECASE) is not None
+
+
 def pose_block_for(category: dict[str, Any], description: str) -> str:
     """The category's pose block; its lettered variant (`pose_block_lettered`) when the description puts words in quotes,
-    so a sign is lettered with exactly those words. Without quoted words the plain block applies."""
+    so a sign is lettered with exactly those words. Without quoted words the plain block applies. A long limbless animal
+    (long_body) takes `long_body_pose_block`."""
+    if long_body(category, description):
+        return category.get("long_body_pose_block") or category.get("pose_block") or ""
     lettered = category.get("pose_block_lettered")
     if lettered and _QUOTED_WORDS.search(description or ""):
         return lettered
@@ -126,9 +138,11 @@ def prompt_and_view(sc: StageContext, params: dict[str, Any]) -> tuple[str, str 
 
     held = items.concept_prompt_parts(sc.asset)
     base = (params.get("prompt_override") or "").strip() or ((held or {}).get("prompt") or sc.asset.prompt).strip()
-    # The category's view words (view_lead) go first: Z-Image Turbo follows view words at the start of the prompt and
-    # ignores them at the end. Only with the category's own wording.
-    lead = (sc.category.get("view_lead") or "").strip()
+    # The category's view words (view_lead, or long_body_lead for a long limbless animal) go first: Z-Image Turbo follows
+    # view words at the start of the prompt and ignores them at the end. Only with the category's own wording.
+    description = base
+    lead_key = "long_body_lead" if long_body(sc.category, description) else "view_lead"
+    lead = (sc.category.get(lead_key) or "").strip()
     uses_category = params.get("readiness_block", True) and not (held or {}).get("pose_block") and sc.category.get("pose_block")
     if lead and uses_category and not base.startswith(lead):
         base = f"{lead} {base}"
@@ -146,7 +160,7 @@ def prompt_and_view(sc: StageContext, params: dict[str, Any]) -> tuple[str, str 
     if params.get("readiness_block", True) and (held or {}).get("pose_block"):
         parts.append(held["pose_block"])
     elif params.get("readiness_block", True) and sc.category.get("pose_block"):
-        parts.append(pose_block_for(sc.category, base))
+        parts.append(pose_block_for(sc.category, description))
         category_wording = True
     if (held or {}).get("sentence"):
         parts.append(held["sentence"])
@@ -196,17 +210,20 @@ async def missing_look_addons(sc: StageContext, applied: list[dict[str, Any]]) -
 
 
 async def _pose_control(sc: StageContext, model: str, params: dict[str, Any], width: int, height: int) -> dict[str, Any] | None:
-    """The pose control input (vgac/pose_control.py) for a category that sets `pose_control`, drawn by Z-Image Turbo with the
-    category's own pose wording; not for a picture whose character holds an item (the item sets the pose) and not
-    for the other painters. The skeleton is staged on the picture card under a name of its own and recorded in the metrics."""
+    """The guide picture (vgac/pose_control.py), drawn by Z-Image Turbo with the category's own wording: the skeleton for a
+    category that sets `pose_control`, the S outline for a long limbless animal (`long_body_control`); not for a picture
+    whose character holds an item (the item sets the pose) and not for the other painters. The guide is
+    staged on the picture card under a name of its own and recorded in the metrics."""
     from .. import items, pose_control
 
-    spec = pose_control.control_spec(sc.category)
+    spec, draw = pose_control.control_spec(sc.category), pose_control.skeleton
+    if spec is None and sc.category.get("long_body_control") and long_body(sc.category, _description(sc, params)):
+        spec, draw = pose_control.control_spec(sc.category, "long_body_control"), pose_control.s_outline
     held = items.concept_prompt_parts(sc.asset) or {}
     if spec is None or model != "zturbo" or not params.get("readiness_block", True) or held.get("pose_block"):
         return None
     path = sc.dir / "pose_control.png"
-    pose_control.skeleton(width, height).save(path)
+    draw(width, height).save(path)
     name = await sc.stage_input(path, f"vgac_{sc.version.id[:8]}_pose_control.png")
     sc.set_params(pose_control=spec)
     sc.use_model("pose_control")

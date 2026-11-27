@@ -1134,6 +1134,18 @@ def _trilinear_all(grid: np.ndarray, f: np.ndarray) -> np.ndarray:
     return out
 
 
+# The reach of surface_correction: the share of painted texels round a texel from which its correction fades in.
+# Rigid props start the fade-in at a higher painted share (SURFACE_REACH_RIGID), so the correction stays near painted
+# texels: it keeps the tone match where the front meets the side and stops washing the far side, which no picture shows.
+SURFACE_REACH = (0.03, 0.4)
+SURFACE_REACH_RIGID = (0.15, 0.5)
+
+
+def surface_reach(category: str | None) -> tuple[float, float]:
+    """The surface_correction reach for an asset category: SURFACE_REACH_RIGID for prop_rigid, SURFACE_REACH otherwise."""
+    return SURFACE_REACH_RIGID if category == "prop_rigid" else SURFACE_REACH
+
+
 def surface_correction(atlas: Atlas, delta: np.ndarray, alpha: np.ndarray, cell: float = 0.012, passes: int = 3,
                        r: int = 2) -> tuple[np.ndarray, np.ndarray]:
     """A smooth, surface-following version of delta (the colour offset of the painted texels), carried to every texel and
@@ -1155,7 +1167,8 @@ def surface_correction(atlas: Atlas, delta: np.ndarray, alpha: np.ndarray, cell:
     frac = sa / np.maximum(sn, 1e-9)
     fc = f - 0.5
     both = _trilinear_all(np.concatenate([g, frac[..., None]], -1), fc)
-    return both[:, :3], np.clip(face.smoothstep(0.03, 0.4, both[:, 3]), 0, 1)
+    lo, hi = getattr(atlas, "surface_reach", SURFACE_REACH)
+    return both[:, :3], np.clip(face.smoothstep(lo, hi, both[:, 3]), 0, 1)
 
 
 def skin_tone(atlas: Atlas, kept: np.ndarray, paint: np.ndarray, alpha: np.ndarray, zt: dict[str, np.ndarray]) -> np.ndarray:
@@ -2884,6 +2897,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
                 if fitted[name].ok and fitted[name] not in views:
                     views.append(fitted[name])
         atlas = atlas_job.result()
+        atlas.surface_reach = surface_reach(category)
         if atlas.shared > MAX_SHARED:
             # A picture shows one side; on a mirrored layout its texels are the other side's too, and it comes out in pieces
             res["reason"] = "the model's two halves share one piece of texture (mirrored), so a picture cannot be painted on one side"
@@ -2929,7 +2943,7 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         return res
     res.update(applied=True, base_color=new)
     if keep is not None:  # the fitted views, to paint again on another layout of the same model (repaint)
-        keep.update(views=views, images=images, n_primary=n_primary, size=size, zone=zone_record(zone))
+        keep.update(views=views, images=images, n_primary=n_primary, size=size, zone=zone_record(zone), category=category)
     return res
 
 
@@ -2939,6 +2953,7 @@ def repaint(mesh: dict[str, np.ndarray], tex: np.ndarray, kept: dict[str, Any]) 
     knight, front sharpness 0.73 before that bake and 0.41 after). Nothing is fitted again: the model has not moved,
     only its layout has. Returns {applied, base_color, reason}."""
     atlas = Atlas(mesh, tex.shape[0])
+    atlas.surface_reach = surface_reach(kept.get("category"))
     if atlas.shared > MAX_SHARED:
         return {"applied": False, "base_color": tex, "reason": "the new layout is mirrored"}
     c = compose(atlas, kept["views"], kept["images"], kept["n_primary"], tex, kept.get("zone"))
@@ -2985,13 +3000,14 @@ MODES = ("detail", "full", "off")
 DEFAULT_MODE = "full"
 
 
-# Categories that paint by themselves: characters, buildings and rigid props (whose pictures from a corner do not paint,
-# CORNER_MAX_DEG). Articulated props stay off: their paint is slow and changes little.
-AUTO_CATEGORIES = ("humanoid", "environment", "prop_rigid")
+# Categories that paint by themselves: characters, creatures (quadruped, winged, serpent), buildings and rigid props
+# (whose pictures from a corner do not paint, CORNER_MAX_DEG). Vehicles and articulated props stay off: their paint is
+# slow and changes little, and a vehicle's side views paint window frames onto panels that have none.
+AUTO_CATEGORIES = ("humanoid", "quadruped", "winged", "serpent", "environment", "prop_rigid")
 
 
 def on(params: dict[str, Any], category: str | None = None, look: dict[str, Any] | None = None) -> bool:
-    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character, a building or a rigid prop.
+    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character, a creature, a building or a rigid prop.
     `look` is no longer read; it stays so the callers need not change."""
     if params.get(PARAM) is not None:
         return bool(params.get(PARAM))

@@ -1,9 +1,13 @@
-"""The A-pose skeleton the step 1 picture is drawn to (graphs/concept.py zimage_graph `control`).
+"""The guide pictures the step 1 picture is drawn to (graphs/concept.py zimage_graph `control`).
 
 Z-Image Turbo's pose control model (Fun Controlnet Union 2.1) takes a picture of a skeleton in the standard 18-point
 colour-coded stick format and makes the painted figure follow it. A category that sets `pose_control` in its yaml
 gets one fixed skeleton: the A-pose (ARM_ANGLE, FEET_APART), standing upright, the whole figure inside the middle four
 fifths of the height (the same frame the category's pose_block asks for in words).
+
+A category that sets `long_body_control` gets the outline of a long body lying in flat open S bends seen from above, head at the left and tail
+tip at the right, for the descriptions it treats as long limbless animals (stages/concept.py long_body). The same model
+reads it as an edge guide.
 """
 
 from __future__ import annotations
@@ -78,9 +82,43 @@ def skeleton(width: int = 1024, height: int = 1024) -> Image.Image:
     return im.resize((width, height), Image.LANCZOS)
 
 
-def control_spec(category: dict[str, Any]) -> dict[str, Any] | None:
-    """The category's pose control settings, or None. `pose_control: {strength, end}` in the category yaml."""
-    spec = category.get("pose_control")
+def s_line(u: float) -> tuple[float, float, float]:
+    """The rest pose at u (0 the nose, 1 the tail tip): centre (x, y) and half body width, in picture widths."""
+    x = 0.10 + 0.80 * u
+    y = 0.5 + 0.17 * math.sin(3 * math.pi * u)  # one and a half waves: a body about thirty times as long as it is wide
+    # Head slightly wider than the neck, then an even body that narrows to a point over the last third.
+    if u < 0.08:
+        r = 0.018 + 0.009 * math.sin(math.pi * u / 0.08)
+    elif u < 0.18:
+        r = 0.018 + 0.006 * (u - 0.08) / 0.10
+    else:
+        r = 0.024 * min(1.0, (1.0 - u) / 0.35)
+    return x, y, r * math.sqrt(min(1.0, 0.1 + u / 0.025))  # a rounded nose
+
+
+def s_outline(width: int = 1024, height: int = 1024) -> Image.Image:
+    """The rest pose's outline, white on black."""
+    scale, steps = 4, 240
+    w, h = width * scale, height * scale
+    side = min(w, h)
+    left, right = [], []
+    for i in range(steps + 1):
+        u = i / steps
+        x, y, r = s_line(u)
+        (x0, y0, _), (x1, y1, _) = s_line(max(0.0, u - 0.002)), s_line(min(1.0, u + 0.002))
+        length = math.hypot(x1 - x0, y1 - y0)
+        nx, ny = -(y1 - y0) / length, (x1 - x0) / length
+        for edge, sign in ((left, 1.0), (right, -1.0)):
+            edge.append((w / 2 + (x - 0.5 + sign * nx * r) * side, h / 2 + (y - 0.5 + sign * ny * r) * side))
+    im = Image.new("RGB", (w, h), (0, 0, 0))
+    outline = left + right[::-1] + left[:1]
+    ImageDraw.Draw(im).line(outline, fill=(255, 255, 255), width=max(2, side // 400), joint="curve")
+    return im.resize((width, height), Image.LANCZOS)
+
+
+def control_spec(category: dict[str, Any], key: str = "pose_control") -> dict[str, Any] | None:
+    """The category's guide settings under `key`, or None. `<key>: {strength, end}` in the category yaml."""
+    spec = category.get(key)
     if not isinstance(spec, dict):
         return None
     return {"strength": float(spec.get("strength", DEFAULT_STRENGTH)), "end": float(spec.get("end", 1.0))}

@@ -26,6 +26,21 @@ pose_block: >-
   margin around it, centred in frame. Plain flat light grey background. Soft even studio lighting
   from the front with no hard shadows. No text, no logos, no background scenery, no motion blur,
   no cropping.
+# Long limbless animals are painted at rest in a flat open S, so no part of the body touches another and the 3D build
+# does not join them. Applies when the description names one of these words (vgac/stages/concept.py long_body);
+# other descriptions, fish among them, keep pose_block above.
+long_body_words: [snake, serpent, python, cobra, viper, adder, mamba, rattlesnake, boa, anaconda, eel, worm, earthworm, lamprey]
+long_body_lead: >-
+  Seen from high above, looking down: the very long slender animal lies flat on the ground at rest in wide open S bends, the head at
+  one end and the tail tip at the other, every part of the long body well apart from every other part, the head low and
+  level in line with the body.
+long_body_pose_block: >-
+  The whole body from head to tail tip is visible with margin around it, centred in frame. Plain flat light grey
+  background. Soft even studio lighting from the front with no hard shadows. No text, no logos, no background scenery,
+  no motion blur, no cropping.
+# Z-Image Turbo draws them to the outline of that S (vgac/pose_control.py s_outline); strength and the share of steps it
+# holds. The outline lets go before the last steps, so it does not stay in the picture as a drawn line.
+long_body_control: {strength: 0.8, end: 0.6}
 budgets:
   mobile_low: {triangles: 4000, texture: 1024}
   pc_mid: {triangles: 16000, texture: 2048}
