@@ -71,7 +71,8 @@ namespace Vgac.Starter
         Timer timer;
         int ticking;
         bool autoStartedB;
-        bool backendWasUp = true;   // the supervisor starts after the backend answered; a later up-after-down reloads the page
+        // The backend counts as down only after two misses in a row; a back-up after that reloads the page.
+        readonly BackendLiveness liveness = new BackendLiveness();
         string lastLog = "";
 
         // Set by the window while it runs the screens' build.
@@ -151,8 +152,10 @@ namespace Vgac.Starter
                 HttpAnswer b = Http.Get(settings.ComfyBUrl + "/system_stats", 3000);
                 HttpAnswer h = Http.Get(backend.Url + "/api/health", 3000);
                 HttpAnswer u = Http.Get(backend.Url + "/", 3000);
-                bool backendUp = h.Ok && HealthReader.Ok(h.Text);
-                if (backendUp)
+                bool answered = h.Ok && HealthReader.Ok(h.Text);
+                bool cameBack = liveness.Observe(answered);
+                bool backendUp = liveness.Up;
+                if (answered)
                 {
                     Jobs = HealthReader.Jobs(h.Text);
                     HttpAnswer g = Http.Get(backend.Url + "/api/gpus", 3000);
@@ -186,8 +189,7 @@ namespace Vgac.Starter
                 var sb = new StringBuilder("|");
                 foreach (Row r in snap.Rows) sb.Append(r.Key + ": " + r.State + " - " + r.Message + "|");
                 lastLog = sb.ToString();
-                if (backendUp && !backendWasUp) { var cb = BackendCameUp; if (cb != null) cb(); }
-                backendWasUp = backendUp;
+                if (cameBack) { var cb = BackendCameUp; if (cb != null) cb(); }
                 MaybeStartB(i, backendUp);
                 CheckRestartRequest();
                 var ch = Changed;
