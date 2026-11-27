@@ -2706,7 +2706,10 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         wanted += [(n, (turnaround or {}).get(n), TURN_YAWS[n]) for n in TURN_VIEWS if (turnaround or {}).get(n) is not None]
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         atlas_job = pool.submit(Atlas, mesh, tex.shape[0])
-        def zone_and_head() -> tuple[dict[str, Any], View | None, dict[str, Any]]:
+        def zone_and_head() -> tuple[dict[str, Any] | None, View | None, dict[str, Any]]:
+            # the head pass is for characters: other categories get no head patch; a call without a category keeps the pass
+            if category not in (None, "humanoid"):
+                return None, None, {"refused": f"no head on a {category}"}
             z = face_zone(mesh, tex, head_yaw)
             hv, hrec = fit_head(mesh, z, [("source", source), ("front", front_view)], scale / size, pic_n, log, prepared, tex)
             return z, hv, hrec
