@@ -553,3 +553,35 @@ def test_gutter_texels_stay_within_reach_of_the_island_texel_they_copy(monkeypat
     assert atlas.is_gut.any() and gutter_spans(atlas).max() <= reach + 1e-9
     monkeypatch.setattr(srcproject, "GUTTER_REACH_TEXELS", 1e9)
     assert gutter_spans(srcproject.Atlas(stretched_model(), 256)).max() > reach
+
+
+def test_surface_correction_reach_is_wider_on_rigid_props_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rigid prop's surface correction fades in over the wider reach; humanoids, buildings and a call with no category keep the default."""
+    assert srcproject.surface_reach("prop_rigid") == srcproject.SURFACE_REACH_RIGID
+    for category in ("humanoid", "environment", "prop_articulated", None):
+        assert srcproject.surface_reach(category) == srcproject.SURFACE_REACH
+
+    class Layout:
+        pass
+
+    pos = np.random.default_rng(0).random((200, 3)) * 0.1
+    used: list[tuple[float, float]] = []
+    real = face.smoothstep
+
+    def spy(lo: float, hi: float, x: np.ndarray) -> np.ndarray:
+        used.append((lo, hi))
+        return real(lo, hi, x)
+
+    monkeypatch.setattr(face, "smoothstep", spy)
+    for category, expected in (("prop_rigid", srcproject.SURFACE_REACH_RIGID), ("humanoid", srcproject.SURFACE_REACH)):
+        layout = Layout()
+        layout.pos = pos
+        layout.surface_reach = srcproject.surface_reach(category)
+        used.clear()
+        srcproject.surface_correction(layout, np.zeros((200, 3)), np.ones(200))
+        assert used[-1] == expected
+    layout = Layout()
+    layout.pos = pos
+    used.clear()
+    srcproject.surface_correction(layout, np.zeros((200, 3)), np.ones(200))
+    assert used[-1] == srcproject.SURFACE_REACH

@@ -209,12 +209,18 @@ def test_a_rigid_props_loosely_fitted_picture_does_not_paint(scene, monkeypatch)
     assert r["applied"], r["reason"]
 
 
-def test_picture_paint_runs_by_itself_for_characters_buildings_and_rigid_props_only() -> None:
-    for c in ("humanoid", "environment", "prop_rigid"):
+def test_picture_paint_runs_by_itself_for_characters_creatures_buildings_and_rigid_props_only() -> None:
+    # Characters, the three creature categories tried in PL-165, buildings and rigid props paint by default.
+    for c in ("humanoid", "quadruped", "winged", "serpent", "environment", "prop_rigid"):
         assert srcproject.on({}, c), c
-    for c in ("prop_articulated", "foliage", "vehicle", "quadruped", None):
+    # Vehicles, articulated props, foliage and no category stay off.
+    for c in ("prop_articulated", "foliage", "vehicle", "multileg", None):
         assert not srcproject.on({}, c), c
-    # The version's own choice wins either way.
-    assert not srcproject.on({srcproject.PARAM: False}, "environment")
+    # The version's own choice wins either way: an explicit off on a creature still wins, and so does an explicit on
+    # on a vehicle.
+    assert not srcproject.on({srcproject.PARAM: False}, "quadruped")
+    assert not srcproject.on({srcproject.PARAM: False}, "winged")
+    assert srcproject.on({srcproject.PARAM: True}, "vehicle")
     assert srcproject.on({srcproject.PARAM: True}, "prop_articulated")
+    assert not srcproject.on({srcproject.PARAM: False}, "environment")
     assert not srcproject.on({srcproject.PARAM: False}, "prop_rigid")

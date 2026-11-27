@@ -167,7 +167,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         # The picture painted into the base colour (vgac/srcproject.py). Empty: by itself for a character on a smooth
         # look. On: any model. Off: never.
         _param("source_project", "boolean", None, categories=SURFACE_CATEGORIES, label="Paint the picture onto the model",
-               description="Puts your picture's own colours and detail on the side it shows. When empty: on for characters, buildings and rigid props"),
+               description="Puts your picture's own colours and detail on the side it shows. When empty: on for characters, creatures, buildings and rigid props"),
         # The face detail pass (stages/face_detail.py): humanoids only; skipped by itself for flat looks.
         _param("face_detail", "boolean", True, categories=["humanoid"], label="Match the face to the picture",
                description="Paints the face from the picture so the eyes and mouth are sharp; skipped when there is no face to paint"),
@@ -408,8 +408,9 @@ def _data() -> dict[str, Any]:
         c = _load_yaml(p)
         c.setdefault("id", p.stem)
         c["pose_block"] = " ".join(str(c.get("pose_block", "")).split())
-        if c.get("pose_block_lettered"):
-            c["pose_block_lettered"] = " ".join(str(c["pose_block_lettered"]).split())
+        for key in ("pose_block_lettered", "long_body_lead", "long_body_pose_block"):
+            if c.get(key):
+                c[key] = " ".join(str(c[key]).split())
         categories[c["id"]] = c
     styles = {s["id"]: {**s, "prompt_block": " ".join(str(s.get("prompt_block", "")).split())}
               for s in _load_yaml(DATA_DIR / "styles.yaml").get("styles", [])}

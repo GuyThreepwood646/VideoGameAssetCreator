@@ -242,6 +242,39 @@ def test_serpent_chain_counts():
     assert len(simple["shapes"]) == 4
 
 
+@pytest.mark.parametrize("root_at_head", [True, False])
+def test_serpent_capsules_span_their_whole_part_either_way_round(root_at_head):
+    """A long body whose bone hierarchy starts at the head (the snake) or at the tail (the eel): each part's capsule
+    must run the whole length of its bones, or the skin at the part's ends falls outside every box."""
+    n = 24
+    bones = []
+    for i in range(n):
+        if root_at_head:
+            parent = f"s{i - 1}" if i else None
+            y0 = 0.12 * i  # s0 is the root and sits at y 0, each bone's head is its parent's tail
+        else:
+            parent = f"s{i + 1}" if i < n - 1 else None
+            y0 = 0.12 * (n - 1 - i)  # s23 is the root and sits at the top; the chain runs down
+        bones.append({"name": f"s{i}", "parent": parent, "head": (0, y0, 0.1), "tail": (0, y0 + 0.12, 0.1)})
+    V, owner = _body(bones, {b["name"]: 0.05 for b in bones}, per_bone=40)
+    res = hb.fit(bones, V, owner, None, "serpent", "detailed")
+    assert sum(1 for s in res["shapes"] if s["region"].startswith("spine_")) == 8
+    # The app's pass mark for cover is 0.85; with the capsules cut to the inner bones this fell to about 0.45.
+    assert res["cover"] >= 0.85
+
+
+def test_a_dropped_part_shows_as_missing_cover():
+    """hitbox_regions leaves parts out of the boxes; their skin still counts, so the cover falls instead of the part vanishing."""
+    bones = _humanoid()
+    V, owner = _body(bones, _human_radii(bones))
+    full = hb.fit(bones, V, owner, None, "humanoid", "detailed")
+    kept = [s["region"] for s in full["shapes"] if s["region"] != "chest"]
+    partial = hb.fit(bones, V, owner, None, "humanoid", "detailed", keep_regions=kept)
+    assert partial["cover"] < full["cover"] - 0.05
+    same = hb.fit(bones, V, owner, None, "humanoid", "detailed", keep_regions=[s["region"] for s in full["shapes"]])
+    assert same["cover"] == full["cover"]
+
+
 def test_regions_filter_and_none_mode_keep_the_movement_shape():
     bones = _humanoid()
     V, owner = _body(bones, _human_radii(bones))
