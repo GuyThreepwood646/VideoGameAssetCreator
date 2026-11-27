@@ -167,6 +167,7 @@ class ComfyClient:
         self._http: httpx.AsyncClient | None = None
         self._http_loop: asyncio.AbstractEventLoop | None = None
         self._vram_cache: tuple[float, dict[str, Any]] | None = None
+        self._vram_task: asyncio.Future[dict[str, Any]] | None = None  # the /system_stats read health_vram_summary waits on
         self._listings: dict[str, tuple[float, list[Any] | None]] = {}  # loader node -> (when asked, what it lists)
         # The address each prompt was sent to: wait() keeps asking there even if the client is pointed elsewhere
         # meanwhile (a prompt exists only on the engine that took it). Clients for addresses other than base_url.
@@ -261,6 +262,30 @@ class ComfyClient:
         now = time.monotonic()
         if self._vram_cache is not None and now - self._vram_cache[0] < max_age:
             return self._vram_cache[1]
+        summary = await self.vram_summary()
+        self._vram_cache = (time.monotonic(), summary)
+        return summary
+
+    async def health_vram_summary(self, max_age: float = 5.0, wait: float = 1.0) -> dict[str, Any]:
+        """cached_vram_summary() for /api/health, which answers within `wait` seconds even while this engine is busy.
+
+        The /system_stats read runs as one background task that outlives the wait, so a slow engine is still read and its
+        cache fills. Until a read finishes, the answer is the last one, marked `stale`; before any read has finished it
+        says the engine has not answered yet."""
+        if self._vram_cache is not None and time.monotonic() - self._vram_cache[0] < max_age:
+            return self._vram_cache[1]
+        task = self._vram_task
+        if task is None or task.done() or task.get_loop() is not asyncio.get_running_loop():
+            task = asyncio.ensure_future(self._refresh_vram())
+            self._vram_task = task
+        done, _ = await asyncio.wait({task}, timeout=wait)
+        if task in done:
+            return task.result()
+        if self._vram_cache is not None:
+            return {**self._vram_cache[1], "stale": True}
+        return {"reachable": False, "stale": True, "error": "no answer yet", "devices": []}
+
+    async def _refresh_vram(self) -> dict[str, Any]:
         summary = await self.vram_summary()
         self._vram_cache = (time.monotonic(), summary)
         return summary

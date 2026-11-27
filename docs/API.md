@@ -39,7 +39,7 @@ Job
 ## Endpoints
 
 Health and reference data
-- GET /api/health -> instances, host RAM, queue state (exists)
+- GET /api/health -> instances, host RAM, queue state (exists). Answers within about 1 s even while an engine or nvidia-smi is slow: each instance's VRAM figures and the card memory come from the last read that finished, and an instance whose read has not finished carries `stale: true` (the last figures, or `reachable: false` with `error: "no answer yet"` before any read). The desktop launcher polls it every 2 s.
 - GET /api/categories -> [ {id, label, rig_engine, symmetric, pose_block, size_m, parts_default, budgets{platform: {triangles, texture}}, views, lod_ratios, topology, input_view_default, skips: [stage]} ] (`skips`: stages the category does not have; runs build on the stage before them)
 - GET /api/models -> [ {id, label, description, name, licence, version, default_steps, negative} ] the concept models, from backend/vgac/data/models.yaml (entries with `concept: true`); concept_model, style_lock.model and the concept `model` param must be one of these ids
 - GET /api/credits -> { summary: {not_legal_advice, game_credit: {title, points[]}, passing_on: {title, points[]}}, groups: [ {id, title, intro, entries: [ {name, does, author, licence, link, attribution_required, in_your_assets, note, confirmed} ]} ] } who made what the app builds on (AI models, add-ons, ready-made data, hairstyles, tools, software libraries); `licence` is "not confirmed" when it could not be checked

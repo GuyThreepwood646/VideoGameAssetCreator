@@ -45,6 +45,7 @@ log = logging.getLogger("vgac")
 
 FRONTEND_DIST = BACKEND_DIR.parent / "frontend" / "dist"
 HEALTH_STATS_MAX_AGE = 5.0  # seconds an instance's /system_stats answer is reused by /api/health (polled every 2 s)
+HEALTH_WAIT_SECONDS = 1.0  # the most /api/health waits for a busy engine or card read; past it, the last answer is sent
 
 
 @asynccontextmanager
@@ -386,17 +387,32 @@ def _declared(items: list[DeclaredPartIn] | None, category: str | None) -> list[
 # ---------------------------------------------------------------------------
 
 
+_cards_read: asyncio.Future[Any] | None = None
+
+
+async def _health_cards() -> list[Any] | None:
+    """The driver's card memory for /api/health: one read at a time in a thread, waited on for HEALTH_WAIT_SECONDS.
+    Past that the last read is used, so a slow nvidia-smi cannot hold the health answer up."""
+    global _cards_read
+    if _cards_read is None or _cards_read.done() or _cards_read.get_loop() is not asyncio.get_running_loop():
+        _cards_read = asyncio.ensure_future(asyncio.to_thread(cardmem.read))
+    done, _ = await asyncio.wait({_cards_read}, timeout=HEALTH_WAIT_SECONDS)
+    if _cards_read in done:
+        try:
+            return _cards_read.result()
+        except Exception:  # noqa: BLE001
+            return None
+    return cardmem.last()
+
+
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
     """Polled every 2 s by the desktop launcher: it reuses the queue's ComfyUI clients and their cached /system_stats."""
     settings = get_settings()
     queue = active_queue()
     clients = {name: (queue.clients.get(name) if queue else None) or _health_client(name, inst.url) for name, inst in settings.instances.items()}
-    summaries = await asyncio.gather(*(c.cached_vram_summary(HEALTH_STATS_MAX_AGE) for c in clients.values()))
-    try:
-        cards = await asyncio.to_thread(cardmem.read)
-    except Exception:  # noqa: BLE001
-        cards = None
+    summaries, cards = await asyncio.gather(asyncio.gather(*(c.health_vram_summary(HEALTH_STATS_MAX_AGE) for c in clients.values())),
+                                            _health_cards())
     st = queue.status() if queue else {}
     instances = {}
     for (name, inst), summary in zip(settings.instances.items(), summaries):

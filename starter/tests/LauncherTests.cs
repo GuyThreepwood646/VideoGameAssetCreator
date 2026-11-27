@@ -69,6 +69,7 @@ public static partial class T
         AdoptionAgainstTheRecordFile();
         SecondStartReachesTheFirst();
         HealthAnswersAreRead();
+        BackendLivenessNeedsTwoMisses();
         RestartIsAskedWhenSomethingWouldBeLost();
         KillerWorksOnARealTree();
         SmallQuitAndStartRules();
@@ -445,6 +446,31 @@ public static partial class T
             var second = InstanceGate.TryOwn(key3, 400, out answered);
             Check(second == null && !answered, "a first copy that is not listening does not answer");
         }
+    }
+
+    // The page reloads only when a backend that was counted down answers again. One missed check (a slow answer while
+    // ComfyUI is busy) changes nothing; two misses in a row count the backend down, and its next answer reloads once.
+    static void BackendLivenessNeedsTwoMisses()
+    {
+        var one = new BackendLiveness();
+        Check(!one.Observe(false), "one missed check: no reload");
+        Check(one.Up, "one missed check: still up");
+        Check(!one.Observe(true), "a slow answer then an answer: no reload");
+        Check(one.Up, "the backend is up after the answer");
+
+        var two = new BackendLiveness();
+        Check(!two.Observe(false) && !two.Observe(false), "two misses in a row");
+        Check(!two.Up, "two misses in a row: down");
+        Check(two.Observe(true), "the first answer after two misses reloads the page");
+        Check(two.Up, "up again");
+        Check(!two.Observe(true), "a later answer does not reload again");
+
+        var mixed = new BackendLiveness();
+        Check(!mixed.Observe(false), "a miss");
+        Check(!mixed.Observe(true), "an answer resets the count");
+        Check(!mixed.Observe(false), "a miss after the reset is again one miss");
+        Check(mixed.Up, "still up after a single miss following a reset");
+        Check(!mixed.Observe(false) && !mixed.Up, "two misses in a row after the reset: down");
     }
 
     static void HealthAnswersAreRead()

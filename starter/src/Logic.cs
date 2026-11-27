@@ -433,6 +433,30 @@ namespace Vgac.Starter
     public enum ShortcutAction { None, Quit, StatusWindow, Fullscreen }
     public enum PageAction { Done, Reload, GiveUp }
 
+    // Whether the backend counts as up, from one health check after another. One late or lost answer (a 3 s timeout
+    // while ComfyUI is busy) does not count as down; two misses in a row do. Observe returns true when the backend
+    // came back after being counted down, which is the one event that reloads the app's page.
+    public sealed class BackendLiveness
+    {
+        public const int MissesToCountDown = 2;
+        public bool Up = true;   // the supervisor starts after the backend answered
+        int misses;
+
+        public bool Observe(bool answered)
+        {
+            if (answered)
+            {
+                misses = 0;
+                bool cameBack = !Up;
+                Up = true;
+                return cameBack;
+            }
+            misses++;
+            if (misses >= MissesToCountDown) Up = false;
+            return false;
+        }
+    }
+
     public static class LauncherRules
     {
         // A setup error whose advice is to choose another folder gets the Choose button, not only Close.
