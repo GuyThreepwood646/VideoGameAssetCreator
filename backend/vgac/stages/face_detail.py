@@ -60,6 +60,11 @@ FACING = (0.15, 0.6)  # surface-to-view cosine where the paint fades in: from ed
 # face are then the three-quarter views' own, and the close-up's cheek outline laid on them showed as a line from the
 # side (the photo boy's right cheek). The painted face hands over earlier: full to about 37 degrees, gone by 63.
 FACING_OVER_PICTURES = (0.45, 0.8)
+# Over a body painted from the pictures, the features area then gets one more coat at full strength. The earlier coats
+# fade where the surface turns away and near anything unpainted, so the softer, differently placed paint underneath
+# showed through them.
+FEATURES_FACING = (0.1, 0.35)
+SURROUND_GROW = 5.0  # face.eye_boxes growth: the surface round each feature box that is paintable past the region's edge
 FEATURES_FEATHER = 0.05  # of the face's width: how softly the painted face ends around the eyes, nose and mouth
 BROW_BAND = (0.32, 0.10)  # above and below the eye line, as shares of the face's width: where the old reach is kept
 EYE_COLOUR_MAX = 8.0  # the eyes' colour on the model against the painting (Lab a-b distance); about a just visible hue change
@@ -973,10 +978,19 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     seg = face.hair_and_skin(view["image"], fitted, info, view["mask"])
     seg["old_hair"], released = release_flat_hair(seg["old_hair"], view, info)
     seg["old_hair"], eye_free = release_eye_hair(seg["old_hair"], view, info, face.landmarks(fitted, info))
-    paint = (region | eye_free) & ~face.dilate_mask(seg["old_hair"], 2)
+    over_pictures = tuple(facing) != tuple(FACING)  # prep painted the body from the pictures before this pass
+    # the surroundings of each feature box are paintable too: the body painting can have left a copy of a feature's end
+    # past the region's edge, which stayed visible beside the painted one
+    around = feature_surrounds(face.landmarks(fitted, info), info, view["mask"]) if over_pictures else np.zeros(region.shape, dtype=bool)
+    if around.any():  # colour-only hair there is judged by the same depth steps as in the features area
+        seg["old_hair"], _ = release_flat_hair(seg["old_hair"], view, info, around)
+    paint = (region | eye_free | around) & ~face.dilate_mask(seg["old_hair"], 2)
     # (grey background, but never inside the eyes-nose-mouth area: a dark grey pupil or brow is close to the grey
     # background's colour, and the silver-haired mage's close-up had both filled as background, in boxes)
     pic_hair = pic_hair_without_eyes(seg["pic_hair"], fitted, info, region.shape)
+    if over_pictures:
+        # shaded skin can read as hair by colour; away from a real depth step it is painted, not filled (flat blocks)
+        pic_hair, _ = release_flat_hair(pic_hair, view, info, around)
     core = pic_hair | (seg["pic_background"] & ~inner & ~face.features_box(info))
     # Outside the eyes-nose-mouth area the painted face's own rim goes too (the shadow along its jaw and cheek, which
     # lands inside the model's wider cheek and shows as a line from the side).
@@ -986,12 +1000,6 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
         filled = face.inpaint(fitted, paint & ~bad)
         fitted = np.where(bad[..., None], filled, fitted)
     weight = face.screen_weight(paint)
-    if tuple(facing) != tuple(FACING):
-        # The body was painted from the pictures: the forehead, the fringe, the temples and the cheeks already carry the
-        # picture itself, sharper and truer than a redrawn close-up. The painted face keeps to the eyes, nose and mouth,
-        # fading out around them (the photo boy: a line at the temple and a soft band under the fringe otherwise).
-        box = face.features_box(info).astype(np.float64)
-        weight = weight * np.clip(face.blur(box, FEATURES_FEATHER * float(info["width_px"])), 0.0, 1.0)
     # where the paint will fade (the region's edge, and surface turning away from the camera) the tone is matched
     # locally, so the cheeks do not show a step where the painted face hands over to the old texture
     fade = weight * face.smoothstep(facing[0], min(1.0, facing[1] + 0.25), view["facing"])
@@ -1021,6 +1029,11 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
         again = face.project_back(mesh, res["texture"], cam, toned, eye_w, facing=facing, strength=strength)
         res = {**res, "texture": again["texture"], "texel_weight": np.maximum(res["texel_weight"], again["texel_weight"]),
                "changed": int((np.maximum(res["texel_weight"], again["texel_weight"]) > 0.5).sum())}
+    if over_pictures:
+        full = face.project_back(mesh, res["texture"], cam, toned, features_coat_weight(paint, around, info),
+                                 facing=FEATURES_FACING, strength=strength)
+        tw = np.maximum(res["texel_weight"], full["texel_weight"])
+        res = {**res, "texture": full["texture"], "texel_weight": tw, "changed": int((tw > 0.5).sum())}
     spread, spread_n = face.spread_tone(mesh, tex, res["texture"], res["texel_weight"], info["skin"])
     uvm = imaging.load_uv_mesh(glb)
     coverage = imaging.rasterise_uv(uvm, T)["labels"] > 0
@@ -1074,6 +1087,26 @@ def pic_hair_without_eyes(pic_hair: np.ndarray, fitted: np.ndarray, info: dict[s
     return pic_hair
 
 
+def feature_surrounds(lm: dict[str, Any] | None, info: dict[str, Any], mask: np.ndarray) -> np.ndarray:
+    """The model's pixels in a box, SURROUND_GROW times face.eye_boxes, round each point MediaPipe finds for those boxes in
+    the fitted picture, and above each box up to BROW_BAND[0] of the face's width over the points' mean height. Points
+    found another way, or none: nothing."""
+    if not lm or lm.get("how") != "mediapipe":
+        return np.zeros(mask.shape, dtype=bool)
+    wpx = float(info["width_px"])
+    box = face.eye_boxes(mask.shape, lm["eyes"], wpx, grow=SURROUND_GROW)
+    top = int(max(0, np.mean([e[1] for e in lm["eyes"]]) - BROW_BAND[0] * wpx))
+    box[top:] |= np.logical_or.accumulate(box[top:][::-1], axis=0)[::-1]  # up to BROW_BAND[0], column by column
+    return box & mask
+
+
+def features_coat_weight(paint: np.ndarray, around: np.ndarray, info: dict[str, Any]) -> np.ndarray:
+    """The weight of the full coat: 1 well inside the features area and the feature surrounds, fading to 0 at its edge (FEATURES_FEATHER of the face's width), never outside what may be painted."""
+    core = (face.features_box(info) | around) & paint
+    soft = face.blur(core.astype(np.float64), FEATURES_FEATHER * float(info["width_px"]))
+    return face.screen_weight(paint) * np.clip(soft * 2.0 - 1.0, 0.0, 1.0)
+
+
 def release_eye_hair(old_hair: np.ndarray, view: dict[str, Any], info: dict[str, Any],
                      lm: dict[str, Any] | None) -> tuple[np.ndarray, np.ndarray]:
     """The model's hair mask with the eye boxes cleared of colour-only hair. The eyes are the ones MediaPipe finds in the
@@ -1099,14 +1132,18 @@ def release_eye_hair(old_hair: np.ndarray, view: dict[str, Any], info: dict[str,
     return out, free
 
 
-def release_flat_hair(old_hair: np.ndarray, view: dict[str, Any], info: dict[str, Any]) -> tuple[np.ndarray, int]:
+def release_flat_hair(old_hair: np.ndarray, view: dict[str, Any], info: dict[str, Any],
+                      also: np.ndarray | None = None) -> tuple[np.ndarray, int]:
     """The model's hair mask with the false hair taken out of the eyes, nose and mouth area. The mask is colour only
     (face.hair_and_skin), and on a dark face a shaded cheek or socket is nearer the hair's colour than the skin's, so the mask
     flooded the face (the live M1-clothed: 35 000 px, both eyes "hair", little painted). Inside the features area a hair
     pixel counts only within HAIR_STEP_NEAR of the face's width of a depth step (EYE_COVER_STEP_M per render pixel: the edge of
     a fringe or flap standing in front of the face); hair there on a smooth surface is released, so the picture's eyes, brows
-    and mouth are painted. Outside that area the mask is unchanged. -> (the mask, pixels released)."""
+    and mouth are painted. Outside that area (and ``also``, when given) the mask is unchanged.
+    -> (the mask, pixels released)."""
     box = face.features_box(info) & info["region"]
+    if also is not None:
+        box = box | also
     inside = old_hair & box
     if not inside.any():
         return old_hair, 0
