@@ -2300,10 +2300,10 @@ CREATURE_CATEGORIES = ("quadruped", "winged", "serpent")
 
 def refuse_off_label_turns(fitted: dict[str, View], picture_view: View | None, built_from: str | None,
                            category: str | None) -> dict[str, str]:
-    """Refuse a creature's labelled view whose fitted turn is more than LABEL_GUARD_DEG from the turn its label says (PL-175:
-    a dog's quarter labelled 45 degrees left was a mirror of its front, and the picture the model was built from, painted
-    at -37.5, went onto the far side). The built-from picture takes the turn of the drawn view it was made as (built_from);
-    a picture without a label (built_from None, or not a three-quarter view) is never refused here. Only creature
+    """Refuse a creature's labelled view whose fitted turn is more than LABEL_GUARD_DEG from the turn its label says: a
+    mirrored or mislabelled drawn view would otherwise paint the far side. The built-from picture takes the turn of the
+    drawn view it was made as (built_from); a picture without a label (built_from None, or not a three-quarter view) is
+    never refused here. Only creature
     categories. Each refused view gets "refused" and "turn_from_label_deg" in its info and ok False. Returns {view: reason}."""
     out: dict[str, str] = {}
     if category not in CREATURE_CATEGORIES:
