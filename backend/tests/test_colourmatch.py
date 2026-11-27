@@ -291,6 +291,106 @@ def test_a_low_up_facing_island_is_not_the_roof(tmp_path):
     assert colourmatch.roof_islands(uvm, low) == []
 
 
+# --- the roof colour move (buildings only) -------------------------------------------------------------------------
+
+BLUE_GREY, TEAL, WALL = np.array([0.38, 0.42, 0.50]), np.array([0.30, 0.55, 0.47]), np.array([0.62, 0.55, 0.42])
+
+
+def _roof_picture(glb, tex, tmp_path, tilt=20.0):
+    """The house seen from the front and above, as a cut-out picture."""
+    from PIL import Image
+
+    from vgac import texfidelity
+
+    r = face.render_view(face.load_mesh(glb), tex, texfidelity._frame_camera(face.load_mesh(glb), 0.0, 300.0, 512, tilt), background=0.0)
+    p = tmp_path / "roof_picture.png"
+    Image.fromarray(np.dstack([face.to_uint8(r["image"]), (r["mask"] * 255).astype(np.uint8)])).save(p)
+    return p
+
+
+def test_a_roof_of_the_wrong_hue_takes_the_pictures_at_a_trusted_view(tmp_path, monkeypatch):
+    from vgac import imaging, texfidelity
+
+    good = _house(tmp_path, roof=TEAL, wall=WALL, name="good")
+    picture = _roof_picture(good[0], good[2], tmp_path)
+    off = _house(tmp_path, roof=BLUE_GREY, wall=WALL, name="off")
+    monkeypatch.setattr(colourmatch, "roof_colour_pose", lambda *a, **k: {"yaw": 0.0, "tilt": 20.0, "iou": 1.0, "layout": 1.0})
+    mesh, uvm = face.load_mesh(off[0]), imaging.load_uv_mesh(off[0])
+    pic, pm = texfidelity.load_picture(picture)
+    plan = colourmatch.roof_colour_plan(mesh, uvm, off[2], pic, pm)
+    assert plan["mode"] == "roof_colour" and plan["gap_ab"] >= colourmatch.ROOF_COLOUR_MIN_AB
+    out = colourmatch.apply_roof_colour(off[2], uvm, mesh, plan)
+    roof = colourmatch._roof_colour_texels(out.shape[0], uvm, mesh, plan["islands"])
+    want = face.to_lab(TEAL[None, None])[0, 0]
+    before, after = (np.hypot(*(face.to_lab(t[roof]).mean(0) - want)[1:]) for t in (off[2], out))
+    assert after < before - 0.8 * colourmatch.ROOF_AB_CAP  # the synthetic hue gap is past the cap
+    assert np.array_equal(out[~roof], off[2][~roof])  # not one texel off the roof moved
+
+
+def test_trim_of_another_colour_on_the_roof_keeps_its_own(tmp_path):
+    from vgac import imaging
+
+    off = _house(tmp_path, roof=BLUE_GREY, wall=WALL)
+    uvm, mesh = imaging.load_uv_mesh(off[0]), face.load_mesh(off[0])
+    islands = colourmatch.roof_islands(uvm)
+    roof = colourmatch._roof_colour_texels(256, uvm, mesh, islands)
+    tex = off[2].copy()
+    rows, cols = np.nonzero(roof)
+    trim = np.zeros_like(roof)
+    trim[rows[rows < np.median(rows)], cols[rows < np.median(rows)]] = True
+    tex[trim] = [0.9, 0.7, 0.1]
+    own = face.to_lab(BLUE_GREY[None, None])[0, 0]
+    plan = {"mode": "roof_colour", "islands": islands, "move": [5.0, -10.0, 8.0], "roof_ab": [float(own[1]), float(own[2])]}
+    out = colourmatch.apply_roof_colour(tex, uvm, mesh, plan)
+    assert np.array_equal(out[trim], tex[trim])
+    assert np.abs(face.to_lab(out[roof & ~trim]) - face.to_lab(tex[roof & ~trim])).mean(0)[1] > 7.0
+
+
+def test_the_colour_move_reaches_a_roof_surface_that_is_not_counted_as_a_roof_island(tmp_path):
+    """Naming one of the two slopes as the roof, the other (up-facing, at the same height) takes the move too."""
+    from vgac import imaging
+
+    glb = _house(tmp_path)[0]
+    uvm, mesh = imaging.load_uv_mesh(glb), face.load_mesh(glb)
+    both = colourmatch.roof_islands(uvm)
+    one = colourmatch._roof_colour_texels(256, uvm, mesh, both[:1])
+    assert np.array_equal(one, colourmatch._roof_colour_texels(256, uvm, mesh, both))
+
+
+def test_without_a_trusted_view_the_building_is_left_to_the_lift_alone(tmp_path, monkeypatch):
+    good = _house(tmp_path, roof=0.45, name="good")
+    picture = _house_picture(good[0], good[2], tmp_path)
+    dark = _house(tmp_path, roof=0.06, name="dark")
+    monkeypatch.setattr(colourmatch, "roof_colour_pose", lambda *a, **k: None)
+    rec, _ = _run(dark[0], dark[1], picture, "buildings", tmp_path, "b")
+    assert rec["roof_colour"] == {"mode": "none", "reason": "view_not_trusted"}
+    assert rec["roof_lift"]["mode"] == "roof_lift"
+
+
+def test_a_view_that_does_not_see_the_roof_top_is_refused(tmp_path):
+    from vgac import imaging, texfidelity
+
+    glb, _, tex = _house(tmp_path)[:3]
+    mesh, uvm = face.load_mesh(glb), imaging.load_uv_mesh(glb)
+    roofs = colourmatch.roof_islands(uvm, mesh)
+    seen = {}
+    for tilt in (0.0, 25.0):
+        v = colourmatch._roof_view(mesh, uvm, roofs, tex, np.ones((300, 300), bool), 300.0, 90.0, tilt, 256)  # from the gable end
+        seen[tilt] = colourmatch.roof_top_seen(mesh, uvm, roofs, v["render"], v["roof_px"])
+    assert seen[0.0] < colourmatch.ROOF_CROWN_SEEN < seen[25.0]
+
+
+def test_the_layout_score_tells_a_picture_from_its_mirror_image():
+    yy, xx = np.mgrid[0:256, 0:256]
+    mask = (np.abs(xx - 128) < 90) & (np.abs(yy - 128) < 90)
+    img = np.where(mask[..., None], WALL, 0.0)
+    img[70:110, 60:100] = TEAL       # a window left of the middle
+    img[150:200, 140:170] = BLUE_GREY  # a door right of it
+    same = colourmatch.roof_layout_score(img, mask, img, mask)
+    mirrored = colourmatch.roof_layout_score(img[:, ::-1], mask, img, mask)
+    assert same > 0.9 and mirrored < colourmatch.ROOF_COLOUR_LAYOUT
+
+
 def test_only_the_building_route_gets_the_roof_lift():
     import inspect
 

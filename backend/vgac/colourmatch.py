@@ -18,11 +18,16 @@ re-bakes from the GLB (a correction in the PNG alone never reached a shipped mod
 
 lightness_plan() and apply() are pure; match_base_colour() does the file work.
 
-Roof lift (buildings only, PL-15): a building's roof often bakes far darker than the picture's roof, which one global
-shift cannot fix without moving the walls. After the global shift, roof_lift_plan() finds the up-facing UV islands from
-the mesh normals, measures the picture's roof (the picture's pixels under the model's own roof pixels at the build view,
-mapped by the two silhouettes' bounding boxes) and lifts the islands that are clearly darker than it by one capped L*
-shift, on those islands' up-facing texels only. Other routes, and a roof that already matches, are untouched.
+Roof lift (buildings only): a building's roof often bakes far darker than the picture's roof, which one global shift
+cannot fix without moving the walls. After the global shift, roof_lift_plan() finds the up-facing UV islands that sit high
+on the model, measures the picture's roof (the picture's pixels under the model's own roof pixels in a tilted render
+fitted to the picture's outline) and lifts the islands that are clearly darker than it by one capped L* shift, on those
+islands' up-facing texels only. Other routes, walls and a roof that already matches are untouched.
+
+Roof colour move (buildings only): the roof's hue can be wrong too. roof_colour_plan() looks for a view whose outline and
+inner layout (edges and colours) both agree with the picture and that sees the roof's top. When the roof's hue there
+differs enough from the picture's, the roof's same-coloured up-facing texels move in L*, a* and b* in place of the lift.
+With no such view the lift alone applies.
 """
 from __future__ import annotations
 
@@ -57,6 +62,18 @@ ROOF_MIN_HEIGHT = 0.6     # a roof island's up-facing surface averages at least 
 ROOF_TILTS = (20.0,)  # the roof is looked at from above: the render is tilted by this much (a render with no tilt sees a roof edge-on)
 ROOF_SEARCH_SIZE = 256    # render size while the roof's turn and tilt are searched
 ROOF_MIN_PX = 200         # roof pixels in the render, and picture pixels under them, needed to trust the measure
+ROOF_COLOUR_TILTS = (0.0, 10.0, 20.0)  # tilts tried for the roof colour move (a level picture sees the roof edge-on)
+ROOF_COLOUR_IOU = 0.9     # the colour move needs a view whose outline overlaps the picture's at least this much
+ROOF_COLOUR_LAYOUT = 0.3  # and whose edges and colours inside the outline agree with the picture's at least this much
+ROOF_COLOUR_MIN_AB = 10.0  # a roof whose (a*, b*) lies this close to the picture's roof keeps its colour (the lift handles lightness)
+ROOF_AB_CAP = 18.0        # the most the roof colour move shifts (a*, b*), as one length
+ROOF_CROWN_BAND = 0.2     # the roof's top: its faces within this share of the model's height below its highest face
+ROOF_CROWN_SEEN = 0.2     # the colour move needs a view that sees at least this share of the top's area (an awning or a
+#                           ledge sampled while the roof itself is edge-on says nothing about the roof)
+ROOF_SAME_AB = 12.0       # texels this close in (a*, b*) to the sampled roof take the whole move, fading to none at twice
+ROOF_FLOOR_PCT = 5.0      # the colour move reaches up-facing faces down to this percentile of the roof faces' height
+ROOF_EDGE_BLUR = 2        # blur (pixels at ROOF_SEARCH_SIZE) of the edge strength the two layouts are compared by
+ROOF_LAYOUT_BORDER = 4    # pixels left out along the outline when the layouts are compared
 # The turn the build view's picture shows, in face.Camera yaw (as bakeoff/scorecard/sc_measure.INTENDED).
 VIEW_TURN = {"concept": 0.0, "front": 0.0, "quarter": 45.0, "quarter2": -45.0, "left": 90.0, "right": -90.0, "back": 180.0}
 
@@ -313,13 +330,8 @@ def roof_pose(mesh: dict[str, np.ndarray], uvmesh: dict[str, np.ndarray], roofs:
     return best[1], best[2]
 
 
-def roof_picture_pixels(pic: np.ndarray, pic_mask: np.ndarray, render_mask: np.ndarray,
-                        roof_px: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
-    """The picture's own pixels under the model's roof pixels. The picture is put onto the render by the silhouette fit
-    (scale and shift that maximise the outline overlap, as the fidelity check does), so each roof pixel meets the picture
-    pixel at the same place on the building, not at the same place in the bounding box. Only roof pixels with the cut-out
-    under them, away from its edge, count. -> (picture in the render's frame (S,S,3), mask of roof pixels with picture
-    under them), or None when fewer than ROOF_MIN_PX remain."""
+def _place_picture(pic: np.ndarray, pic_mask: np.ndarray, render_mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The picture and its cut-out put into the render's frame by the silhouette fit."""
     size = render_mask.shape[0]
     mask_sq = texfidelity._pad_to(pic_mask, size)
     fit = texfidelity.fit_silhouette(mask_sq, render_mask)
@@ -327,6 +339,17 @@ def roof_picture_pixels(pic: np.ndarray, pic_mask: np.ndarray, render_mask: np.n
     warped = np.asarray(texfidelity._warp(img, size, fit["scale"], fit["tx"], fit["ty"], Image.BICUBIC), dtype=np.float64) / 255.0
     wmask = np.asarray(texfidelity._warp(Image.fromarray((mask_sq * 255).astype(np.uint8)), size, fit["scale"], fit["tx"],
                                          fit["ty"], Image.BILINEAR)) >= 128
+    return warped, wmask
+
+
+def roof_picture_pixels(pic: np.ndarray, pic_mask: np.ndarray, render_mask: np.ndarray,
+                        roof_px: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+    """The picture's own pixels under the model's roof pixels. The picture is put onto the render by the silhouette fit
+    (scale and shift that maximise the outline overlap, as the fidelity check does), so each roof pixel meets the picture
+    pixel at the same place on the building, not at the same place in the bounding box. Only roof pixels with the cut-out
+    under them, away from its edge, count. -> (picture in the render's frame (S,S,3), mask of roof pixels with picture
+    under them), or None when fewer than ROOF_MIN_PX remain."""
+    warped, wmask = _place_picture(pic, pic_mask, render_mask)
     inside = roof_px & face.erode(wmask, texfidelity.BORDER_PX)
     if inside.sum() < ROOF_MIN_PX:
         return None
@@ -382,19 +405,159 @@ def roof_lift_plan(mesh: dict[str, np.ndarray], uvmesh: dict[str, np.ndarray], t
     return {**out, "mode": "roof_lift", "shift": shift, "islands": lift, "capped": gap > cap, "reason": "applied"}
 
 
+def _roof_texels(size: int, uvmesh: dict[str, np.ndarray], islands: list[int]) -> np.ndarray:
+    """The up-facing texels of the islands, with the gutter grown out of them."""
+    ras = imaging.rasterise_uv(uvmesh, size)
+    covered = ras["labels"] > 0
+    sel = np.isin(ras["labels"], [i + 1 for i in islands]) & (ras["up"] >= ROOF_TEXEL_UP)
+    # a gutter texel the clean-up grew out of a lifted texel takes its move too, so no dark rim shows at the seams
+    grown = imaging.dilate(sel[..., None].astype(np.uint8), covered, imaging.dilation_px(size))[..., 0].astype(bool)
+    return sel | (grown & ~covered)
+
+
+def _roof_colour_texels(size: int, uvmesh: dict[str, np.ndarray], mesh: dict[str, np.ndarray],
+                        islands: list[int]) -> np.ndarray:
+    """The texels the roof colour move may reach: the roof islands' up-facing faces, and every other face that points up
+    by ROOF_UP_MIN or more at the same height (one roof surface is often cut into many pieces, only some of which count
+    as roof islands, and a hue that stopped at their edges would show as patches). With the gutter grown out of them."""
+    roof = np.isin(uvmesh["island"], islands) & (uvmesh["up"] >= ROOF_TEXEL_UP)
+    if not roof.any():
+        return np.zeros((size, size), bool)
+    h = mesh["verts"][uvmesh["faces"]][:, :, imaging.UP_AXIS].mean(axis=1)
+    faces = roof | ((uvmesh["up"] >= ROOF_UP_MIN) & (h >= np.percentile(h[roof], ROOF_FLOOR_PCT, method="lower")))
+    labels = imaging.rasterise_uv({**uvmesh, "island": np.arange(len(faces))}, size)["labels"]  # label = face + 1
+    covered = labels > 0
+    sel = covered & faces[np.maximum(labels - 1, 0)]
+    grown = imaging.dilate(sel[..., None].astype(np.uint8), covered, imaging.dilation_px(size))[..., 0].astype(bool)
+    return sel | (grown & ~covered)
+
+
 def apply_roof_lift(tex: np.ndarray, uvmesh: dict[str, np.ndarray], plan: dict[str, Any] | None) -> np.ndarray:
     """Add the plan's L* shift to the up-facing texels of its islands (and the gutter grown out of them)."""
     if not plan or plan.get("mode") != "roof_lift" or not plan.get("islands"):
         return tex
-    size = tex.shape[0]
-    ras = imaging.rasterise_uv(uvmesh, size)
-    covered = ras["labels"] > 0
-    sel = np.isin(ras["labels"], [i + 1 for i in plan["islands"]]) & (ras["up"] >= ROOF_TEXEL_UP)
-    # a gutter texel the clean-up grew out of a lifted texel takes its move too, so no dark rim shows at the seams
-    grown = imaging.dilate(sel[..., None].astype(np.uint8), covered, imaging.dilation_px(size))[..., 0].astype(bool)
-    sel = sel | (grown & ~covered)
+    sel = _roof_texels(tex.shape[0], uvmesh, plan["islands"])
     out = np.array(tex, dtype=np.float64)
     out[sel] = from_lab(shifted_lab(face.to_lab(out[sel]), float(plan["shift"])))
+    return out
+
+
+def _agreement(a: np.ndarray, b: np.ndarray) -> float:
+    """Correlation of two (n, c) samples, each channel about its own mean, so an even light or tone gap does not count."""
+    a, b = a - a.mean(axis=0), b - b.mean(axis=0)
+    den = float(np.sqrt((a * a).sum() * (b * b).sum()))
+    return float((a * b).sum() / den) if den > 1e-9 else 0.0
+
+
+def roof_layout_score(pic: np.ndarray, pic_mask: np.ndarray, render: np.ndarray, render_mask: np.ndarray) -> float:
+    """How well the inside of the picture agrees with the inside of the render once their outlines are fitted: the mean
+    of the correlations of edge strength and of (a*, b*). An outline alone cannot tell a building's side from the
+    mirrored one; where the windows, trim and colours sit can."""
+    warped, wmask = _place_picture(pic, pic_mask, render_mask)
+    m = face.erode(wmask & render_mask, ROOF_LAYOUT_BORDER)
+    if m.sum() < ROOF_MIN_PX:
+        return 0.0
+    a, b = face.to_lab(warped), face.to_lab(render)
+
+    def edges(lab: np.ndarray) -> np.ndarray:
+        return face.box_blur(np.hypot(*np.gradient(lab[..., 0])), ROOF_EDGE_BLUR)[m][:, None]
+
+    return (_agreement(edges(a), edges(b)) + _agreement(a[m][:, 1:], b[m][:, 1:])) / 2.0
+
+
+def roof_colour_pose(mesh: dict[str, np.ndarray], uvmesh: dict[str, np.ndarray], roofs: list[int], tex: np.ndarray,
+                     pic: np.ndarray, pic_mask: np.ndarray, extent: float) -> dict[str, float] | None:
+    """The view whose layout agrees best with the picture among those whose outline fits (every 45 degrees of turn,
+    ROOF_COLOUR_TILTS). -> {yaw, tilt, iou, layout}, or None when no view reaches both floors."""
+    best = None
+    for tilt in ROOF_COLOUR_TILTS:
+        for yaw in L_COARSE:
+            v = _roof_view(mesh, uvmesh, roofs, tex, pic_mask, extent, yaw, tilt, ROOF_SEARCH_SIZE)
+            if v["iou"] < ROOF_COLOUR_IOU:
+                continue
+            layout = roof_layout_score(pic, pic_mask, v["render"]["image"], v["render"]["mask"])
+            if layout >= ROOF_COLOUR_LAYOUT and (best is None or layout > best["layout"]):
+                best = {"yaw": yaw, "tilt": tilt, "iou": v["iou"], "layout": layout}
+    return best
+
+
+def roof_top_seen(mesh: dict[str, np.ndarray], uvmesh: dict[str, np.ndarray], roofs: list[int],
+                  render: dict[str, Any], roof_px: np.ndarray) -> float:
+    """The share (by area) of the top of the roof that the view sees: roof faces within ROOF_CROWN_BAND of the model's
+    height below the highest roof face."""
+    faces = np.nonzero(np.isin(uvmesh["island"], roofs) & (uvmesh["up"] >= ROOF_TEXEL_UP))[0]
+    if not len(faces):
+        return 0.0
+    tri = mesh["verts"][mesh["faces"]]
+    area = np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1)
+    h = tri[:, :, imaging.UP_AXIS].mean(axis=1)
+    tall = float(np.ptp(mesh["verts"][:, imaging.UP_AXIS]))
+    top = faces[h[faces] >= h[faces].max() - ROOF_CROWN_BAND * tall]
+    seen = np.intersect1d(np.unique(render["raster"]["tri"][roof_px]), top)
+    return float(area[seen].sum() / max(area[top].sum(), 1e-12))
+
+
+def roof_colour_plan(mesh: dict[str, np.ndarray], uvmesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray,
+                     pic_mask: np.ndarray) -> dict[str, Any]:
+    """The roof colour move: one (L*, a*, b*) offset for the roof, from the median of the render's roof pixels to
+    the median of the picture's pixels under them. Made only at a view roof_colour_pose trusts and when the two differ in
+    (a*, b*) by ROOF_COLOUR_MIN_AB or more; L* is capped at ROOF_CAP, (a*, b*) at ROOF_AB_CAP. -> {mode: none|roof_colour, reason,
+    yaw, tilt, fit_iou, layout, top_seen, gap_ab, move, roof_ab, islands}."""
+    roofs = roof_islands(uvmesh, mesh)
+    if not roofs:
+        return {"mode": "none", "reason": "no_roof_island"}
+    ys, xs = np.nonzero(pic_mask)
+    if len(ys) < 100:
+        return {"mode": "none", "reason": "no_cutout"}
+    extent = float(max(np.ptp(xs), np.ptp(ys)) + 1) * L_SIZE / max(pic.shape[:2])
+    pose = roof_colour_pose(mesh, uvmesh, roofs, tex, pic, pic_mask, extent)
+    if pose is None:
+        return {"mode": "none", "reason": "view_not_trusted"}
+    out: dict[str, Any] = {"yaw": pose["yaw"], "tilt": pose["tilt"], "fit_iou": round(pose["iou"], 3),
+                           "layout": round(pose["layout"], 3)}
+    v = _roof_view(mesh, uvmesh, roofs, tex, pic_mask, extent, pose["yaw"], pose["tilt"], L_SIZE)
+    r, roof_px = v["render"], v["roof_px"]
+    if roof_px.sum() < ROOF_MIN_PX:
+        return {**out, "mode": "none", "reason": "roof_not_visible"}
+    out["top_seen"] = round(roof_top_seen(mesh, uvmesh, roofs, r, roof_px), 3)
+    if out["top_seen"] < ROOF_CROWN_SEEN:
+        return {**out, "mode": "none", "reason": "roof_top_not_seen"}
+    picked = roof_picture_pixels(pic, pic_mask, r["mask"], roof_px)
+    if picked is None:
+        return {**out, "mode": "none", "reason": "picture_roof_not_found"}
+    warped, inside = picked
+    own = np.median(face.to_lab(r["image"])[inside], axis=0)
+    move = np.median(face.to_lab(warped)[inside], axis=0) - own
+    chroma = float(np.hypot(move[1], move[2]))
+    out["gap_ab"] = round(chroma, 2)
+    if chroma < ROOF_COLOUR_MIN_AB:
+        return {**out, "mode": "none", "reason": "colour_matches"}
+    move[0] = np.clip(move[0], -ROOF_CAP, ROOF_CAP)
+    if chroma > ROOF_AB_CAP:
+        move[1:] *= ROOF_AB_CAP / chroma
+    return {**out, "mode": "roof_colour", "reason": "applied", "move": [round(float(x), 3) for x in move],
+            "roof_ab": [round(float(own[1]), 3), round(float(own[2]), 3)], "islands": roofs}
+
+
+def apply_roof_colour(tex: np.ndarray, uvmesh: dict[str, np.ndarray], mesh: dict[str, np.ndarray],
+                      plan: dict[str, Any] | None) -> np.ndarray:
+    """Add the plan's Lab offset to the roof's up-facing texels (_roof_colour_texels). A texel takes the move by how close
+    its (a*, b*) is to the sampled roof's (ROOF_SAME_AB), so trim of another colour that sits on the roof keeps its own."""
+    if not plan or plan.get("mode") != "roof_colour" or not plan.get("islands"):
+        return tex
+    sel = _roof_colour_texels(tex.shape[0], uvmesh, mesh, plan["islands"])
+    out = np.array(tex, dtype=np.float64)
+    lab = face.to_lab(out[sel])
+    away = np.hypot(lab[..., 1] - plan["roof_ab"][0], lab[..., 2] - plan["roof_ab"][1])
+    share = np.clip(2.0 - away / ROOF_SAME_AB, 0.0, 1.0)
+    moved = shifted_lab(lab, float(plan["move"][0]))
+    moved[..., 1] += plan["move"][1]
+    moved[..., 2] += plan["move"][2]
+    weighted = lab + share[..., None] * (moved - lab)
+    new = out[sel]
+    hit = share > 0  # a texel with no share is left byte for byte
+    new[hit] = from_lab(weighted[hit])
+    out[sel] = new
     return out
 
 
@@ -428,8 +591,14 @@ def match_base_colour(glb: Path | str, picture: Path | str, base_png: Path | str
         uvmesh = imaging.load_uv_mesh(glb)
         if uvmesh is not None and lp.get("iou", 0.0) >= L_IOU_MIN:
             rp = roof_lift_plan(mesh, uvmesh, out, pic, pic_mask, ref_view, yaw=lp.get("yaw"))
-            rec["roof_lift"] = rp
-            out = apply_roof_lift(out, uvmesh, rp)
+            rc = roof_colour_plan(mesh, uvmesh, out, pic, pic_mask)
+            if rc["mode"] == "roof_colour":  # its move carries the lightness too, so the lift is not added on top
+                if rp["mode"] == "roof_lift":
+                    rp = {**rp, "mode": "none", "reason": "colour_move", "islands": []}
+                out = apply_roof_colour(out, uvmesh, mesh, rc)
+            else:
+                out = apply_roof_lift(out, uvmesh, rp)
+            rec["roof_lift"], rec["roof_colour"] = rp, rc
     if chroma and "yaw" in lp:
         cp = chroma_plan(mesh, out, pic, pic_mask, lp["yaw"], lp.get("iou", 0.0))
         rec["chroma"] = cp
@@ -438,7 +607,7 @@ def match_base_colour(glb: Path | str, picture: Path | str, base_png: Path | str
             gp = region_plan(mesh, out, pic, pic_mask, lp["yaw"], lp.get("iou", 0.0))
             rec["regions"] = gp
             out = apply_regions(out, gp)
-    if lp.get("mode") != "l_shift" and rec.get("roof_lift", {}).get("mode") != "roof_lift" and rec.get("chroma", {}).get("mode") != "chroma" and rec.get("regions", {}).get("mode") != "regions":
+    if lp.get("mode") != "l_shift" and rec.get("roof_lift", {}).get("mode") != "roof_lift" and rec.get("roof_colour", {}).get("mode") != "roof_colour" and rec.get("chroma", {}).get("mode") != "chroma" and rec.get("regions", {}).get("mode") != "regions":
         return rec
     Image.fromarray(face.to_uint8(out)).save(base_png)
     imaging.glb_replace_images(glb, base_color=base_png)

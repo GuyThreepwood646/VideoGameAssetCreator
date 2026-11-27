@@ -132,3 +132,18 @@ def test_skin_share_is_measured_against_the_heads_own_skin() -> None:
     assert srcproject.skin_share(img, mask, np.array([80.0, 150.0]), pins, px_cm) == 1.0
     img[100:200, 40:120] = (0.05, 0.03, 0.02)  # near-black hair at the ear's place
     assert srcproject.skin_share(img, mask, np.array([80.0, 150.0]), pins, px_cm) == 0.0
+
+
+def test_a_head_view_leaves_out_only_the_pale_rim_of_its_picture() -> None:
+    v = _view()
+    v.alpha_img = np.zeros((300, 300))
+    v.alpha_img[50:250, 50:250] = 1.0
+    v.pic_aligned = np.full((300, 300, 3), 0.3)
+    v.pic_aligned[50:250, 50:51] = 0.8   # a pale rim down one side
+    v.pic_aligned[100, 150] = 0.8        # as light, but far inside the outline
+    v.pic_aligned[50, 60:240] = (0.9, 0.7, 0.5)  # lighter than inside but more colourful: not backdrop
+    valid = srcproject.head_valid(v)
+    assert not valid[60:240, 50].any()   # the pale rim does not paint
+    assert valid[60:240, 249].all()      # the outline in its own colour still does
+    assert valid[50, 60:240].all()
+    assert valid[100, 150] and valid[60:240, 51].all()
