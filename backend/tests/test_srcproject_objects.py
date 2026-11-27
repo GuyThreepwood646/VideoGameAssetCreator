@@ -137,7 +137,7 @@ def test_a_prop_paints_no_drawn_side_view_and_a_character_still_does(scene) -> N
     magenta = np.zeros_like(tex) + np.array([0.9, 0.1, 0.9])
     pic, left = drawn(mesh, tex, 0.0, 20.0), drawn(mesh, magenta, 90.0, 20.0)
     rows, cols = wall_texels(1)   # the turn 90 wall
-    for cat, paints in (("prop_rigid", False), ("environment", False), ("humanoid", True)):
+    for cat, paints in (("prop_rigid", False), ("environment", False), ("vehicle", False), ("humanoid", True)):
         r = paint_as(cat, mesh, soft, pic, {"left": left}, mode="full", size=SIZE, built_from="front")
         assert r["applied"], (cat, r["reason"])
         share = r["metrics"]["srcproject_share_by_view"]
