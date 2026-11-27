@@ -160,3 +160,35 @@ def test_flat_hair_in_the_features_area_is_released_and_a_flap_keeps_its_hair(mo
     z[:, 100:] = 0.01
     out, n = fd.release_flat_hair(hair, view, info)
     assert out[80:120, 96:104].all() and n < int((hair & fd.face.features_box(info)).sum())
+
+
+def test_feature_surrounds_are_paintable_only_for_points_found_by_the_landmark_model():
+    import numpy as np
+    from vgac.stages import face_detail as fd
+
+    S = 400
+    mask = np.ones((S, S), dtype=bool)
+    mask[:, 300:] = False  # off the model
+    info = {"width_px": 200.0}
+    eyes = [(150.0, 200.0), (260.0, 200.0)]
+    around = fd.feature_surrounds({"how": "mediapipe", "eyes": eyes}, info, mask)
+    assert around[200, 150] and around[200, 215] and not around[:, 300:].any() and not around[300, 150]
+    assert around[200, 150 - 40]  # well past the box itself
+    for lm in (None, {"how": "darkest", "eyes": eyes}):
+        assert not fd.feature_surrounds(lm, info, mask).any()
+
+
+def test_the_full_coat_is_full_over_the_features_and_never_outside_what_may_be_painted():
+    import numpy as np
+    from vgac.stages import face_detail as fd
+
+    S = 400
+    info = {"region": np.ones((S, S), dtype=bool), "nose": (200, 220), "width_px": 200.0}
+    paint = np.zeros((S, S), dtype=bool)
+    paint[60:340, 60:340] = True
+    around = np.zeros((S, S), dtype=bool)
+    w = fd.features_coat_weight(paint, around, info)
+    assert w[220, 200] > 0.99 and w[180, 200] > 0.99
+    assert w[~paint].max() == 0.0 and w[80, 80] == 0.0 and w[320, 200] == 0.0  # inside paint, outside the features
+    around[70:110, 150:250] = True  # feature surrounds add to it
+    assert fd.features_coat_weight(paint, around, info)[90, 200] > 0.8
