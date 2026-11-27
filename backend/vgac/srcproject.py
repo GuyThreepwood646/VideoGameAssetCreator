@@ -143,6 +143,9 @@ HEAD_NECK = (1.35, 0.85)  # the head view fades in up the neck between these sha
 HEAD_SIDES = ("quarter", SECOND_QUARTER)  # the three-quarter views that get a head view of their own, after the front's
 SIDE_HEAD_TURN = (15.0, 80.0)  # turn from the face a three-quarter head view must be seen from
 SIDE_HEAD_YAW = 40.0      # the turn from the face a three-quarter head view is seen from when its body fit gives none
+HEAD_RIM_DIV = 150        # how deep a head picture's rim is looked at, as a share of its side (head_valid)
+HEAD_RIM_PALE = 0.1       # luminance over the colour just inside at which a rim pixel is not painted ...
+HEAD_RIM_COLOUR = 0.02    # ... unless its channels spread wider than the inside's by more than this
 HEAD_HANDOVER = 0.1       # where a head view's weight reaches this, no whole-body fit paints (they hand over at the neck)
 SQUASH_MAX = 0.05         # a head fit whose two scales differ by more than this share is fitted again with one scale
 HEAD_FRAME_MARGIN = (0.03, 0.10)  # of the head picture's frame: a head view's weight is zero this close to the frame's edge,
@@ -1457,6 +1460,21 @@ def neck_frame(cam: face.Camera, zone: dict[str, Any]) -> tuple[face.Camera, int
                        scale=cam.scale + 2.0 * d, size=cam.size + 2 * n), n
 
 
+def head_valid(v: View) -> np.ndarray:
+    """Where a head view may paint: the model inside the head picture's cut-out, without the cut-out's pale rim. The
+    outer 1/HEAD_RIM_DIV of the picture's side can carry the backdrop, and the head picture is magnified several times,
+    so a model a little wider than the picture's outline would take it as paint. A pixel there is left out only when it
+    is lighter than the colour just inside by more than HEAD_RIM_PALE and no more colourful than it (backdrop mixed in
+    washes colour out), so an outline in its own colour still paints."""
+    cut = v.alpha_img > 0.5
+    rim = max(2, v.cam.size // HEAD_RIM_DIV)
+    core = face.erode(cut, rim)
+    inner = imaging.dilate(v.pic_aligned, core, rim + 4)
+    pale = cut & ~core & (face.luminance(v.pic_aligned) - face.luminance(inner) > HEAD_RIM_PALE)
+    pale &= np.ptp(v.pic_aligned, axis=-1) <= np.ptp(inner, axis=-1) + HEAD_RIM_COLOUR
+    return v.raster.mask & cut & ~pale
+
+
 def make_head_view(mesh: dict[str, np.ndarray], name: str, cam: face.Camera, render: dict[str, Any], crop: dict[str, Any],
                    a: dict[str, Any], zone: dict[str, Any], body_px_m: float, pic_n0: int,
                    reframe: Callable[[face.Camera], tuple[dict[str, Any] | None, dict[str, Any]]] | None = None) -> View:
@@ -1478,7 +1496,7 @@ def make_head_view(mesh: dict[str, np.ndarray], name: str, cam: face.Camera, ren
     v.pic_aligned = v.pic_affine = np.clip(face.apply_alignment(crop["image"], a), 0.0, 1.0)
     v.alpha_img = face.apply_alignment(crop["alpha"], a)
     v.render = render["image"]
-    v.valid = v.raster.mask & (v.alpha_img > 0.5)
+    v.valid = head_valid(v)
     r = max(2, S // 340)
     v.feather = v.feather0 = np.clip(face.blur(face.erode(v.valid, r).astype(np.float64), r * 0.8) / 0.9, 0.0, 1.0)
     pos = face.interpolate(mesh["verts"], mesh["faces"], render["raster"])
@@ -1736,7 +1754,7 @@ def ear_onto_model(v: View) -> dict[str, Any]:
          for c in range(3)], -1), 0.0, 1.0).astype(np.float64)
     v.alpha_img = cv2.remap(v.alpha_img.astype(np.float32), mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
                             borderValue=0).astype(np.float64)
-    v.valid = v.raster.mask & (v.alpha_img > 0.5)
+    v.valid = head_valid(v)
     r = max(2, S // 340)
     v.feather = v.feather0 = np.clip(face.blur(face.erode(v.valid, r).astype(np.float64), r * 0.8) / 0.9, 0.0, 1.0)
     prepare_gates(v, {"disc": True, "stretch": True, "agree": False, "flowsat": False})
