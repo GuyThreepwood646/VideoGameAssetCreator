@@ -440,7 +440,15 @@ def classify_serpent(sk, lo, hi, detailed=True):
     body = spine[nh:]
     spine_set = set(spine)
     head_bones = list(head) + [b for h in head for c in sk.children[h] if c not in spine_set for b in sk.subtree(c)]
-    regions = {"head": {"bones": head_bones, "axis": head[::-1]}}
+    # fit_capsule runs from the head of the axis' first bone to the end of its last bone, which only spans the part
+    # when the list runs parent first (as the bone hierarchy does). The spine runs head first, which is the
+    # hierarchy order on some rigs (the snake's root is its head) and the reverse on others (the eel's root is its tail).
+    parent_first = len(spine) > 1 and sk.by_name[spine[1]]["parent"] == spine[0]
+
+    def chain_axis(bones):
+        return list(bones) if parent_first else list(bones)[::-1]
+
+    regions = {"head": {"bones": head_bones, "axis": chain_axis(head)}}
     if not body:
         return None
     n = 3 if not detailed else max(4, min(10, round(len(sk.bones) / 3)))
@@ -448,7 +456,7 @@ def classify_serpent(sk, lo, hi, detailed=True):
     cuts = np.linspace(0, len(body), n + 1).round().astype(int)
     for i in range(n):
         seg = body[cuts[i]:cuts[i + 1]]
-        regions[f"spine_{i + 1}"] = {"bones": seg, "axis": seg[::-1]}
+        regions[f"spine_{i + 1}"] = {"bones": seg, "axis": chain_axis(seg)}
     return regions
 
 
@@ -871,9 +879,8 @@ def fit(bones, V, owner, tris, category, mode="detailed", fit_name="normal", kee
             if keep_regions:
                 keep = set(keep_regions)
                 shapes = [s for s in shapes if s["region"] in keep]
-                covered_mask = np.isin(vreg, [s["region"] for s in shapes])
-            else:
-                covered_mask = np.ones(len(V), bool)
+            # Cover is scored over the whole body, so a part left out of the kept set shows as missing cover.
+            covered_mask = np.ones(len(V), bool)
     if not shapes:
         shapes, covered_mask = _fallback(sk, V, owner_names, category, factor, lo, hi)
         result["fallback"] = True
