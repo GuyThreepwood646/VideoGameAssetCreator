@@ -35,7 +35,7 @@ summary:
 # the model files are not shipped, only what they make.
 models:
   zturbo: {author: "Tongyi-MAI (Alibaba)", link: "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo", does: "Paints the first concept picture quickly.", confirmed: lookup}
-  pose_control: {author: "Alibaba PAI", link: "https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1", does: "Makes the first picture of a character follow a fixed standing pose.", confirmed: lookup}
+  pose_control: {author: "Alibaba PAI", link: "https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1", does: "Makes the first picture of a character follow a fixed standing pose, and of a snake or eel a flat S.", confirmed: lookup}
   zbase: {author: "Tongyi-MAI (Alibaba)", link: "https://huggingface.co/Tongyi-MAI/Z-Image", does: "Paints the concept picture at higher quality, more slowly.", confirmed: records}
   klein: {author: "Black Forest Labs", link: "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B", does: "Paints quick draft concept pictures.", confirmed: lookup}
   anima: {author: "circlestone-labs", link: "https://huggingface.co/circlestone-labs/Anima", does: "Paints anime line-art concept pictures.", attribution_required: false, note: "The model is non-commercial; what it makes may be used commercially. Do not sell or host the model itself.", confirmed: lookup}
