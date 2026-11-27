@@ -2315,7 +2315,9 @@ PRIOR_DEG = 30.0      # a pose agrees with the expected turn when its turn is wi
 # a far rival that fits as well and paints differently. Their concept art is three-quarter, not a front view, and the
 # clean-up's quarter-turn facing snap can put any side at turn 0: the WP-50 crate's picture fit at turn 90 (expected 0),
 # the cottage's at 0 and the shop's at 85 (both expected 45), and each was refused for it (bakeoff/posefit).
-OBJECT_CATEGORIES = ("prop_rigid", "prop_articulated", "environment")
+# Vehicles too: painted from the drawn side and back views, a vehicle's solid panels took window frames from the views;
+# from the step 1 picture and the original alone they do not.
+OBJECT_CATEGORIES = ("prop_rigid", "prop_articulated", "environment", "vehicle")
 
 
 def _breadth(turns: list[float]) -> int:
