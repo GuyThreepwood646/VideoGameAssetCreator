@@ -121,6 +121,25 @@ def test_three_quarter_views_take_their_sides_from_the_built_from_picture() -> N
     assert srcproject.refuse_contradicting_turns(f, 0.0) == {}
 
 
+def test_a_creature_view_fitted_far_from_its_label_is_refused_and_a_correct_one_kept() -> None:
+    # a labelled 45-degree quarter fitted at -37.5 is refused for a quadruped (PL-175) and kept for a humanoid
+    f = turned(quarter=-37.5)
+    out = srcproject.refuse_off_label_turns(f, None, None, "quadruped")
+    assert set(out) == {"quarter"} and not f["quarter"].ok
+    assert "contradicts its label" in f["quarter"].info["refused"]
+    assert f["quarter"].info["turn_from_label_deg"] == -82.5
+    f = turned(quarter=-37.5)
+    assert srcproject.refuse_off_label_turns(f, None, None, "humanoid") == {} and f["quarter"].ok
+    # a correct view at 45 searched at 40 is kept for a quadruped
+    f = turned(quarter=40.0)
+    assert srcproject.refuse_off_label_turns(f, None, None, "quadruped") == {} and f["quarter"].ok
+    # the built-from picture takes its label from the drawn view it was made as; a picture with no label is never refused
+    pic = turned(picture=-37.5)["picture"]
+    assert set(srcproject.refuse_off_label_turns({}, pic, "quarter", "winged")) == {"picture"} and not pic.ok
+    pic = turned(picture=-37.5)["picture"]
+    assert srcproject.refuse_off_label_turns({}, pic, None, "winged") == {} and pic.ok
+
+
 def test_the_front_turn_comes_from_the_first_frontal_picture() -> None:
     f = turned(source=332.5, front=-2.5, picture=40.0)
     assert srcproject.front_turn(f, 5.0) == (332.5, "source")
