@@ -522,6 +522,22 @@ def _redraw_fix(c: dict[str, Any]) -> dict[str, Any] | None:
     return {"stage": "concept", "op": "refine", "instruction": instruction, "params": {}}
 
 
+# Why a character's clean-up kept its painted eyes instead of setting separate ones (vgac/eyes.py).
+EYES_SKIPPED = {
+    "no_face": "No face was found to set eyes in, so the painted eyes were kept.",
+    "no_eyes": "The eyes could not be found on the face, so the painted eyes were kept.",
+    "closed": "The eyes in the picture are closed or hidden by the lids, so the painted eyes were kept.",
+    "covered": "Something covers an eye, such as hair or glasses, so the painted eyes were kept.",
+    "odd_shape": "The eyes did not have a usable shape, so the painted eyes were kept.",
+    "no_room": "The texture had no room left for the eyes, so the painted eyes were kept.",
+}
+EYES_SKIPPED_OTHER = "Setting separate eyes did not work on this head, so the painted eyes were kept."
+
+
+def eyes_skipped(reason: str) -> str:
+    return EYES_SKIPPED.get(reason, EYES_SKIPPED_OTHER)
+
+
 CHECK_GUIDE: dict[str, dict[str, Any]] = {
     "triangle_budget": {
         "severity": "block",
