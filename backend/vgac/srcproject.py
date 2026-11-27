@@ -237,7 +237,8 @@ def catmull(img: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         base = np.clip(y0 + j - 1, 0, h - 1) * w
         row: Any = None
         for i in range(4):
-            term = np.multiply(wx[i], flat.take(base + cols[i], axis=0).reshape(*x0.shape, -1))
+            # the channel count is given, not -1: a view with no sample points gives an empty array, whose -1 cannot be inferred
+            term = np.multiply(wx[i], flat.take(base + cols[i], axis=0).reshape(*x0.shape, flat.shape[1]))
             if row is None:
                 row = term
             else:
@@ -2705,7 +2706,10 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
         wanted += [(n, (turnaround or {}).get(n), TURN_YAWS[n]) for n in TURN_VIEWS if (turnaround or {}).get(n) is not None]
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         atlas_job = pool.submit(Atlas, mesh, tex.shape[0])
-        def zone_and_head() -> tuple[dict[str, Any], View | None, dict[str, Any]]:
+        def zone_and_head() -> tuple[dict[str, Any] | None, View | None, dict[str, Any]]:
+            # the head pass is for characters: other categories get no head patch; a call without a category keeps the pass
+            if category not in (None, "humanoid"):
+                return None, None, {"refused": f"no head on a {category}"}
             z = face_zone(mesh, tex, head_yaw)
             hv, hrec = fit_head(mesh, z, [("source", source), ("front", front_view)], scale / size, pic_n, log, prepared, tex)
             return z, hv, hrec
@@ -2964,13 +2968,14 @@ MODES = ("detail", "full", "off")
 DEFAULT_MODE = "full"
 
 
-# Categories that paint by themselves: characters, buildings and rigid props (whose pictures from a corner do not paint,
-# CORNER_MAX_DEG). Articulated props stay off: their paint is slow and changes little.
-AUTO_CATEGORIES = ("humanoid", "environment", "prop_rigid")
+# Categories that paint by themselves: characters, creatures (quadruped, winged, serpent), buildings and rigid props
+# (whose pictures from a corner do not paint, CORNER_MAX_DEG). Vehicles and articulated props stay off: their paint is
+# slow and changes little, and a vehicle's side views paint window frames onto panels that have none.
+AUTO_CATEGORIES = ("humanoid", "quadruped", "winged", "serpent", "environment", "prop_rigid")
 
 
 def on(params: dict[str, Any], category: str | None = None, look: dict[str, Any] | None = None) -> bool:
-    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character, a building or a rigid prop.
+    """Whether the pass runs. The version's own choice wins (on or off). With no choice it runs by itself for a character, a creature, a building or a rigid prop.
     `look` is no longer read; it stays so the callers need not change."""
     if params.get(PARAM) is not None:
         return bool(params.get(PARAM))
