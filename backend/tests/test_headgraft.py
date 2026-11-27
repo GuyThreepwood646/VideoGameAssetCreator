@@ -358,3 +358,115 @@ def test_graft_on_turned_builds_as_from_a_three_quarter_picture(tmp_path):
     assert 0.9 < g["metrics"]["width_ratio"] < 1.05
     joined = face.load_mesh(g["glb"])
     assert abs(headgraft.facing_yaw(joined, 0.13) - g["metrics"]["body_yaw"]) <= 4  # still turned like the body
+
+
+# --- the ring across the neck -----------------------------------------------------------------------------------
+def _tube(n_around: int, n_up: int, radius, y0: float, y1: float, centre=(0.0, 0.0)):
+    """An open tube round the y axis (radius a number or a function of the angle), outward-facing triangles, and
+    texture positions (u round, v up)."""
+    a = np.linspace(-np.pi, np.pi, n_around, endpoint=False) + 0.01
+    ys = np.linspace(y0, y1, n_up + 1)
+    rr = radius(a) if callable(radius) else np.full(len(a), radius)
+    verts = np.array([[centre[0] + r * np.cos(t), y, centre[1] + r * np.sin(t)] for y in ys for t, r in zip(a, rr)])
+    uv = np.array([[i / n_around, j / n_up] for j in range(n_up + 1) for i in range(n_around)])
+    faces = []
+    for j in range(n_up):
+        for i in range(n_around):
+            p, q = j * n_around + i, j * n_around + (i + 1) % n_around
+            faces += [(p, (j + 1) * n_around + i, q), (q, (j + 1) * n_around + i, (j + 1) * n_around + (i + 1) % n_around)]
+    return verts, uv, np.array(faces)
+
+
+def _area(v, f):
+    return float(np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1).sum() / 2)
+
+
+def test_split_cuts_exactly_at_the_height_and_keeps_the_winding():
+    v, uv, f = _tube(24, 6, 1.0, 0.0, 1.0)
+    y = 0.43
+    cross = (v[f][:, :, 1].min(axis=1) < y) & (v[f][:, :, 1].max(axis=1) > y)
+    v2, uv2, below, parent = headgraft._split(v, uv, f[cross], y, keep_above=False)
+    _, _, above, _ = headgraft._split(v, uv, f[cross], y, keep_above=True)
+    assert len(parent) == len(below) and parent.max() < cross.sum()
+    assert (v2[below][:, :, 1] <= y + 1e-12).all()
+    assert abs(_area(v2, below) + _area(headgraft._split(v, uv, f[cross], y, True)[0], above) - _area(v, f[cross])) < 1e-9
+    new = np.arange(len(v), len(v2))
+    assert np.allclose(v2[new, 1], y) and len(new) == 48  # one new vertex per cut edge (24 upright, 24 slanted)
+    n_old = np.cross(v[f[cross][parent]][:, 1] - v[f[cross][parent]][:, 0], v[f[cross][parent]][:, 2] - v[f[cross][parent]][:, 0])
+    n_new = np.cross(v2[below][:, 1] - v2[below][:, 0], v2[below][:, 2] - v2[below][:, 0])
+    assert ((n_old * n_new).sum(axis=1) > 0).all()
+
+
+def test_strip_closes_the_gap_between_two_rings_of_different_counts():
+    bv, buv, bf = _tube(40, 4, 1.0, 0.0, 1.0)
+    hv, huv, hf = _tube(23, 4, 0.9, 0.9, 2.0, centre=(0.05, 0.0))
+    cb = (bv[bf][:, :, 1].min(axis=1) < 0.6) & (bv[bf][:, :, 1].max(axis=1) > 0.6)
+    ch = (hv[hf][:, :, 1].min(axis=1) < 1.3) & (hv[hf][:, :, 1].max(axis=1) > 1.3)
+    bv2, buv2, b_new, b_par = headgraft._split(bv, buv, bf[cb], 0.6, keep_above=False)
+    hv2, _, h_new, _ = headgraft._split(hv, huv, hf[ch], 1.3, keep_above=True)
+    sv, suv, sf = headgraft._strip(bv2, buv2, b_new, bf[cb][b_par], len(bv), hv2, h_new, len(hv), (0.0, 0.0))
+    assert len(sf) == 2 * 40 + 2 * 23  # one triangle per ring edge (two cut edges per square of each tube)
+    # joined by position, the strip and both rings' cut edges make a closed band: every edge used twice
+    allv = np.concatenate([bv2, hv2, sv])
+    faces = np.concatenate([b_new, h_new + len(bv2), sf + len(bv2) + len(hv2)])
+    _, w = np.unique(np.round(allv * 1e9), axis=0, return_inverse=True)
+    w = w.reshape(-1)[faces]
+    e = np.sort(np.concatenate([w[:, [0, 1]], w[:, [1, 2]], w[:, [2, 0]]]), axis=1)
+    _, counts = np.unique(e, axis=0, return_counts=True)
+    ring_lo, ring_hi = bv2[:, 1].min(), hv2[:, 1].max()
+    assert (counts <= 2).all()
+    # outward-facing, and reading the body's texture inside its own triangles
+    tri = sv[sf]
+    n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    c = tri.mean(axis=1)
+    assert ((n[:, 0] * c[:, 0] + n[:, 2] * c[:, 2]) > 0).all()
+    assert (suv >= -1e-9).all() and (suv[:, 1] <= 1.0 + 1e-9).all()
+    assert ring_lo < ring_hi
+
+
+def test_ring_ratio_matches_each_vertex_to_the_body_surface_at_its_angle():
+    a = np.linspace(-np.pi, np.pi, 30, endpoint=False)
+    ring = np.stack([0.8 * np.cos(a), np.zeros_like(a), 0.8 * np.sin(a)], axis=1)
+    b = np.linspace(-np.pi, np.pi, 200, endpoint=False)
+    inner = np.stack([1.0 * np.cos(b), np.zeros_like(b), 1.0 * np.sin(b)], axis=1)
+    outer = np.stack([1.3 * np.cos(b), np.zeros_like(b), 1.3 * np.sin(b)], axis=1)  # a shirt collar further out
+    ang, q = headgraft._ring_ratio(ring, np.concatenate([inner, outer]), (0.0, 0.0))
+    assert np.all(np.diff(ang) > 0)
+    assert np.allclose(q, 1.0 / 0.8, atol=1e-3)
+
+
+def test_neck_level_finds_the_narrow_round_part():
+    # a neck (radius 0.5) between shoulders (wide, open at the front) and a head (radius 0.8)
+    nv, nuv, nf = _tube(36, 6, 0.5, 0.0, 1.0)
+    sv, suv, sf = _tube(36, 2, lambda t: 1.6 + 0.0 * t, -1.0, 0.0)
+    sf = sf[np.sin(sv[sf][:, :, 2].mean(axis=1) / 1.6 * np.pi) < 0.9]  # a gap at the front
+    hv, huv, hf = _tube(36, 4, 0.8, 1.0, 2.0)
+    v = np.concatenate([sv, nv, hv])
+    f = np.concatenate([sf, nf + len(sv), hf + len(sv) + len(nv)])
+    level = headgraft._neck_level(v, f, -0.8, 1.8, (0.0, 0.0), head_width=1.8)
+    assert level is not None
+    _, y, axis, r = level
+    assert 0.0 < y < 1.0 and np.allclose(r, 0.5, atol=0.02) and np.hypot(*axis) < 0.02
+
+
+def test_facing_out_tells_the_skin_from_a_thin_shells_inner_wall():
+    v, _, f = _tube(24, 4, 1.0, 0.0, 1.0)
+    assert headgraft._facing_out(v, f, (0.0, 0.0)).all()
+    assert not headgraft._facing_out(v, f[:, ::-1], (0.0, 0.0)).any()
+
+
+def test_ring_is_the_outer_wall_of_a_thin_shell():
+    # a neck built as a thin shell: an inner wall facing the axis just inside the skin
+    vo, _, fo = _tube(36, 4, 1.0, 0.0, 1.0)
+    vi, _, fi = _tube(36, 4, 0.9, 0.0, 1.0)
+    v = np.concatenate([vo, vi])
+    f = np.concatenate([fo, fi[:, ::-1] + len(vo)])
+    lo, hi = v[f][:, :, 1].min(axis=1), v[f][:, :, 1].max(axis=1)
+    cross = (lo < 0.6) & (hi > 0.6)
+    pairs = headgraft._face_pairs(v, f)
+    out = headgraft._facing_out(v, f, (0.0, 0.0))
+    ring = headgraft._ring_faces(v, f, cross & out, (0.0, 0.0), pairs)
+    assert ring.any() and (ring <= (np.arange(len(f)) < len(fo))).all()
+    # without the facing rule the innermost wall wins, which nobody sees
+    inner = headgraft._ring_faces(v, f, cross, (0.0, 0.0), pairs)
+    assert (inner <= (np.arange(len(f)) >= len(fo))).all()
