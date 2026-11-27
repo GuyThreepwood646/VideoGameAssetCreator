@@ -181,6 +181,30 @@ def test_paint_adds_streaks_shading_bump_and_hair_roughness():
     assert not np.any(r["maps"]["base_color"][~face.dilate_mask(mask, 4)] != mp["base_color"][~face.dilate_mask(mask, 4)])
 
 
+def test_no_streaks_where_the_baked_colour_already_shows_the_strands():
+    """Painted streaks cross the strands a bake already carries (a woven look): when the pictures show no strand
+    contrast the bake lacks, the streaks are left out and the highlight band is not broken by them."""
+    m = cap(20)
+    head = face.find_head(m["verts"])
+    cam = face.head_camera(head, 0, 256)
+    T = 128
+    Y, X = np.mgrid[0:T, 0:T]
+    stripes = np.array(HAIR_RGB)[None, None] * (0.7 + 0.3 * np.sin(2 * math.pi * X / 3.0))[..., None]
+    flat = maps(T)["base_color"]
+    view = face.render_view(m, stripes, cam)
+    pic = [{"picture": view["image"], "hair_px": view["mask"], "cam": cam}]
+    assert hair.baked_strand_shortfall(m, stripes, pic) < hair.STREAK_SHORTFALL[0]  # the bake shows the picture's strands
+    assert hair.baked_strand_shortfall(m, flat, pic) > hair.STREAK_SHORTFALL[1]  # a flat bake lacks them
+    stats = {"strand_contrast": 0.1}
+    off = hair.paint_hair(m, maps(), np.ones(len(m["faces"]), dtype=bool), centres(), 0, 1, seed=5, highlight=False,
+                          stats={**stats, "baked_strand_shortfall": -0.05})
+    on = hair.paint_hair(m, maps(), np.ones(len(m["faces"]), dtype=bool), centres(), 0, 1, seed=5, highlight=False,
+                         stats={**stats, "baked_strand_shortfall": 0.05})
+    assert off["measures"]["streak_amplitude"] == 0.0 and on["measures"]["streak_amplitude"] > 0.1
+    mask = on["mask"]
+    assert face.luminance(on["maps"]["base_color"][mask]).std() > face.luminance(off["maps"]["base_color"][mask]).std()
+
+
 def test_the_same_seed_gives_the_same_hair_and_another_seed_another():
     a, b, c = paint(seed=11), paint(seed=11), paint(seed=12)
     assert np.array_equal(a["maps"]["base_color"], b["maps"]["base_color"])
@@ -325,3 +349,78 @@ def test_hair_views_are_orthographic_face_cameras_that_render():
     top = hair.head_view_cam(head, 0.0, 70.0, 32)
     assert top.is_ortho and top.tilt_deg == 70.0
     assert face.render_view(mesh, tex, top)["image"].shape == (32, 32, 3)
+
+
+# --- the finder's hair outline (vgac/hair_outline.py, hair.find_hair outlines) ------------------------------------------
+
+
+def test_an_outline_in_use_tells_hair_from_skin_and_clothes_by_place_not_colour():
+    close = {"crown_share": 0.95, "separation_skin": 9.0, "separation_touching": 6.0, "triangles": 800, "reach": 0.12,
+             "body_share": 0.0, "agreement": 0.82}
+    assert hair.verdict(close) == "hair_like_skin"
+    used = {**close, "outline": {"used": True}}
+    assert hair.verdict(used) is None
+    assert hair.verdict({**used, "agreement": 0.3}) == "pictures_disagree"  # the pictures' own agreement still counts
+    assert hair.verdict({**used, "reach": 0.6}) == "joined_to_clothing"
+    assert hair.verdict({**used, "crown_share": 0.2}) == "crown_mixed"  # an outline that misses the crown does not help
+    assert hair.verdict({**close, "outline": {"used": False}}) == "hair_like_skin"
+
+
+def test_hair_outline_without_the_finder_is_empty(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from vgac import hair_outline, item_suggest
+
+    monkeypatch.setattr(item_suggest, "installed", lambda s: False)
+    out, rec = hair_outline.find(SimpleNamespace(), {"front": tmp_path / "x.png"}, tmp_path / "w")
+    assert out == {} and rec["finder"] == "not installed"
+
+
+def test_hair_outline_reads_the_workers_masks_at_the_pictures_size(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    from types import SimpleNamespace
+
+    from PIL import Image
+
+    from vgac import hair_outline, item_suggest
+
+    pic = tmp_path / "front.png"
+    Image.new("RGBA", (200, 100), (10, 20, 30, 255)).save(pic)
+    monkeypatch.setattr(item_suggest, "installed", lambda s: True)
+    monkeypatch.setattr(item_suggest, "finder_python", lambda s: "python")
+    monkeypatch.setattr(item_suggest, "finder_models", lambda s: tmp_path)
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        work = tmp_path / "w"
+        seen["names"] = cmd[-1]
+        assert (work / "front_color.png").is_file()  # the worker reads <name>_color.png
+        m = np.zeros((50, 100), dtype=bool)  # the worker's picture is smaller than the original
+        m[5:25, 10:60] = True
+        np.save(work / "front_mask.npy", m)
+        (work / "detection.json").write_text(json.dumps({"views": {"front": {"box": [1, 2, 3, 4], "score": 0.8}}}))
+        return subprocess.CompletedProcess(cmd, 0, "FINDER_OK\n", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    out, rec = hair_outline.find(SimpleNamespace(), {"front": pic}, tmp_path / "w")
+    assert seen["names"] == "front" and rec["finder"] == "ok"
+    assert out["front"].shape == (100, 200) and out["front"][10:50, 20:120].all() and not out["front"][60:].any()
+
+
+def test_hair_outline_failure_and_specks_leave_the_colour_path(tmp_path, monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+
+    from PIL import Image
+
+    from vgac import hair_outline, item_suggest
+
+    pic = tmp_path / "front.png"
+    Image.new("RGBA", (100, 100), (10, 20, 30, 255)).save(pic)
+    monkeypatch.setattr(item_suggest, "installed", lambda s: True)
+    monkeypatch.setattr(item_suggest, "finder_python", lambda s: "python")
+    monkeypatch.setattr(item_suggest, "finder_models", lambda s: tmp_path)
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 2, "", "boom"))
+    out, rec = hair_outline.find(SimpleNamespace(), {"front": pic}, tmp_path / "w")
+    assert out == {} and rec["finder"].startswith("failed")

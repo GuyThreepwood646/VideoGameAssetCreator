@@ -402,8 +402,8 @@ def mesh_measure_checks(mm: dict[str, Any] | None) -> list[Check]:
     return out
 
 
-# Eye spikes (vgac/spikecheck.py): the tallest bump of surface within about 5 cm (on a 1.75 m person) of an eye, over its
-# neighbourhood. The PL-116 baseline model measured 6.5 mm; a clean face is under 2 mm.
+# Eye spikes (vgac/spikecheck.py): the height of the tallest thin flap at the lids, in mm on a 1.75 m person. Flap-free
+# heads read under 1 mm.
 EYE_SPIKE_MAX_MM = 2.0
 
 
@@ -412,7 +412,7 @@ def eye_spike_check(m: dict[str, Any] | None, limit: float = EYE_SPIKE_MAX_MM) -
     mx = (m or {}).get("max_mm")
     if not isinstance(mx, (int, float)) or isinstance(mx, bool):
         return None
-    return check("eye_spikes", float(mx) <= limit, round(float(mx), 2), limit, vars={"flagged": m.get("flagged_verts")})
+    return check("eye_spikes", float(mx) <= limit, round(float(mx), 2), limit)
 
 
 def unreached_check(u: Any, limit: float = UNREACHED_TEXELS_MAX) -> Check | None:

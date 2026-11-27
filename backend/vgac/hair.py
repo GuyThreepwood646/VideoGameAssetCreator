@@ -152,6 +152,7 @@ REACH_BELOW = 0.42  # hair reaching lower than this share of the height from the
 BODY_SHARE_MAX = 1.0  # hair surface below the shoulders against hair surface on the head: more is clothing
 AGREE_MIN = 0.6  # the model's vote and the pictures' vote agree on at least this share of the seen hair candidates
 MIN_HAIR_TRIS = 40
+OUTLINE_CROWN_SEEN_MIN = 0.5  # the finder's outline must be carried onto at least this share of the crown to be used
 
 REASONS = {
     "off": "the option is off",
@@ -214,13 +215,17 @@ def box_fit(pic: np.ndarray, render: np.ndarray, rows: tuple[int, int], most: fl
 
 
 def picture_votes(mesh: dict[str, np.ndarray], views: dict[str, dict[str, Any]], head: face.Head, pictures: dict[str, Path],
-                  centres: np.ndarray, hair_i: int, skin_i: int, tri_label: np.ndarray) -> dict[str, Any]:
+                  centres: np.ndarray, hair_i: int, skin_i: int, tri_label: np.ndarray,
+                  outlines: dict[str, np.ndarray] | None = None) -> dict[str, Any]:
     """Each picture's vote per triangle: the picture is framed like the render (face.painted_head) and lined up with
     it by the head outline (face.silhouette_fit); not used under PICTURE_IOU_MIN. Its colours are grouped like the
     model's, with the hair and skin centres moved to the picture's own (sampled where the model has hair and skin).
-    Returns {hair (m,) summed weight of hair votes, seen (m,) summed weight, used: {view: iou}}."""
+    outlines: the item finder's hair outline per picture (bool, the picture's own size): carried the same way, it gives
+    outline_hair / outline_seen per triangle (the same weights) beside the colour votes.
+    Returns {hair (m,) summed weight of hair votes, seen (m,) summed weight, outline_hair, outline_seen, used: {view: iou}}."""
     m = len(mesh["faces"])
     hair_v, seen_v = np.zeros(m), np.zeros(m)
+    o_hair, o_seen = np.zeros(m), np.zeros(m)
     used: dict[str, Any] = {}
     cache: dict[str, np.ndarray] = {}
     for name, yaw, pitch, key in VOTE_VIEWS:
@@ -259,7 +264,16 @@ def picture_votes(mesh: dict[str, np.ndarray], views: dict[str, dict[str, Any]],
         np.add.at(seen_v, t, w)
         np.add.at(hair_v, t, w * (lbl[ok] == hair_i))
         used[name] = {"iou": fit["iou"], "used": True}
-    return {"hair": hair_v, "seen": seen_v, "used": used}
+        o = None if not outlines else outlines.get(key)
+        if o is not None and o.shape == cache[key].shape[:2]:
+            oc = face.painted_head(np.dstack([np.repeat(o[..., None].astype(np.float64), 3, axis=2), cache[key][..., 3:4]]), head,
+                                   v["cam"], size=v["cam"].size)
+            if oc is not None:
+                om = face.apply_alignment(oc["image"], fit)[..., 0] > 0.5
+                np.add.at(o_seen, t, w)
+                np.add.at(o_hair, t, w * om[ok])
+                used[name]["outline"] = True
+    return {"hair": hair_v, "seen": seen_v, "outline_hair": o_hair, "outline_seen": o_seen, "used": used}
 
 
 def helmet_possible(crown_lab: Any, skin_metal: float | None = None) -> bool:
@@ -269,10 +283,13 @@ def helmet_possible(crown_lab: Any, skin_metal: float | None = None) -> bool:
 
 
 def find_hair(glb: Path, base_color: Path, metallic: Path | None = None, pictures: dict[str, Path] | None = None,
-              seed: int = 0, size: int = 384, skin_metal: float | None = None) -> dict[str, Any]:
+              seed: int = 0, size: int = 384, skin_metal: float | None = None,
+              outlines: dict[str, np.ndarray] | None = None) -> dict[str, Any]:
     """Which triangles are hair (humanoid). Returns {found, reason, tris (m,) bool, centres, hair_lab, skin_lab,
     separation, agreement, ...measures}. found is False with a REASONS key when the hair cannot be found with
-    confidence."""
+    confidence. outlines: the item finder's hair outline per picture (hair_outline.py); where it covers the crown it
+    says which triangles are hair, and the colour groups follow it (a crown of hair and a hat is no longer one colour
+    group). None or unusable: the colours decide, as before."""
     mesh = face.load_mesh(glb)
     if mesh is None:
         return {"found": False, "reason": "no_maps"}
@@ -317,24 +334,50 @@ def find_hair(glb: Path, base_color: Path, metallic: Path | None = None, picture
     centres = kmeans(tri_lab[pick], np.stack([crown_lab, skin_lab]), 6, seed)
     label, _ = nearest_centre(tri_lab, centres)
     hair_i, skin_i = 0, 1
+    views = None
+    outline_rec: dict[str, Any] | None = None
+    seen_o = oh_tri = None
+    if outlines:
+        views = render_views(mesh, tex, head, size)
+        o_pics = picture_votes(mesh, views, head, pictures or {}, centres, hair_i, skin_i, label, outlines)
+        seen_o = o_pics["outline_seen"] > 0.5
+        oh_tri = seen_o & (o_pics["outline_hair"] >= 0.5 * o_pics["outline_seen"])
+        crown_seen = float(area[crown & seen_o].sum() / max(float(area[crown].sum()), 1e-12))
+        outline_rec = {"used": False, "crown_seen": round(crown_seen, 3), "views": [k for k, u in o_pics["used"].items() if u.get("outline")]}
+        # the front picture must show hair to the finder: a helmet gets "hair" outlined on a side view or two and nothing on the front
+        if "front" in outline_rec["views"] and crown_seen >= OUTLINE_CROWN_SEEN_MIN and int((oh_tri & crown).sum()) >= 5 and int(oh_tri.sum()) >= MIN_HAIR_TRIS:
+            outline_rec["used"] = True
+            centres[hair_i] = np.median(tri_lab[oh_tri], axis=0)
+            label, _ = nearest_centre(tri_lab, centres)
+            label[oh_tri] = hair_i
+            drop = seen_o & ~oh_tri & (label == hair_i)
+            if drop.any():
+                rest = np.delete(np.arange(len(centres)), hair_i)
+                label[drop] = rest[nearest_centre(tri_lab[drop], centres[rest])[0]]
     crown_share = float(np.average(label[crown] == hair_i, weights=area[crown]))
     others = [j for j in range(len(centres)) if j not in (hair_i, skin_i)]
     d_skin = float(lab_dist(centres[hair_i], centres[skin_i]))
     d_other = min((float(lab_dist(centres[hair_i], centres[j])) for j in others), default=99.0)
+    if outline_rec is not None:
+        outline_rec["crown_cover"] = round(float(area[crown & oh_tri].sum() / max(float(area[crown & seen_o].sum()), 1e-12)), 3)
     record: dict[str, Any] = {"hair_lab": [round(float(v), 1) for v in centres[hair_i]],
                               "skin_lab": [round(float(v), 1) for v in skin_lab], "crown_share": round(crown_share, 3),
                               "separation_skin": round(d_skin, 1), "separation_other": round(d_other, 1)}
+    if outline_rec is not None:
+        record["outline"] = outline_rec
     nb = triangle_neighbours(faces, verts)
     if verdict(record):
         # what would have been taken as hair (the colour group joined to the crown), for the picture
         return {"found": False, "reason": verdict(record), "tris": grow_tris(crown & (label == hair_i), label == hair_i, nb), **record}
     # the vote: the model's own colour per triangle, and every lined-up picture's
-    views = render_views(mesh, tex, head, size)
-    pics = picture_votes(mesh, views, head, pictures or {}, centres, hair_i, skin_i, label)
+    views = views or render_views(mesh, tex, head, size)
+    pics = picture_votes(mesh, views, head, pictures or {}, centres, hair_i, skin_i, label, outlines if outline_rec and outline_rec["used"] else None)
     model_hair = (label == hair_i).astype(np.float64)
     W_MODEL = 1.0
     score = (W_MODEL * model_hair + pics["hair"]) / (W_MODEL + pics["seen"])
     candidate = score >= 0.5
+    if outline_rec and outline_rec["used"]:
+        candidate = np.where(seen_o, oh_tri, candidate)  # where the outline saw a triangle, it decides
     hair = grow_tris(crown & candidate, candidate, nb)
     # flakes and specks: small hair-coloured patches off the main hair are left alone (they are not joined)
     record["triangles"] = int(hair.sum())
@@ -436,13 +479,13 @@ def verdict(m: dict[str, Any]) -> str | None:
         return "crown_mixed"
     if m.get("hair_lab") is not None and not natural_hair(m["hair_lab"]):
         return "not_hair_colour"
-    if m.get("separation_skin") is not None and float(m["separation_skin"]) < SEPARATION_MIN:
-        return "hair_like_skin"
+    if m.get("separation_skin") is not None and float(m["separation_skin"]) < SEPARATION_MIN and not (m.get("outline") or {}).get("used"):
+        return "hair_like_skin"  # (the finder's outline tells hair from skin by where it is, not by colour)
     if m.get("triangles") is not None and int(m["triangles"]) < MIN_HAIR_TRIS:
         return "bald"
     if (m.get("reach") is not None and float(m["reach"]) > REACH_BELOW) or (m.get("body_share") is not None and float(m["body_share"]) > BODY_SHARE_MAX):
         return "joined_to_clothing"
-    if m.get("separation_touching") is not None and float(m["separation_touching"]) < SEPARATION_MIN:
+    if m.get("separation_touching") is not None and float(m["separation_touching"]) < SEPARATION_MIN and not (m.get("outline") or {}).get("used"):
         return "hair_like_clothes"
     if m.get("agreement") is not None and float(m["agreement"]) < AGREE_MIN:
         return "pictures_disagree"
@@ -834,6 +877,7 @@ ROUGH = {"painted": 0.55, "photoreal": 0.45}
 ROUGH_SWING = 0.06
 HAIRLINE_M = 0.0035  # the softened band where hair meets skin (metres, hair side)
 HAIRLINE_MIX = 0.45  # the most a hairline texel moves toward the skin next to it
+STREAK_SHORTFALL = (0.005, 0.02)  # strand contrast the bake lacks against the pictures: none to this much, the streaks fade in
 STRAND_TEXELS = 3.0  # strands are never finer than this many texels (finer ones break into stair steps)
 
 
@@ -854,6 +898,21 @@ def picture_stats(picture: np.ndarray, hair_px: np.ndarray, px_per_strand: float
             "clump_contrast": round(float(broad[inner].std()) / max(mean, 1e-3), 4),
             "highlight_rgb": [round(float(v), 4) for v in picture[inner & hi].mean(axis=0)],
             "mean_rgb": [round(float(v), 4) for v in picture[inner].mean(axis=0)]}
+
+
+def baked_strand_shortfall(mesh: dict[str, np.ndarray], base: np.ndarray, flow_pictures: list[dict[str, Any]]) -> float | None:
+    """How much strand contrast the pictures show that the baked colour does not: for each picture, its strand contrast
+    against the baked colour's, rendered from the picture's camera over the same hair pixels; the largest difference.
+    None when no picture shows enough hair on the model."""
+    out = None
+    for fp in flow_pictures:
+        view = face.render_view(mesh, base, fp["cam"])
+        px = fp["hair_px"] & view["mask"]
+        pic = picture_stats(fp["picture"], px).get("strand_contrast")
+        baked = picture_stats(view["image"], px).get("strand_contrast")
+        if pic is not None and baked is not None:
+            out = max(out if out is not None else -1.0, float(pic) - float(baked))
+    return None if out is None else round(out, 4)
 
 
 def edge_along_flow(path: list[np.ndarray], step: float, hair_frac: Grid, Hf: np.ndarray, reach: float = EDGE_REACH) -> np.ndarray:
@@ -956,6 +1015,10 @@ def paint_hair(mesh: dict[str, np.ndarray], maps: dict[str, np.ndarray | None], 
     clump = normalise(lic_paths(pos[W], paths_w, CLUMP_CELL, seed + 1, int(round(CLUMP_LEN / step)), every=2)) if W.any() else np.zeros(0)
     st = stats or {}
     amp = float(np.clip(1.6 * float(st.get("strand_contrast") or 0.0), *STREAK_AMP)) if st else STREAK_AMP[0] + 0.03
+    # the baked colour already shows the pictures' strands: painted ones (and a band broken by them) would cross them
+    short = st.get("baked_strand_shortfall")
+    streaks = 1.0 if short is None else float(face.smoothstep(*STREAK_SHORTFALL, np.asarray(float(short))))
+    amp *= streaks
     height = 0.6 * strand + 0.4 * clump
     lmul = 1.0 + amp * np.clip(0.6 * strand + 0.45 * clump, -2.5, 2.5)
     lmul -= CLUMP_GROOVE * face.smoothstep(0.4, 1.6, -clump)
@@ -1015,7 +1078,7 @@ def paint_hair(mesh: dict[str, np.ndarray], maps: dict[str, np.ndarray | None], 
         centre_xz = crown[[0, 2]]
         outward = (nrm[:, [0, 2]] * (pos[:, [0, 2]] - centre_xz)).sum(axis=1) >= -0.002
         band = np.exp(-((up - HIGHLIGHT_UP[0]) / HIGHLIGHT_UP[1]) ** 2) * outward
-        band *= np.clip(0.55 + 0.45 * strand, 0.0, 1.0)  # broken by the strands
+        band *= np.clip(0.55 + 0.45 * streaks * strand, 0.0, 1.0)  # broken by the strands
         new = new * (1 - HIGHLIGHT * band[:, None]) + hl[None] * (HIGHLIGHT * band[:, None]) * lmul[:, None].clip(0.6, 1.2)
     # 5. the hairline: hair texels next to skin lean toward the skin there, thinning out between strands
     skin = tm["skin"]
