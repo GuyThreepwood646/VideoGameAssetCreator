@@ -237,7 +237,8 @@ def catmull(img: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         base = np.clip(y0 + j - 1, 0, h - 1) * w
         row: Any = None
         for i in range(4):
-            term = np.multiply(wx[i], flat.take(base + cols[i], axis=0).reshape(*x0.shape, -1))
+            # the channel count is given, not -1: a view with no sample points gives an empty array, whose -1 cannot be inferred
+            term = np.multiply(wx[i], flat.take(base + cols[i], axis=0).reshape(*x0.shape, flat.shape[1]))
             if row is None:
                 row = term
             else:
