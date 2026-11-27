@@ -2294,6 +2294,38 @@ def refuse_contradicting_turns(fitted: dict[str, View], front_yaw: float, pictur
     return out
 
 
+LABEL_GUARD_DEG = 45.0  # a creature's drawn view or built-from picture whose fitted turn is further than this from its label
+CREATURE_CATEGORIES = ("quadruped", "winged", "serpent")
+
+
+def refuse_off_label_turns(fitted: dict[str, View], picture_view: View | None, built_from: str | None,
+                           category: str | None) -> dict[str, str]:
+    """Refuse a creature's labelled view whose fitted turn is more than LABEL_GUARD_DEG from the turn its label says (PL-175:
+    a dog's quarter labelled 45 degrees left was a mirror of its front, and the picture the model was built from, painted
+    at -37.5, went onto the far side). The built-from picture takes the turn of the drawn view it was made as (built_from);
+    a picture without a label (built_from None, or not a three-quarter view) is never refused here. Only creature
+    categories. Each refused view gets "refused" and "turn_from_label_deg" in its info and ok False. Returns {view: reason}."""
+    out: dict[str, str] = {}
+    if category not in CREATURE_CATEGORIES:
+        return out
+    labelled: list[tuple[str, View, float]] = [(n, v, INTENDED_TURN[n]) for n, v in fitted.items()
+                                               if n in INTENDED_TURN and v.ok and "yaw" in v.info]
+    if picture_view is not None and picture_view.ok and "yaw" in picture_view.info and built_from in INTENDED_TURN:
+        labelled.append(("picture", picture_view, INTENDED_TURN[built_from]))
+    for n, v, label in labelled:
+        d = _signed(float(v.info["yaw"]) - label)
+        if abs(d) <= LABEL_GUARD_DEG:
+            continue
+        named = f"built-from {built_from}" if n == "picture" else n
+        why = (f"its turn contradicts its label: it fits {float(v.info['yaw']):+.1f} degrees, {abs(d):.0f} degrees from "
+               f"the {label:+.0f} degree turn that its {named} label says")
+        v.ok = False
+        v.info["refused"] = why
+        v.info["turn_from_label_deg"] = round(d, 1)
+        out[n] = why
+    return out
+
+
 # --- WP-61 part D2: a picture that fits at more than one pose is refused only when a far rival paints it differently ---
 
 D2_THRESHOLD = 37.0   # Lab: the largest disagreement over the far rivals that still lets the best pose paint (part_d2_rule.md)
@@ -2788,6 +2820,10 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
             front.info["pose_search"] = {"refused": pv.info.get("refused"), "settled_by": "texfidelity"}
         else:  # the search's answer stands, including a D2 refusal: a refused picture does not paint
             front = pv
+        # a creature's labelled view (or its built-from picture) fitted more than LABEL_GUARD_DEG from its label is refused
+        for n, why in refuse_off_label_turns(fitted, front, built_from, category).items():
+            if log:
+                log(f"view {n}: refused, {why}")
         # a picture whose pose the expected turn decided is checked against the drawn views that see the same texels
         sources = {"picture": picture, **{n: s for n, s, _ in wanted}}
         views_now = {**fitted, "picture": front}
