@@ -7,9 +7,11 @@ that view and its mirror) with the mean L* over the picture's cut-out, borders l
 needed, so it runs down to an outline IoU of L_IOU_MIN; the move is capped at L_CAP and is a shift of L* only (hue and
 chroma kept, so a neutral grey stays neutral), tapered near black and white so detail is not flattened.
 
-When the build-view picture's own lightness differs from the step-1 picture's by more than DRIFT_MAX (the step-2 redraw
-changed the tone), the target becomes the step-1 picture itself: its mean L* over its own cut-out, measured at the front
-turn that fits step 1. The same global L*-only shift is applied, so the model lands on step 1, not on the drifted view.
+When the build-view picture's mean lightness differs from the step-1 picture's by more than DRIFT_MAX, the target
+becomes the step-1 picture itself: its mean L* over its own cut-out, measured at the front turn that fits step 1. The
+two pictures can show different sides, so the gap (called drift here) is often the shading of the side the build view
+turned to, not a tone change by the step-2 redraw. The same global L*-only shift is applied, so the model lands on
+step 1's lightness, not the build view's.
 
 The corrected base colour is written to base_color.png AND into the GLB's own base colour image, because the clean-up
 re-bakes from the GLB (a correction in the PNG alone never reached a shipped model).
@@ -41,7 +43,7 @@ L_COARSE = tuple(float(t) for t in range(0, 360, 45))  # coarse turns: a picture
 FINE_STEP = 15.0      # the fine turns are this far either side of each of the best coarse turns
 FINE_TOP = 2          # how many coarse turns are refined
 TURN_IOU_NEAR = 0.02  # turns whose outline fit is within this of the best are told apart by the picture's colours
-DRIFT_MAX = 4.0       # build view against step-1 picture, mean L* over each cut-out: past this the target is step 1
+DRIFT_MAX = 4.0       # build view against step-1 picture, gap in mean L* over each cut-out: past this the target is step 1
 C_SCALE = (0.75, 1.4)  # the chroma stage scales a* and b* by the picture's mean chroma over the render's, within this range
 C_ROT_MAX = 15.0       # and turns their hue by the gap between the two mean hue directions, at most this many degrees
 C_MIN_SCALE = 0.05     # a chroma gap under this share and a hue gap under C_MIN_ROT degrees are left alone
@@ -135,8 +137,9 @@ def cutout_lightness(pic: np.ndarray, pic_mask: np.ndarray) -> float | None:
 
 
 def step2_drift(build_picture: Path | str, step1_picture: Path | str | None) -> float | None:
-    """Build-view picture's mean L* minus the step-1 picture's (positive: the redraw came out lighter). None when there
-    is no step-1 picture, it is the build picture itself, or either cut-out is empty."""
+    """Build-view picture's mean L* minus the step-1 picture's (positive: the build view is lighter). The cut-outs may
+    show different sides, so a gap is often shading, not a tone change by the redraw. None when there is no step-1
+    picture, it is the build picture itself, or either cut-out is empty."""
     if step1_picture is None or Path(step1_picture).resolve() == Path(build_picture).resolve():
         return None
     a = cutout_lightness(*texfidelity.load_picture(build_picture))
@@ -399,8 +402,9 @@ def match_base_colour(glb: Path | str, picture: Path | str, base_png: Path | str
                       step1: Path | str | None = None, route: str | None = None, chroma: bool = False,
                       regions: bool = False) -> dict[str, Any]:
     """Measure the model's lightness against its picture at the build view `view`'s turn and, when it is off, shift
-    base_png and the GLB's own base colour image by the same move. When the build view's tone drifted from the step-1
-    picture `step1` by more than DRIFT_MAX, the target is the step-1 picture instead, measured at the front turn.
+    base_png and the GLB's own base colour image by the same move. When the build view's mean lightness differs from the
+    step-1 picture `step1`'s by more than DRIFT_MAX (often shading on the turned view), the target is the step-1 picture
+    instead, measured at the front turn.
     `chroma` (the four-view humanoid build only; every other route is the lightness stage alone, as before) adds the
     chroma and hue stage after it. -> metrics {applied, lightness: {...}, chroma?: {...}, reason}."""
     rec: dict[str, Any] = {"applied": False}
