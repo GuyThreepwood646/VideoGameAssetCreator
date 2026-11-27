@@ -12,7 +12,7 @@ import pytest
 import trimesh
 from PIL import Image
 
-from vgac import guidance, headgraft, jobs
+from vgac import guidance, headgraft, jobs, reference
 from vgac.stages import mesh as mesh_stage
 
 KNIGHT = Path(__file__).resolve().parents[2] / "bakeoff" / "out" / "texture_trials"
@@ -20,11 +20,17 @@ KNIGHT = Path(__file__).resolve().parents[2] / "bakeoff" / "out" / "texture_tria
 
 # --- when it runs -----------------------------------------------------------------------------------------------
 def test_wanted_only_for_people_on_the_bald_route_with_trellis():
-    assert headgraft.wanted("humanoid", {}, True, "trellis")
-    assert not headgraft.wanted("humanoid", {}, False, "trellis")  # hair built with the model: tight crops came out flat
-    assert not headgraft.wanted("quadruped", {}, True, "trellis")
-    assert not headgraft.wanted("humanoid", {}, True, "hy3d")
-    assert not headgraft.wanted("humanoid", {"head_build": False}, True, "trellis")
+    on = {"head_build": True}
+    assert headgraft.wanted("humanoid", on, True, "trellis")
+    assert not headgraft.wanted("humanoid", on, False, "trellis")  # hair built with the model: tight crops came out flat
+    assert not headgraft.wanted("quadruped", on, True, "trellis")
+    assert not headgraft.wanted("humanoid", on, True, "hy3d")
+
+
+def test_head_build_is_off_unless_turned_on():
+    for params in ({}, {"head_build": None}, {"head_build": False}):
+        assert not headgraft.wanted("humanoid", params, True, "trellis")
+    assert reference.stage_defaults("mesh").get("head_build") is None
 
 
 def test_crop_share_defaults_and_bounds():
