@@ -21,10 +21,14 @@ UNDER_LID_M = 0.002  # the eye reaches this far past the opening, under the lids
 AT_EDGE_M = 0.0002  # on the lid line the eye is at least this far behind the skin
 DEPTH_WINDOW_M = 0.02
 WELD_M = 0.00005
-RADIUS_OF_WIDTH = (0.6, 1.2)  # the ball's radius is fitted within these shares of the eye's width
-EDGE_SHARE = 0.65  # the ball is set so this share of the lid edge is in front of it
+RADIUS_OF_WIDTH = (0.6, 2.4)  # the ball's radius is fitted within these shares of the eye's width
+FORWARD_M = 0.0012  # the eye comes no further than this in front of the surface it replaces
+INNER_SHARES = (0.0, 0.35, 0.65)  # rows inside the opening whose depth the ball also follows
+EDGE_SHARE = 0.8  # the ball is set so this share of the surface it follows is in front of it (a deeper eye leaves the
+# lids standing as thin flaps)
 RINGS = 3  # rows of the eye from its middle to the lid line (one more goes under the lids)
 SEGMENTS = 36
+SMOOTH_PASSES = 6  # the front is evened out this many times, so the iris is not bent by the old surface's lumps
 SKIN, RIM, EYE = 0, 1, 2
 
 
@@ -78,6 +82,23 @@ def fit_ball(points, mid_u, mid_v, width, share=EDGE_SHARE):
                 if best is None or miss < best[0]:
                     best = (miss, cu, cv, cw, radius)
     return best[1], best[2], best[3], best[4]
+
+
+def smoothed(middle, rows, passes=SMOOTH_PASSES):
+    """The depths of the eye's front, evened out: the middle one and the rows round it, the last row (on the lid line)
+    held. -> (middle, rows)."""
+    rows = [list(r) for r in rows]
+    for _ in range(passes):
+        out = [list(r) for r in rows]
+        n = len(rows[0])
+        for i in range(len(rows) - 1):
+            for j in range(n):
+                inner = middle if i == 0 else rows[i - 1][j]
+                around = (rows[i][(j - 1) % n] + rows[i][(j + 1) % n] + inner + rows[i + 1][j]) / 4
+                out[i][j] = (rows[i][j] + around) / 2
+        middle = (middle + sum(rows[0]) / n) / 2
+        rows = out
+    return middle, rows
 
 
 def resample(poly, count):
@@ -246,16 +267,26 @@ def main():  # pragma: no cover - runs inside Blender
         if len(edge_depth) < 32:
             report["reason"] = "no_surface"
             break
-        ball_u, ball_v, ball_w, radius = fit_ball(edge_depth, (hi_u + lo_u) / 2, (hi_v + lo_v) / 2, eye["width"])
+        centre = (sum(p[0] for p in poly) / len(poly), sum(p[1] for p in poly) / len(poly))
+        within = [(centre[0] + (u - centre[0]) * k, centre[1] + (v - centre[1]) * k)
+                  for k in INNER_SHARES for u, v in resample(poly, 16)]
+        followed = edge_depth + [(u, v, w) for u, v, w in ((u, v, skin_depth(u, v, lid)) for u, v in within)
+                                 if w is not None and abs(w - lid) <= DEPTH_WINDOW_M]
+        ball_u, ball_v, ball_w, radius = fit_ball(followed, (hi_u + lo_u) / 2, (hi_v + lo_v) / 2, eye["width"])
 
         def eye_depth(u, v):
-            """The ball, tucked behind the skin on the lid line and past it."""
+            """The ball, never far in front of the surface it replaces, tucked behind the skin on the lid line and past
+            it."""
             depth = ball_w - dome(u, v, ball_u, ball_v, radius) + BEHIND_EDGE_M
             on_line = distance_to(poly, u, v) < 0.0001
-            if on_line or not inside(poly, u, v):
-                skin = skin_depth(u, v, lid)
-                if skin is not None and abs(skin - lid) <= DEPTH_WINDOW_M:
-                    depth = max(depth, skin + (AT_EDGE_M if on_line else CLEAR_M))
+            skin = skin_depth(u, v, lid)
+            if skin is not None and abs(skin - lid) <= DEPTH_WINDOW_M:
+                if on_line:
+                    depth = max(depth, skin + AT_EDGE_M)
+                elif inside(poly, u, v):
+                    depth = max(depth, skin - FORWARD_M)
+                else:
+                    depth = max(depth, skin + CLEAR_M)
             return depth
 
         # 3. the socket: the cut edge turned inward, closed behind
@@ -312,8 +343,10 @@ def main():  # pragma: no cover - runs inside Blender
         def put(u, v, w):
             return bm.verts.new(local(u, v, w)), eye_uv(u, v)
 
-        front = put(mid[0], mid[1], eye_depth(*mid))
-        rows = [[put(u, v, eye_depth(u, v)) for u, v in row] for row in spots]
+        mid_depth, depths = smoothed(eye_depth(*mid), [[eye_depth(u, v) for u, v in row] for row in spots[:RINGS]])
+        depths.append([eye_depth(u, v) for u, v in spots[-1]])
+        front = put(mid[0], mid[1], mid_depth)
+        rows = [[put(u, v, w) for (u, v), w in zip(row, ws)] for row, ws in zip(spots, depths)]
         back = put(mid[0], mid[1], max(uvw(v.co)[2] for v, _ in rows[-1]) + 0.001)
         # the winding that faces the camera for an outline given in either direction
         turn = sum(edge[i][0] * edge[(i + 1) % SEGMENTS][1] - edge[(i + 1) % SEGMENTS][0] * edge[i][1] for i in range(SEGMENTS))

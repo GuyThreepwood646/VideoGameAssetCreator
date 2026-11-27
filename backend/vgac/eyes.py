@@ -45,9 +45,11 @@ TEXTURE_PIECE_PX = (192, 144, 96)  # the eye's square on a 2048 texture; smaller
 RIM_PIECE_SHARE = 0.25  # the socket's colour swatch beside the eye's square
 BEYOND_OPENING_M = 0.003  # the painted square reaches this far past the opening's half width
 SHADE_ROUGHNESS = {"eye": 0.85, "rim": 0.75}
-EDGE_FADE_M = 0.0016  # the eye fades into the lid's colour over this far inside the outline
-EDGE_FADE = 0.95
-EDGE_SHADE = 0.55  # the lid's colour is shaded a little where it meets the eye
+EDGE_FADE_M = 0.0014  # the eye fades into the skin beside it over this far inside the outline
+EDGE_FADE = 0.85
+EDGE_SHADE = (0.8, 0.75)  # that skin under the upper lid and above the lower one, as a share of its own light
+SKIN_FLOOR = 0.6  # the colour beside the eye counts as no darker than this share of the ordinary skin round it
+LID_EDGE_M = 0.0008  # the lid's own colour is read this far past the opening
 LID_LIGHT_M = 0.002  # light paint is taken off the skin this far outside the opening
 LASH_M = 0.0011  # the upper lash line on the skin
 LASH = 0.45
@@ -315,6 +317,26 @@ def depth_inside(outline: np.ndarray, at: np.ndarray) -> np.ndarray:
     return np.where(within, near, 0.0)
 
 
+def skin_beside(render: np.ndarray, outline: np.ndarray, centre: complex, at: np.ndarray, px_m: float,
+                past: float | None = None) -> np.ndarray:
+    """For each position of `at` (complex, metres, any shape): the model's colour `past` (SKIN_FROM_M) past the outline
+    in the same direction from the eye's centre, (..., 3)."""
+    away = at - centre
+    away = away / np.maximum(np.abs(away), 1e-9)
+    turn = np.linspace(-np.pi, np.pi, 181)
+    reach = np.array([np.max(np.real((outline - centre) * np.exp(-1j * a))) for a in turn])
+    spot = centre + away * (np.interp(np.angle(away), turn, reach) + (SKIN_FROM_M if past is None else past))
+    half = render.shape[0] / 2
+    return face.sample(render, spot.real / px_m + half, -spot.imag / px_m + half)
+
+
+def upper_share(outline: np.ndarray, at: np.ndarray) -> np.ndarray:
+    """1 above the line through the two corners, 0 below it, easing over a millimetre."""
+    a, b = outline[0], outline[len(outline) // 2]
+    corners = a.imag + (b.imag - a.imag) * np.clip((at.real - a.real) / (b.real - a.real), 0, 1)
+    return np.clip(0.5 + (at.imag - corners) / 0.001, 0, 1)
+
+
 def dress_lids(base_color: Path, planned: dict[str, Any]) -> None:
     """The skin just outside each opening, in the texture. The painted eye the model had can reach past the new opening:
     a texel lighter than the model's own skin SKIN_FROM_M further out takes that skin (LID_LIGHT_M out, and on the cut
@@ -328,7 +350,6 @@ def dress_lids(base_color: Path, planned: dict[str, Any]) -> None:
     tex = face.read_rgb(base_color)
     size = tex.shape[0]
     pts = face.uv_pixels(mesh["uv"], size)
-    half = render.shape[0] / 2
     for eye in planned["eyes"]:
         cu, cv = eye["centre"]
         close = (np.hypot(uvw[:, 0] - cu, uvw[:, 1] - cv) < eye["width"]) & (np.abs(uvw[:, 2] - eye["lid"]) < 0.015)
@@ -344,13 +365,8 @@ def dress_lids(base_color: Path, planned: dict[str, Any]) -> None:
         deep = np.abs(at3[:, 2] - eye["lid"]) < 0.015
         use = deep & (within | (near < LID_LIGHT_M))
         px = tex[covered]
-        out_from = at[use] - complex(cu, cv)
-        out_from /= np.maximum(np.abs(out_from), 1e-9)
         a, b = outline[0], outline[len(outline) // 2]
-        # from the same direction out of the eye, past the outline by SKIN_FROM_M
-        reach = np.array([np.max(np.real((outline - complex(cu, cv)) * np.conj(d))) for d in out_from]) + SKIN_FROM_M
-        spot = complex(cu, cv) + out_from * reach
-        skin = face.sample(render, spot.real / px_m + half, -spot.imag / px_m + half)
+        skin = skin_beside(render, outline, complex(cu, cv), at[use], px_m)
         old = px[use]
         lighter = np.clip((face.luminance(old) - face.luminance(skin)) / 0.06, 0, 1)
         k = np.where(within[use], 1.0, np.clip((LID_LIGHT_M - near[use]) / (0.35 * LID_LIGHT_M), 0, 1))
@@ -363,22 +379,31 @@ def dress_lids(base_color: Path, planned: dict[str, Any]) -> None:
 
 
 def blend_edge(patch: np.ndarray, render: np.ndarray, eye: dict[str, Any], px_m: float) -> np.ndarray:
-    """The eye patch fading into the lid's colour over the last EDGE_FADE_M inside the outline (and past it), where a
-    white edge would read as a bright line between the lid and the eye."""
+    """The eye patch fading into the skin beside it over the last EDGE_FADE_M inside the outline (and past it), where a
+    white edge would read as a bright line between the lid and the eye. Shaded under the upper lid only."""
     size = patch.shape[0]
     p = eye["paint"]
     Y, X = np.mgrid[0:size, 0:size] + 0.5
     at = (p["centre_px"].real - p["half_px"] + X / size * 2 * p["half_px"]) + 1j * (
         p["centre_px"].imag - p["half_px"] + Y / size * 2 * p["half_px"])
     k = np.clip(1.0 - depth_inside(p["outline_px"], at) * px_m / EDGE_FADE_M, 0, 1)[..., None] * EDGE_FADE
-    return np.clip(patch * (1 - k) + lid_colour(render, eye, px_m) * EDGE_SHADE * k, 0, 1)
+    outline = np.array([complex(u, v) for u, v in eye["outline"]])
+    metres = (at.real - render.shape[0] / 2) * px_m - 1j * (at.imag - render.shape[0] / 2) * px_m
+    skin = skin_beside(render, outline, complex(*eye["centre"]), metres, px_m)
+    lid = skin_beside(render, outline, complex(*eye["centre"]), metres, px_m, LID_EDGE_M)
+    skin = np.where((face.luminance(lid) < face.luminance(skin))[..., None], lid, skin)
+    floor = lid_colour(render, eye, px_m) * SKIN_FLOOR
+    skin = skin * np.maximum(1.0, face.luminance(floor) / np.maximum(face.luminance(skin), 1e-3))[..., None]
+    up = upper_share(outline, metres)
+    shade = (EDGE_SHADE[1] + (EDGE_SHADE[0] - EDGE_SHADE[1]) * up)[..., None]
+    return np.clip(patch * (1 - k) + skin * shade * k, 0, 1)
 
 
 def rim_swatch(render: np.ndarray, eye: dict[str, Any], px_m: float, size: int) -> np.ndarray:
     """The socket's colour (size, size, 3): the skin just round the opening on the model, shading darker downwards (the
     top row is the lid's edge, the bottom row the back of the socket)."""
     skin = lid_colour(render, eye, px_m)
-    fall = np.linspace(0.85, 0.55, size)[:, None, None]
+    fall = np.linspace(1.0, 0.75, size)[:, None, None]
     return np.clip(np.broadcast_to(skin, (size, size, 3)) * fall, 0, 1)
 
 
