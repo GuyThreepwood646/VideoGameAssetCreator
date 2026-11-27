@@ -190,9 +190,53 @@ namespace Vgac.Starter
             };
         }
 
-        public void Reload()
+        public async void Reload()
         {
-            try { if (view.CoreWebView2 != null) view.CoreWebView2.Reload(); } catch (Exception) { }
+            try
+            {
+                if (view.CoreWebView2 == null) return;
+                await ClearCache();
+                if (!IsDisposed) view.CoreWebView2.Reload();
+            }
+            catch (Exception) { }
+        }
+
+        // The screens are rebuilt under new file names, and the server sends no cache rules: an index.html kept from the
+        // last run would ask for files that are gone and show a white page. Only the HTTP cache is emptied; what the page
+        // remembers (local storage) stays.
+        async System.Threading.Tasks.Task ClearCache()
+        {
+            try { await view.CoreWebView2.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache); }
+            catch (Exception e) { log.Line("app window: the web view's cache was not cleared: " + e.Message); }
+        }
+
+        // A page that did not load, or loaded and drew nothing, is loaded again without waiting for the person.
+        public int PageCheckMs = 5000;
+        int pageLoad, pageReloads;
+
+        async void OnNavigated(object sender, CoreWebView2NavigationCompletedEventArgs e)
+        {
+            // cancelled: a link sent to the person's browser, or a newer load took over
+            if (e.WebErrorStatus == CoreWebView2WebErrorStatus.OperationCanceled) return;
+            bool loaded = e.IsSuccess;
+            string why = e.WebErrorStatus.ToString();
+            int load = ++pageLoad;
+            try
+            {
+                await System.Threading.Tasks.Task.Delay(PageCheckMs);
+                if (IsDisposed || load != pageLoad) return;
+                string drawn = loaded ? await view.CoreWebView2.ExecuteScriptAsync(
+                    "(function(){var r=document.getElementById('root');return r?r.childElementCount>0:null})()") : null;
+                if (IsDisposed || load != pageLoad) return;
+                PageAction a = LauncherRules.PageCheck(loaded, drawn, pageReloads);
+                if (a == PageAction.Done) { pageReloads = 0; return; }
+                string what = loaded ? "the page shows nothing" : "the page did not load (" + why + ")";
+                if (a == PageAction.GiveUp) { log.Line("app window: " + what + "; not trying again"); return; }
+                pageReloads++;
+                log.Line("app window: " + what + "; loading it again");
+                Reload();
+            }
+            catch (Exception ex) { log.Line("app window: the page could not be checked: " + ex.Message); }
         }
 
         // Shows the window and brings it to the front, also when it is minimised.
@@ -252,6 +296,7 @@ namespace Vgac.Starter
                 await core.AddScriptToExecuteOnDocumentCreatedAsync(BridgeOps.Script.Replace("__ORIGIN__", origin));
                 core.WebMessageReceived += OnMessage;
                 core.NavigationStarting += OnNavigating;
+                core.NavigationCompleted += OnNavigated;
                 core.NewWindowRequested += delegate(object s, CoreWebView2NewWindowRequestedEventArgs e) { e.Handled = true; OpenOutside(e.Uri); };
                 // Every permission the page could ask for (camera, location, ...) is refused; the title stays fixed.
                 // Keys pressed while the page itself has focus never reach the form, so ask the web view to tell us.
@@ -269,6 +314,7 @@ namespace Vgac.Starter
                     if (QuitRequested != null && Shortcuts.Handle(k, "app page", log, QuitRequested, StatusRequested, ToggleFullscreen)) e.Handled = true;
                 };
                 core.PermissionRequested += delegate(object s, CoreWebView2PermissionRequestedEventArgs e) { e.State = CoreWebView2PermissionState.Deny; };
+                await ClearCache();
                 core.Navigate(url);
                 log.Line("app window open at " + url);
             }
@@ -281,7 +327,9 @@ namespace Vgac.Starter
             {
                 e.Cancel = true;
                 OpenOutside(e.Uri);
+                return;
             }
+            pageLoad++;    // a check still waiting for the page before this one is dropped
         }
 
         static void OpenOutside(string uri)

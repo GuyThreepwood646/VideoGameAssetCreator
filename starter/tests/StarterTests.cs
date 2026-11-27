@@ -181,6 +181,7 @@ public static partial class T
             Safety6All();
             Safety7All();
             RestartAll();
+            WindowCacheAll();
         }
         finally
         {
