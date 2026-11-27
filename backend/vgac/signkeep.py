@@ -5,7 +5,10 @@ The look's one colour per triangle (looktex.colour_per_face) flattens a triangle
 flattened and the sign read "CORNER SHOA" although the picture paint had drawn it cleanly. The item finder (the same one the
 glow map uses, item_suggest.py) finds the sign boards on renders of the painted model (sign_worker.py); the triangles under them go
 into colour_per_face's `keep` list and stay as painted. Without the finder, without a sign, or with a mask that covers too
-much of the painted texture, nothing is kept and the clean-up runs as it always did."""
+much of the painted texture, nothing is kept and the clean-up runs as it always did.
+
+The same finder run also looks at the step 1 picture and a square-on front render: where one sign matches on both, vgac/signface.py
+flattens it and copies the picture's lettering onto it, and its triangles are kept whatever their share of the model."""
 from __future__ import annotations
 
 import json
@@ -64,14 +67,21 @@ def faces_under(mask: np.ndarray, tri: np.ndarray, facing: np.ndarray, n_faces: 
 def sign_faces(settings: Any, glb: Any, base: np.ndarray, work: Path, masks_for: Any = None) -> tuple[np.ndarray | None, dict[str, Any]]:
     """The triangles of the model under the sign boards the finder finds on renders of it painted with `base` (T, T, 3 floats):
     (face indexes, record), or (None, record) with the reason (no finder, no sign, every mask too large). `masks_for(images)`
-    stands in for the finder (tests and trials)."""
-    from . import face, texfidelity
+    stands in for the finder (tests and trials).
+
+    With the step 1 picture beside `work` (the picture paint's copy), a sign found on both the picture and the front of the
+    model is also flattened (in `glb`) and repainted from the picture (in `base`), both in place."""
+    from . import face, signface, texfidelity
 
     mesh = face.load_mesh(glb)
     if mesh is None:
         return None, {"kept": 0, "reason": "no UVs"}
     rends = [face.render_view(mesh, base, texfidelity._frame_camera(mesh, float(y), 0.8 * SIZE, SIZE), background=1.0) for y in YAWS]
     images = [r["image"] for r in rends]
+    picture = signface.read_picture(Path(work).parent)
+    if picture is not None:
+        front = face.render_view(mesh, base, signface.front_camera(mesh["verts"]), background=1.0)["image"]
+        images += [front, picture]
     if masks_for is not None:
         masks, rec = masks_for(images), {"finder": "stand-in"}
     else:
@@ -87,7 +97,15 @@ def sign_faces(settings: Any, glb: Any, base: np.ndarray, work: Path, masks_for:
             skipped += 1
             continue
         out |= faces_under(m & r["mask"], r["raster"]["tri"], r["facing"], len(out))
-    rec = {**rec, "views_with_sign": sum(bool(m.any()) for m in masks), "views_skipped_large": skipped}
+    seen = masks[:len(rends)]
+    rec = {**rec, "views_with_sign": sum(bool(m.any()) for m in seen), "views_skipped_large": skipped}
+    if picture is not None:
+        try:
+            tris, rec["face"] = signface.apply(Path(glb), base, picture, masks[-1], masks[-2], images[-2])
+        except Exception as e:  # noqa: BLE001  (the keep from the diagonal views still holds)
+            tris, rec["face"] = None, {"applied": False, "reason": f"failed: {str(e)[:160]}"}
+        if tris is not None:
+            out[tris] = True
     if not out.any():
-        return None, {**rec, "kept": 0, "reason": "no sign found" if not any(m.any() for m in masks) else "no triangle under the sign"}
+        return None, {**rec, "kept": 0, "reason": "no sign found" if not any(m.any() for m in seen) else "no triangle under the sign"}
     return np.nonzero(out)[0], {**rec, "kept": int(out.sum())}

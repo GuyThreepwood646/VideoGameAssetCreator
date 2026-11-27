@@ -127,7 +127,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         _param("tex_steps", "select", 24, options=[12, 24]),
         # The head built on its own (vgac/headgraft.py): people on the bald route (hair from the library) only.
         _param("head_build", "boolean", None, categories=["humanoid"], label="Build the head on its own",
-               description="With hair from the library: a second build from a close crop of the head, joined at the neck; about 5 minutes more. On when empty"),
+               description="With hair from the library: a second build from a close crop of the head, joined at the neck; about 5 minutes more. Off when empty"),
         _param("head_crop", "number", None, min=0.18, max=0.4, step=0.02, categories=["humanoid"], label="Head crop (share of the height)",
                description="How much of the figure, from the top, the head build sees; 0.26 when empty"),
         # Hands redrawn before the build (docs/HANDS-PLAN.md, phase 0: the only change that gave the build separate fingers).
@@ -167,7 +167,7 @@ STAGE_SCHEMAS: dict[str, list[dict[str, Any]]] = {
         # The picture painted into the base colour (vgac/srcproject.py). Empty: by itself for a character on a smooth
         # look. On: any model. Off: never.
         _param("source_project", "boolean", None, categories=SURFACE_CATEGORIES, label="Paint the picture onto the model",
-               description="Puts your picture's own colours and detail on the side it shows. When empty: on for characters, buildings and rigid props"),
+               description="Puts your picture's own colours and detail on the side it shows. When empty: on for characters, creatures, buildings and rigid props"),
         # The face detail pass (stages/face_detail.py): humanoids only; skipped by itself for flat looks.
         _param("face_detail", "boolean", True, categories=["humanoid"], label="Match the face to the picture",
                description="Paints the face from the picture so the eyes and mouth are sharp; skipped when there is no face to paint"),
@@ -408,8 +408,9 @@ def _data() -> dict[str, Any]:
         c = _load_yaml(p)
         c.setdefault("id", p.stem)
         c["pose_block"] = " ".join(str(c.get("pose_block", "")).split())
-        if c.get("pose_block_lettered"):
-            c["pose_block_lettered"] = " ".join(str(c["pose_block_lettered"]).split())
+        for key in ("pose_block_lettered", "long_body_lead", "long_body_pose_block"):
+            if c.get(key):
+                c[key] = " ".join(str(c[key]).split())
         categories[c["id"]] = c
     styles = {s["id"]: {**s, "prompt_block": " ".join(str(s.get("prompt_block", "")).split())}
               for s in _load_yaml(DATA_DIR / "styles.yaml").get("styles", [])}

@@ -581,7 +581,7 @@ const AUTO_BOOLEANS: Record<string, { label: string; now?: (v: Version) => strin
     label: 'Automatic (on for characters, buildings and rigid props on smooth looks)',
     now: (v) => (v.stage !== 'prep' || typeof v.metrics?.srcproject_applied !== 'boolean' ? null : v.metrics.srcproject_applied ? 'This version: painted from your pictures.' : 'This version: not painted from your pictures.'),
   },
-  head_build: { label: 'Automatic (on with hair from the library)' },
+  head_build: { label: 'Automatic (off)' },
   pbr_fix: {
     label: 'Automatic (on for realistic looks)',
     now: (v) => (v.stage !== 'prep' || typeof v.metrics?.pbr_fix_applied !== 'boolean' ? null : v.metrics.pbr_fix_applied ? 'This version: colours were kept in the real-material range.' : 'This version: colours were left as drawn.'),

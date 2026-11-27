@@ -1530,9 +1530,13 @@ def projection_check(m: dict[str, Any], params: dict[str, Any], category: str, l
                                     "the clean-up did not record what the picture painting did")
     if m.get("srcproject_applied"):
         share = m.get("srcproject_painted_share")
-        return quality.check("picture_projection", True, share if isinstance(share, (int, float)) else None, None,
-                             vars={"share": share if isinstance(share, (int, float)) else None})
-    return quality.check("picture_projection", False, "refused", None, vars={"reason": projection_reason_words(m.get("srcproject_reason"))})
+        c = quality.check("picture_projection", True, share if isinstance(share, (int, float)) else None, None,
+                          vars={"share": share if isinstance(share, (int, float)) else None})
+        c["message"] = f"{share:.0%} of the surface" if isinstance(share, (int, float)) else "painted"
+        return c
+    c = quality.check("picture_projection", False, "refused", None, vars={"reason": projection_reason_words(m.get("srcproject_reason"))})
+    c["message"] = "refused"  # the check's own sentence says why; no "limit None" for a check that has no limit
+    return c
 
 
 def upscale_check(up: dict[str, Any] | None) -> dict[str, Any] | None:

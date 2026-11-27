@@ -86,9 +86,9 @@ REASONS = {
 
 def wanted(category: str | None, params: dict[str, Any], bald_route: bool, engine: str) -> bool:
     """Whether the 3D step builds the head on its own: TRELLIS, the bald route (hair from the library), a person, and
-    the version has not turned it off (head_build false)."""
+    the version has turned it on (head_build true). Off by default until Clean up keeps the face it gives."""
     return (engine == "trellis" and bald_route and (category or "") in CATEGORIES
-            and params.get("head_build") is not False)
+            and params.get("head_build") is True)
 
 
 def crop_share(params: dict[str, Any]) -> float:
