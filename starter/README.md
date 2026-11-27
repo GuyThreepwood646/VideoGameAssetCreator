@@ -41,6 +41,10 @@ never in this window. The page gets `window.vgacHost` only from the backend's ow
 `pickFolder(title)` and `pickFile(title, "Name|pattern")`, each returning a path or null. The page sends the path to the
 backend, which checks it. `VGAC.exe --window <url>` opens only the window on a page (for checks).
 
+The window empties the web view's HTTP cache before its first load and before each reload it makes itself, because the
+screens are rebuilt under new file names; what the page remembers (local storage) stays. A load that fails, or that draws
+nothing, is tried again, at most three times in a row, with a line in the setup log.
+
 ## Staying running
 
 After the app opens the starter stays in the tray (the V icon). It does what the Electron launcher in `desktop/` does:
