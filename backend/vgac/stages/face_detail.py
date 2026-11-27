@@ -982,13 +982,15 @@ def fit_and_paint(glb: Path, base_color: Path, picture: Path, before_glb: Path, 
     # the surroundings of each feature box are paintable too: the body painting can have left a copy of a feature's end
     # past the region's edge, which stayed visible beside the painted one
     around = feature_surrounds(face.landmarks(fitted, info), info, view["mask"]) if over_pictures else np.zeros(region.shape, dtype=bool)
+    if around.any():  # colour-only hair there is judged by the same depth steps as in the features area
+        seg["old_hair"], _ = release_flat_hair(seg["old_hair"], view, info, around)
     paint = (region | eye_free | around) & ~face.dilate_mask(seg["old_hair"], 2)
     # (grey background, but never inside the eyes-nose-mouth area: a dark grey pupil or brow is close to the grey
     # background's colour, and the silver-haired mage's close-up had both filled as background, in boxes)
     pic_hair = pic_hair_without_eyes(seg["pic_hair"], fitted, info, region.shape)
     if over_pictures:
         # shaded skin can read as hair by colour; away from a real depth step it is painted, not filled (flat blocks)
-        pic_hair, _ = release_flat_hair(pic_hair, view, info)
+        pic_hair, _ = release_flat_hair(pic_hair, view, info, around)
     core = pic_hair | (seg["pic_background"] & ~inner & ~face.features_box(info))
     # Outside the eyes-nose-mouth area the painted face's own rim goes too (the shadow along its jaw and cheek, which
     # lands inside the model's wider cheek and shows as a line from the side).
@@ -1087,10 +1089,15 @@ def pic_hair_without_eyes(pic_hair: np.ndarray, fitted: np.ndarray, info: dict[s
 
 def feature_surrounds(lm: dict[str, Any] | None, info: dict[str, Any], mask: np.ndarray) -> np.ndarray:
     """The model's pixels in a box, SURROUND_GROW times face.eye_boxes, round each point MediaPipe finds for those boxes in
-    the fitted picture. Points found another way, or none: nothing."""
+    the fitted picture, and above each box up to BROW_BAND[0] of the face's width over the points' mean height. Points
+    found another way, or none: nothing."""
     if not lm or lm.get("how") != "mediapipe":
         return np.zeros(mask.shape, dtype=bool)
-    return face.eye_boxes(mask.shape, lm["eyes"], float(info["width_px"]), grow=SURROUND_GROW) & mask
+    wpx = float(info["width_px"])
+    box = face.eye_boxes(mask.shape, lm["eyes"], wpx, grow=SURROUND_GROW)
+    top = int(max(0, np.mean([e[1] for e in lm["eyes"]]) - BROW_BAND[0] * wpx))
+    box[top:] |= np.logical_or.accumulate(box[top:][::-1], axis=0)[::-1]  # up to BROW_BAND[0], column by column
+    return box & mask
 
 
 def features_coat_weight(paint: np.ndarray, around: np.ndarray, info: dict[str, Any]) -> np.ndarray:
@@ -1125,14 +1132,18 @@ def release_eye_hair(old_hair: np.ndarray, view: dict[str, Any], info: dict[str,
     return out, free
 
 
-def release_flat_hair(old_hair: np.ndarray, view: dict[str, Any], info: dict[str, Any]) -> tuple[np.ndarray, int]:
+def release_flat_hair(old_hair: np.ndarray, view: dict[str, Any], info: dict[str, Any],
+                      also: np.ndarray | None = None) -> tuple[np.ndarray, int]:
     """The model's hair mask with the false hair taken out of the eyes, nose and mouth area. The mask is colour only
     (face.hair_and_skin), and on a dark face a shaded cheek or socket is nearer the hair's colour than the skin's, so the mask
     flooded the face (the live M1-clothed: 35 000 px, both eyes "hair", little painted). Inside the features area a hair
     pixel counts only within HAIR_STEP_NEAR of the face's width of a depth step (EYE_COVER_STEP_M per render pixel: the edge of
     a fringe or flap standing in front of the face); hair there on a smooth surface is released, so the picture's eyes, brows
-    and mouth are painted. Outside that area the mask is unchanged. -> (the mask, pixels released)."""
+    and mouth are painted. Outside that area (and ``also``, when given) the mask is unchanged.
+    -> (the mask, pixels released)."""
     box = face.features_box(info) & info["region"]
+    if also is not None:
+        box = box | also
     inside = old_hair & box
     if not inside.any():
         return old_hair, 0

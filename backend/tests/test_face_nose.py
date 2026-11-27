@@ -178,6 +178,38 @@ def test_feature_surrounds_are_paintable_only_for_points_found_by_the_landmark_m
         assert not fd.feature_surrounds(lm, info, mask).any()
 
 
+def test_the_surroundings_reach_up_in_every_column_even_when_the_two_points_differ_in_height():
+    import numpy as np
+    from vgac.stages import face_detail as fd
+
+    S = 600
+    mask = np.ones((S, S), dtype=bool)
+    info = {"width_px": 200.0}
+    eyes = [(200.0, 320.0), (400.0, 300.0)]
+    around = fd.feature_surrounds({"how": "mediapipe", "eyes": eyes}, info, mask)
+    top = int(310.0 - fd.BROW_BAND[0] * 200.0)
+    for x in (200, 400):
+        column = around[top:300, x]
+        assert column.all(), x  # no unpainted row between the band's top and the box
+    assert not around[:top - 60, 200].any()
+
+
+def test_extra_pixels_given_to_the_hair_release_are_released_too():
+    import numpy as np
+    from vgac.stages import face_detail as fd
+
+    S = 200
+    info = {"region": np.ones((S, S), dtype=bool), "nose": (100, 110), "width_px": 60.0}
+    view = {"mask": np.ones((S, S), dtype=bool), "raster": {"z": np.zeros((S, S))}}
+    hair = np.zeros((S, S), dtype=bool)
+    hair[5:15, 5:15] = True  # far outside the features area
+    also = np.zeros((S, S), dtype=bool)
+    also[0:20, 0:20] = True
+    assert fd.release_flat_hair(hair, view, info)[0][10, 10]
+    out, n = fd.release_flat_hair(hair, view, info, also)
+    assert not out.any() and n == 100
+
+
 def test_the_full_coat_is_full_over_the_features_and_never_outside_what_may_be_painted():
     import numpy as np
     from vgac.stages import face_detail as fd
