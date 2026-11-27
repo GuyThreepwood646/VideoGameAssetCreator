@@ -1471,7 +1471,7 @@ CHECK_GUIDE.update({
     },
     "eye_spikes": {
         "severity": "warn",
-        "ok": "The surface round the eyes is smooth: the tallest bump is {value:m} mm on a 1.75 m person.",
+        "ok": "No flap stands out at the lids: the tallest thin one is {value:m} mm on a 1.75 m person.",
         "fail": ("Thin flaps stand out of the face round the eyes, up to {value:m} mm on a 1.75 m person (it should be at most {limit:m} mm); "
                  "they show as spikes on the lids when the model is lit from the side."),
     },
