@@ -279,6 +279,18 @@ def test_only_up_facing_islands_count_as_roof(tmp_path):
     assert len(roofs) == 2 and all(uvm["up"][uvm["island"] == i].min() > 0.3 for i in roofs)
 
 
+def test_a_low_up_facing_island_is_not_the_roof(tmp_path):
+    """With the geometry given, an up-facing island that sits low on the model (an awning, a ledge, the ground) is not a
+    roof; the same model turned upside down has its up-facing islands low, so none count."""
+    from vgac import face, imaging
+
+    glb = _house(tmp_path)[0]
+    uvm, mesh = imaging.load_uv_mesh(glb), face.load_mesh(glb)
+    assert colourmatch.roof_islands(uvm, mesh) == colourmatch.roof_islands(uvm)
+    low = {**mesh, "verts": mesh["verts"] * np.array([1.0, -1.0, 1.0])}
+    assert colourmatch.roof_islands(uvm, low) == []
+
+
 def test_only_the_building_route_gets_the_roof_lift():
     import inspect
 
