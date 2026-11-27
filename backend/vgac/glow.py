@@ -8,6 +8,7 @@ fitted (`srcproject.compose` over the kept views, the same fit and the same blen
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import time
@@ -157,10 +158,18 @@ def emission_map(mesh: dict[str, np.ndarray], kept: dict[str, Any], size: int,
 
 
 def write_emission(glb: Any, kept: dict[str, Any], size: int, out_png: Any, gains: list[np.ndarray] | None = None) -> tuple[Any, dict[str, Any]]:
-    """emission_map for a model file; writes out_png when there is a glow. -> (path or None, record)."""
+    """emission_map for a model file; writes out_png when there is a glow. -> (path or None, record).
+
+    Each view's depths are taken again from the model as it is now: the clean-up may have moved the surface since the
+    pictures were fitted (a flattened sign, vgac/signface.py), and old depths would hide the moved part from every view."""
     mesh = face.load_mesh(glb)
     if mesh is None:
         return None, {"made": False, "reason": "the model has no texture layout"}
+    if kept and kept.get("views"):
+        views = [copy.copy(v) for v in kept["views"]]
+        for v in views:
+            v.raster = srcproject.Raster(mesh, v.cam)
+        kept = {**kept, "views": views}
     em, rec = emission_map(mesh, kept, size, gains)
     if em is None:
         return None, rec
