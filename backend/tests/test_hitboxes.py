@@ -263,6 +263,18 @@ def test_serpent_capsules_span_their_whole_part_either_way_round(root_at_head):
     assert res["cover"] >= 0.85
 
 
+def test_a_dropped_part_shows_as_missing_cover():
+    """hitbox_regions leaves parts out of the boxes; their skin still counts, so the cover falls instead of the part vanishing."""
+    bones = _humanoid()
+    V, owner = _body(bones, _human_radii(bones))
+    full = hb.fit(bones, V, owner, None, "humanoid", "detailed")
+    kept = [s["region"] for s in full["shapes"] if s["region"] != "chest"]
+    partial = hb.fit(bones, V, owner, None, "humanoid", "detailed", keep_regions=kept)
+    assert partial["cover"] < full["cover"] - 0.05
+    same = hb.fit(bones, V, owner, None, "humanoid", "detailed", keep_regions=[s["region"] for s in full["shapes"]])
+    assert same["cover"] == full["cover"]
+
+
 def test_regions_filter_and_none_mode_keep_the_movement_shape():
     bones = _humanoid()
     V, owner = _body(bones, _human_radii(bones))

@@ -879,9 +879,8 @@ def fit(bones, V, owner, tris, category, mode="detailed", fit_name="normal", kee
             if keep_regions:
                 keep = set(keep_regions)
                 shapes = [s for s in shapes if s["region"] in keep]
-                covered_mask = np.isin(vreg, [s["region"] for s in shapes])
-            else:
-                covered_mask = np.ones(len(V), bool)
+            # Cover is scored over the whole body, so a part left out of the kept set shows as missing cover.
+            covered_mask = np.ones(len(V), bool)
     if not shapes:
         shapes, covered_mask = _fallback(sk, V, owner_names, category, factor, lo, hi)
         result["fallback"] = True
