@@ -121,6 +121,25 @@ def test_three_quarter_views_take_their_sides_from_the_built_from_picture() -> N
     assert srcproject.refuse_contradicting_turns(f, 0.0) == {}
 
 
+def test_a_creature_view_fitted_far_from_its_label_is_refused_and_a_correct_one_kept() -> None:
+    # a labelled 45-degree quarter fitted at -37.5 is refused for a quadruped (PL-175) and kept for a humanoid
+    f = turned(quarter=-37.5)
+    out = srcproject.refuse_off_label_turns(f, None, None, "quadruped")
+    assert set(out) == {"quarter"} and not f["quarter"].ok
+    assert "contradicts its label" in f["quarter"].info["refused"]
+    assert f["quarter"].info["turn_from_label_deg"] == -82.5
+    f = turned(quarter=-37.5)
+    assert srcproject.refuse_off_label_turns(f, None, None, "humanoid") == {} and f["quarter"].ok
+    # a correct view at 45 searched at 40 is kept for a quadruped
+    f = turned(quarter=40.0)
+    assert srcproject.refuse_off_label_turns(f, None, None, "quadruped") == {} and f["quarter"].ok
+    # the built-from picture takes its label from the drawn view it was made as; a picture with no label is never refused
+    pic = turned(picture=-37.5)["picture"]
+    assert set(srcproject.refuse_off_label_turns({}, pic, "quarter", "winged")) == {"picture"} and not pic.ok
+    pic = turned(picture=-37.5)["picture"]
+    assert srcproject.refuse_off_label_turns({}, pic, None, "winged") == {} and pic.ok
+
+
 def test_the_front_turn_comes_from_the_first_frontal_picture() -> None:
     f = turned(source=332.5, front=-2.5, picture=40.0)
     assert srcproject.front_turn(f, 5.0) == (332.5, "source")
@@ -734,8 +753,22 @@ def test_a_three_quarter_head_view_takes_the_fronts_skin_tone_by_one_offset() ->
              {"sel": np.arange(N), "sp": sp_f, "w": np.full(N, 0.5)}]
     shifts, rec = srcproject.head_tone_offsets(atlas, views, projs, [front_img, side_img, front_img])
     assert shifts[0] is None and shifts[2] is None  # the front itself and the body fits are left as they are
-    assert np.abs(shifts[1] - (skin - lighter)).max() < 0.01, shifts[1]  # the skin's difference, not pulled by the hair
+    assert np.abs(shifts[1].offset - (skin - lighter)).max() < 0.01, shifts[1]  # the skin's difference, not pulled by the hair
+    assert np.abs(shifts[1].skin - lighter).max() < 0.01, shifts[1]
     assert rec["head_quarter"]["matched"] and rec["head_quarter"]["overlap"] == N // 2
     paint, _, _ = srcproject.blend(atlas, projs[1:2], [side_img], 1, [True], None, shifts[1:2])
     assert np.abs(paint[0] - skin).max() < 0.01  # the side view's skin painted in the front's tone
-    assert np.abs(paint[1] - np.clip(hair + shifts[1], 0, 1)).max() < 1e-6  # its hair moved by the same offset only
+    share = face.luminance(hair) / face.luminance(shifts[1].skin)  # darker than the skin: part of the darkening only
+    assert np.abs(paint[1] - (hair + shifts[1].offset * share)).max() < 1e-6
+
+
+def test_a_darkening_tone_match_fades_in_shadow_and_a_lightening_one_does_not() -> None:
+    skin = np.array([0.70, 0.55, 0.45])
+    ramp = np.linspace(0.0, 1.0, 101)[:, None] * np.ones(3)
+    down = srcproject.apply_head_tone(ramp, srcproject.HeadTone(np.full(3, -0.10), skin))
+    lit = face.luminance(ramp) >= face.luminance(skin)
+    assert np.abs(down[lit] - (ramp[lit] - 0.10)).max() < 1e-9  # at the skin's lightness and above: the whole offset
+    assert (down[1:] > 0).all()  # no shadow reaches black
+    assert (np.diff(down, axis=0) > 0).all()  # and the order of light and dark is kept
+    up = srcproject.apply_head_tone(ramp, srcproject.HeadTone(np.full(3, 0.06), skin))
+    assert np.abs(up - np.clip(ramp + 0.06, 0, 1)).max() < 1e-9

@@ -636,6 +636,7 @@ async def _rig(sc: StageContext, params: dict[str, Any]) -> None:
         await steptime.run(sc, "hand_skin", _hand_skin(sc, rig_glb))
         await steptime.run(sc, "sleeve_skin", _sleeve_skin(sc, rig_glb))
         await steptime.run(sc, "stretch_skin", _stretch_skin(sc, rig_glb))
+        await steptime.run(sc, "eye_skin", _eye_skin(sc, rig_glb))
         await steptime.run(sc, "worn_region", _worn_region(sc, rig_glb, params))
     sc.register("glb", rig_glb)
     link_textures(sc)
@@ -776,6 +777,7 @@ async def _fix_weights_again(sc: StageContext, rig_glb: Path) -> None:
             await _hand_skin(sc, rig_glb)  # the clean-up may have moved hand weight back to the forearm
             await _sleeve_skin(sc, rig_glb)  # the clean-up gave the sleeve its first weights back
             await _stretch_skin(sc, rig_glb)  # and brought back the steep weight changes
+            await _eye_skin(sc, rig_glb)  # separate eyes follow the head alone
     except Exception as e:  # noqa: BLE001
         sc.set_metrics(weights_fix_error=str(e)[:300])
 
@@ -1691,6 +1693,34 @@ async def _stretch_skin(sc: StageContext, rig_glb: Path) -> None:
         sc.set_metrics(stretch_skin={"error": str(e)[:300]})
     finally:
         report.unlink(missing_ok=True)
+        out.unlink(missing_ok=True)
+
+
+async def _eye_skin(sc: StageContext, rig_glb: Path) -> None:
+    """Eye skin pass (blender/eye_skin.py): a clean-up with separate eyes (metrics.eyes.rects, their squares of the texture)
+    gets its eyes and sockets weighted to the Head bone alone. In place; nothing to do without such a clean-up.
+    metrics.eye_skin: {ok, vertices} or {reason}. Never raises."""
+    rects = next((((v.metrics or {}).get("eyes") or {}).get("rects") for v in sc.iter_lineage(include_self=False)
+                  if v.stage == "prep"), None)
+    if not rects:
+        return
+    out = sc.dir / "rig_eye_skin.glb"
+    report = sc.dir / "eye_skin.json"
+    squares = sc.dir / "eye_squares.json"
+    try:
+        squares.write_text(json.dumps(rects), encoding="utf-8")
+        await sc.blender("eye_skin.py", [rig_glb, out, "--rects", squares, "--report", report], log_name="eye_skin.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        if rep.get("ok") and rep.get("changed") and out.is_file() and out.stat().st_size > 0:
+            shutil.move(str(out), str(rig_glb))
+        sc.set_metrics(eye_skin={"ok": True, "vertices": int(rep.get("vertices") or 0)} if rep.get("ok")
+                       else {"ok": False, "reason": rep.get("reason") or "not run"})
+    except Exception as e:  # noqa: BLE001
+        sc.set_metrics(eye_skin={"error": str(e)[:300]})
+    finally:
+        report.unlink(missing_ok=True)
+        squares.unlink(missing_ok=True)
         out.unlink(missing_ok=True)
 
 

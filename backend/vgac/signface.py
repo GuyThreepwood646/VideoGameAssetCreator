@@ -1,18 +1,23 @@
-"""A lettered sign on the front of a building: flattened where its lettering has no depth, and painted from the step 1 picture
-(PL-153).
+"""Flat panels of a building, painted from the step 1 picture: a front sign, flattened where its lettering has no depth, and
+(on a picture taken at an angle) side signs, neon figures and display shelves.
 
 The 3D build scrambles lettering into the shape as well as the colour: a flat printed word comes out as raised blocks, which
 the budget reduction turns into jagged facets, and its colour as a smear that the picture paint only partly covers (not at all
 where a whole-view fit was refused). So the one board the item finder names on both the step 1 picture and a square-on front
 render of the model is treated by itself: its panel (the plain-coloured rectangle the letters sit in) is found in each, the
 two are checked to be the same shape and colour, the model's panel is set flat when the picture shows flat lettering, and the
-picture's panel is copied onto it. Anything that does not match leaves the model as it was."""
+picture's panel is copied onto it. Anything that does not match leaves the model as it was.
+
+A picture taken at an angle shows panels on more than one wall. For these the camera the picture was taken from is found
+against the model, the item finder names the panels on the picture and on a render from that camera, and each pair that
+overlaps is treated: the picture's box is mapped onto the model's, the surface is set flat where the kind of panel is flat
+(never under a figure), and the picture's colours are copied onto it."""
 from __future__ import annotations
 
 import json
 import struct
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 from PIL import Image
@@ -34,6 +39,19 @@ PLANE_BAND = 0.02        # share of the model's size: vertices this near the pan
 INSET_PX = 2             # the panel rectangle is shrunk this much before vertices are moved, so a frame's wall stays put
 FRONT_NZ = 0.3           # a triangle facing at least this much to the front can be painted
 EDGE_PX = 3              # the picture fades into the model's own colour over this many pixels at the panel's edge
+
+CAMERA = 1024            # the render from the picture's camera, pixels
+PICTURE = 2048           # the step 1 picture is read at this size when its colours are copied
+MIN_TURN = 20.0          # a picture turned less than this from the front shows its panels to the front route only
+MAX_TURN = 100.0         # the picture's camera is searched within this of the model's front
+MIN_FIT = 0.85           # outline overlap the picture's camera must reach
+MATCH_IOU = 0.3          # a picture panel and a model panel of one kind overlap at least this much ...
+MATCH_SIZE = 0.6         # ... and neither side is under this share of the other's
+INSIDE_CASE = 0.8        # a display's shelves lie at least this far inside a machine or case the finder names
+AXIS_SHARE = 0.4         # share of the panel's pixels facing one wall direction for it to count as a panel of that wall
+PANEL_RELIEF = 0.03      # share of the model's size (90th percentile off the plane): rougher than this is not flattened
+BANDS = {"sign": 0.02, "figure": 0.02, "display": 0.03}   # share of the model's size: how near the plane belongs to the panel
+FLATTENED = ("sign", "display")   # a figure is drawn on its wall, which stays as it is
 
 
 # --- the panel in a picture ---------------------------------------------------------------------------------------
@@ -166,8 +184,13 @@ def panel_plane(mesh: dict[str, np.ndarray], rect: tuple[float, float, float, fl
 
 
 def move_to_plane(glb: Path, rect: tuple[float, float, float, float], plane: float, band: float) -> int:
-    """Every vertex of the GLB inside `rect` and within `band` of the plane goes onto it; the normals of the triangles
-    touched are made again. In place; -> the vertices moved. Only for a GLB whose nodes carry no transform."""
+    """Every vertex of the GLB inside `rect` and within `band` of the plane z = `plane` goes onto it (move_vertices)."""
+    return move_vertices(glb, lambda p: _inside(p, rect) & (np.abs(p[:, 2] - plane) <= band), 2, plane)
+
+
+def move_vertices(glb: Path, select: Callable[[np.ndarray], np.ndarray], axis: int, value: float) -> int:
+    """The vertices of the GLB that `select(positions)` picks get coordinate `axis` set to `value`; the normals of the
+    triangles touched are made again. In place; -> the vertices moved. Only for a GLB whose nodes carry no transform."""
     data = bytearray(glb.read_bytes())
     jlen = struct.unpack_from("<I", data, 12)[0]
     gltf = json.loads(bytes(data[20:20 + jlen]))
@@ -189,10 +212,10 @@ def move_to_plane(glb: Path, rect: tuple[float, float, float, float], plane: flo
     for mesh in gltf.get("meshes", []):
         for prim in mesh["primitives"]:
             pos = view(prim["attributes"]["POSITION"])
-            hit = _inside(pos, rect) & (np.abs(pos[:, 2] - plane) <= band)
+            hit = select(pos)
             if not hit.any():
                 continue
-            pos[hit, 2] = plane
+            pos[hit, axis] = value
             moved += int(hit.sum())
             a = gltf["accessors"][prim["attributes"]["POSITION"]]
             a["min"], a["max"] = pos.min(0).astype(float).tolist(), pos.max(0).astype(float).tolist()
@@ -249,12 +272,207 @@ def paint_panel(mesh: dict[str, np.ndarray], base: np.ndarray, rect: tuple[float
     rows, cols, colour, a = rows[inside], cols[inside], colour[inside], a[inside]
     base[rows, cols] = base[rows, cols] * (1 - a) + colour * a
     painted[rows, cols] = True
-    # the same colours a little way into the empty texture beside the painted pieces
-    used = face.rasterise(uvp, np.zeros(len(uvp)), faces, T)["tri"] >= 0
+    _fill_gutter(mesh, base, painted)
+    return np.unique(ras["tri"][covered][inside]), painted
+
+
+def _fill_gutter(mesh: dict[str, np.ndarray], base: np.ndarray, painted: np.ndarray) -> None:
+    """The painted colours a little way into the empty texture beside the painted pieces, in place."""
+    uvp = face.uv_pixels(mesh["uv"], base.shape[0])
+    used = face.rasterise(uvp, np.zeros(len(uvp)), mesh["faces"], base.shape[0])["tri"] >= 0
     grown = imaging.dilate(np.where(painted[..., None], base, 0.0), painted, 2)
     gutter = face.dilate_mask(painted, 2) & ~used
     base[gutter] = grown[gutter]
-    return np.unique(ras["tri"][covered][inside]), painted
+
+
+# --- panels seen at an angle --------------------------------------------------------------------------------------
+
+
+def picture_camera(mesh: dict[str, np.ndarray], base: np.ndarray, picture: Path) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """The camera the step 1 picture was taken from, found against the model painted with `base`: (camera_frame, record),
+    or (None, record) when the picture faces the front or fits no turn."""
+    from . import posesearch as ps
+    from . import srcproject
+
+    colour, alpha = srcproject.prepare_picture(picture, PICTURE)
+    centre, scale = srcproject.model_frame(mesh)
+    turns = [float(t) for t in range(-int(MAX_TURN), int(MAX_TURN) + 1, 10)]
+    best = ps.search(mesh, alpha, centre, scale, turns=turns, rgb=colour, tex=base, turn_limit=(0.0, MAX_TURN),
+                     keep_full=ps.KEEP_FULL * 2, lens_top=ps.LENS_TOP * 2)[0]
+    rec: dict[str, Any] = {"turn": round(float(best.turn), 1), "tilt": round(float(best.tilt), 1), "lens": best.lens}
+    if abs(best.turn) < MIN_TURN:
+        return None, {**rec, "reason": "the picture faces the front"}
+    n = min(srcproject.FIT_N, CAMERA)
+    drawn = srcproject.outline(mesh, srcproject._camera(centre, best.turn, scale, n, best.tilt, best.lens))
+    fit = srcproject.fit_similarity(alpha > 0.5, drawn, n=n)
+    rec["fit"] = round(float(fit["iou"]), 3)
+    if fit["iou"] < MIN_FIT:
+        return None, {**rec, "reason": "the picture does not fit the model"}
+    cam = srcproject._camera(centre, best.turn, scale, CAMERA, best.tilt, best.lens)
+    return camera_frame(cam, srcproject.sim_to_full(fit, PICTURE, CAMERA), colour, alpha), rec
+
+
+def camera_frame(cam: face.Camera, matrix: np.ndarray, colour: np.ndarray, alpha: np.ndarray) -> dict[str, Any]:
+    """{cam, matrix (render pixel -> picture pixel), colour, alpha (the picture), view (the picture seen in the render's
+    frame, on white)}."""
+    ys, xs = np.mgrid[0:cam.size, 0:cam.size] + 0.5
+    qx, qy = _to_picture(matrix, xs, ys)
+    size = colour.shape[0]
+    a = face.sample(alpha[..., None], qx, qy)
+    a = np.where(((qx >= 0) & (qx < size) & (qy >= 0) & (qy < size))[..., None], a, 0.0)
+    view = face.sample(colour, qx, qy) * a + (1.0 - a)
+    return {"cam": cam, "matrix": matrix, "colour": colour, "alpha": alpha, "view": view}
+
+
+def _to_picture(m: np.ndarray, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    return m[0, 0] * x + m[0, 1] * y + m[0, 2], m[1, 0] * x + m[1, 1] * y + m[1, 2]
+
+
+def _overlap(a: list[float], b: list[float]) -> tuple[float, float]:
+    """(intersection over union, share of box a inside box b)."""
+    inter = max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    area_a, area_b = (a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1])
+    return inter / max(area_a + area_b - inter, 1e-9), inter / max(area_a, 1e-9)
+
+
+def match_panels(picture: list[dict[str, Any]], model: list[dict[str, Any]]) -> list[tuple[float, dict[str, Any], dict[str, Any]]]:
+    """(overlap, picture panel, model panel) pairs, one to one, best first. Each panel is {kind, box, mask}; kind "case"
+    (a machine or cabinet) is not a panel itself: a display counts only inside one named on the picture."""
+    cases = [d["box"] for d in picture if d["kind"] == "case"]
+    pairs = []
+    for i, a in enumerate(picture):
+        if a["kind"] == "case" or (a["kind"] == "display" and not any(_overlap(a["box"], c)[1] >= INSIDE_CASE for c in cases)):
+            continue
+        for j, b in enumerate(model):
+            if b["kind"] != a["kind"]:
+                continue
+            iou = _overlap(a["box"], b["box"])[0]
+            sides = [(a["box"][k + 2] - a["box"][k]) / max(b["box"][k + 2] - b["box"][k], 1e-9) for k in (0, 1)]
+            if iou >= MATCH_IOU and all(MATCH_SIZE <= s <= 1.0 / MATCH_SIZE for s in sides):
+                pairs.append((iou, i, j))
+    used_a: set[int] = set()
+    used_b: set[int] = set()
+    out = []
+    for iou, i, j in sorted(pairs, reverse=True):
+        if i not in used_a and j not in used_b:
+            used_a.add(i)
+            used_b.add(j)
+            out.append((iou, picture[i], model[j]))
+    return out
+
+
+def wall_plane(mesh: dict[str, np.ndarray], cam: face.Camera, mask: np.ndarray, kind: str) -> dict[str, Any] | None:
+    """The wall the panel under `mask` (render pixels) lies on: {axis (0 or 2), value, relief, size}, the wall direction
+    (x or z) seen by the camera that most of its pixels face, or None. A display's plane is its frame's (the mask's rim)."""
+    verts, faces = mesh["verts"], mesh["faces"]
+    ras = face.view_raster(mesh, cam)
+    hit = face.erode(mask, 2) & (ras["tri"] >= 0)
+    if hit.sum() < 50:
+        return None
+    n = np.cross(verts[faces[:, 1]] - verts[faces[:, 0]], verts[faces[:, 2]] - verts[faces[:, 0]])
+    n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+    tri = np.maximum(ras["tri"], 0)
+    pos = face.interpolate(verts, faces, ras)
+    forward = cam.basis[2]
+    shares = {a: float((np.abs(n[ras["tri"][hit], a]) > 0.8).mean()) for a in (0, 2) if abs(forward[a]) > 0.2}
+    if not shares:
+        return None
+    axis = max(shares, key=lambda a: shares[a])
+    if shares[axis] < AXIS_SHARE:
+        return None
+    flat = hit & (np.abs(n[tri, axis]) > 0.8)
+    if kind == "display":
+        rim = flat & ~face.erode(mask, max(3, int(np.sqrt(mask.sum()) * 0.08)))
+        flat = rim if rim.sum() >= 20 else flat
+    value = float(np.median(pos[flat][:, axis]))
+    size = float(np.ptp(verts, axis=0).max())
+    relief = float(np.percentile(np.abs(pos[hit][:, axis] - value), 90)) / size
+    return {"axis": axis, "value": value, "relief": relief, "size": size}
+
+
+def _pixels(cam: face.Camera, p: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Points -> (x, y in the render, depth, column and row clipped to the frame)."""
+    xy, depth = cam.project(p)
+    col = np.clip(xy[:, 0].astype(int), 0, cam.size - 1)
+    row = np.clip(xy[:, 1].astype(int), 0, cam.size - 1)
+    return xy[:, 0], xy[:, 1], depth, col, row
+
+
+def paint_angled(mesh: dict[str, np.ndarray], base: np.ndarray, frame: dict[str, Any], plane: dict[str, Any], band: float,
+                 picture: dict[str, Any], model: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    """Copy the picture's panel onto the model's, the picture box mapped onto the model box, into `base` (T, T, 3) in
+    place. -> (the triangles painted, the texels painted (T, T) bool)."""
+    verts, faces = mesh["verts"], mesh["faces"]
+    cam, T = frame["cam"], base.shape[0]
+    axis, value, size = plane["axis"], plane["value"], plane["size"]
+    pb, mb = picture["box"], model["box"]
+    kx = (pb[2] - pb[0]) / max(mb[2] - mb[0], 1e-9)
+    ky = (pb[3] - pb[1]) / max(mb[3] - mb[1], 1e-9)
+    ys, xs = np.mgrid[0:cam.size, 0:cam.size] + 0.5
+    px = np.clip((pb[0] + (xs - mb[0]) * kx).astype(int), 0, cam.size - 1)
+    py = np.clip((pb[1] + (ys - mb[1]) * ky).astype(int), 0, cam.size - 1)
+    # paint only where the model's panel and the picture's panel both are: the model mask alone also covers wall
+    # beside the sign, and that wall is not in the picture's panel
+    region = face.dilate_mask(model["mask"], 3) & face.dilate_mask(picture["mask"][py, px], 3)
+    weight = np.clip(face.blur(region.astype(np.float64), EDGE_PX / 2) * 2.0 - 0.5, 0.0, 1.0)
+    seen = face.view_raster(mesh, cam)["z"]
+    p = verts[faces]
+    n = np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0])
+    n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+    pick = np.nonzero((np.abs(n[:, axis]) > FRONT_NZ) & (np.abs(p[:, :, axis].mean(1) - value) <= band))[0]
+    painted = np.zeros((T, T), bool)
+    if not len(pick):
+        return pick, painted
+    uvp = face.uv_pixels(mesh["uv"], T)
+    ras = face.rasterise(uvp, np.zeros(len(uvp)), faces, T, pick)
+    covered = ras["tri"] >= 0
+    pos = face.interpolate(verts, faces, ras)[covered]
+    x, y, depth, col, row = _pixels(cam, pos)
+    ok = (np.abs(pos[:, axis] - value) <= band) & region[row, col] & (depth <= seen[row, col] + 0.01 * size)
+    qx, qy = _to_picture(frame["matrix"], pb[0] + (x - mb[0]) * kx, pb[1] + (y - mb[1]) * ky)
+    ok &= face.sample(frame["alpha"][..., None], qx, qy)[:, 0] > 0.5
+    rows, cols = np.nonzero(covered)
+    rows, cols = rows[ok], cols[ok]
+    colour = face.sample(frame["colour"], qx[ok], qy[ok])
+    a = weight[row[ok], col[ok]][:, None]
+    base[rows, cols] = base[rows, cols] * (1 - a) + colour * a
+    painted[rows, cols] = True
+    _fill_gutter(mesh, base, painted)
+    return np.unique(ras["tri"][covered][ok]), painted
+
+
+def apply_panels(glb: Path, base: np.ndarray, frame: dict[str, Any], picture: list[dict[str, Any]],
+                 model: list[dict[str, Any]]) -> tuple[np.ndarray | None, list[dict[str, Any]]]:
+    """Every panel the finder names on both the picture (seen from its camera) and the model render. `base` and the GLB
+    change in place. -> (the triangles painted or None, one record per matched pair)."""
+    out: list[np.ndarray] = []
+    records: list[dict[str, Any]] = []
+    for iou, a, b in match_panels(picture, model):
+        rec: dict[str, Any] = {"kind": a["kind"], "overlap": round(float(iou), 2), "box": [int(v) for v in b["box"]], "applied": False}
+        records.append(rec)
+        mesh = face.load_mesh(glb)
+        plane = None if mesh is None else wall_plane(mesh, frame["cam"], b["mask"], a["kind"])
+        if plane is None:
+            rec["reason"] = "no wall under the panel"
+            continue
+        rec["relief"] = round(plane["relief"], 4)
+        band = BANDS[a["kind"]] * plane["size"]
+        if a["kind"] in FLATTENED and plane["relief"] <= PANEL_RELIEF:
+            inner = face.erode(b["mask"], INSET_PX + 1)
+
+            def under(p: np.ndarray) -> np.ndarray:
+                _, _, _, col, row = _pixels(frame["cam"], p)
+                return inner[row, col] & (np.abs(p[:, plane["axis"]] - plane["value"]) <= band)
+
+            rec["vertices_moved"] = move_vertices(glb, under, plane["axis"], plane["value"])
+            mesh = face.load_mesh(glb)
+        tris, painted = paint_angled(mesh, base, frame, plane, band, a, b)
+        if not painted.any():
+            rec["reason"] = "no texture under the panel"
+            continue
+        rec.update(applied=True, texels=int(painted.sum()))
+        out.append(tris)
+    return (np.unique(np.concatenate(out)) if out else None), records
 
 
 # --- the whole step -----------------------------------------------------------------------------------------------
@@ -314,15 +532,23 @@ def apply(glb: Path, base: np.ndarray, picture: np.ndarray, picture_mask: np.nda
     return tris, {**rec, "applied": True, "flattened": moved > 0, "vertices_moved": moved, "texels": int(painted.sum())}
 
 
-def read_picture(prep_dir: Path) -> np.ndarray | None:
+def picture_path(prep_dir: Path) -> Path | None:
     """The step 1 picture as the picture paint of this step 4 sharpened it (up_source, or up_picture when the model was
-    built from the step 1 picture itself), floats 0..1; None when the picture paint did not run."""
+    built from the step 1 picture itself); None when the picture paint did not run."""
     for name in ("up_source.png", "up_picture.png"):
         p = Path(prep_dir) / "srcproject" / name
         if p.is_file():
-            im = Image.open(p)
-            if im.mode == "RGBA":
-                white = Image.new("RGBA", im.size, (255, 255, 255, 255))
-                im = Image.alpha_composite(white, im)
-            return np.asarray(im.convert("RGB"), dtype=np.float64) / 255.0
+            return p
     return None
+
+
+def read_picture(prep_dir: Path) -> np.ndarray | None:
+    """The picture of picture_path, floats 0..1 on white."""
+    p = picture_path(prep_dir)
+    if p is None:
+        return None
+    im = Image.open(p)
+    if im.mode == "RGBA":
+        white = Image.new("RGBA", im.size, (255, 255, 255, 255))
+        im = Image.alpha_composite(white, im)
+    return np.asarray(im.convert("RGB"), dtype=np.float64) / 255.0

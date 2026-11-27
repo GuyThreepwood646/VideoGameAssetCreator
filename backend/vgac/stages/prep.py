@@ -72,7 +72,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .. import creaturemetal, face, facing, guidance, hairlib, hairmat, headtris, imaging, layoutspread, library, lightfix, meshchecks, normalfix, quality, reference, skinmetal, srcproject, steptime, texcolour, trifloor
+from .. import creaturemetal, eyes, face, facing, guidance, hairlib, hairmat, headtris, imaging, layoutspread, library, lightfix, meshchecks, normalfix, quality, reference, skinmetal, srcproject, steptime, texcolour, trifloor
 from .. import hair as hairfind
 from ..blender import gridfit
 from . import face_detail, hair_detail
@@ -353,6 +353,9 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     args: list[Any] = [src, out, "mesh", "--size", size["size_m"], "--size-axis", size["size_axis"], "--yaw", facing_["face_yaw_applied"],
                        "--pivot", pivot, "--smooth-angle", smooth, "--shading", shading["shading"]]
     budget_now = None if paints_full_first(mesh_v, own_texture_maps(mesh_v, ["base_color"], sc.settings)[0]) else tri_limit["limit"]
+    eye_room = eyes.TRIANGLE_RESERVE if eyes_wanted(sc, params) else 0  # the separate eyes are added after the paint
+    if budget_now:
+        budget_now = max(int(budget_now) - eye_room, 1)
     if budget_now:
         args += ["--budget", int(budget_now)]
         if head["weighted"]:
@@ -470,7 +473,7 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
             # the same head (and hands) protection as the budget pass of the normal path (only when the head is weighted)
             head_args = (["--protect-head", headtris.HEAD_SHARE, "--head-gain", headtris.HEAD_GAIN]
                          + (["--hand-gain", headtris.HAND_GAIN] if headtris.hands_on(params) else [])) if head["weighted"] else []
-            current = await shrink_after_paint(sc, out, current, int(tri_limit["limit"]), size, pivot, smooth, shading["shading"], tex,
+            current = await shrink_after_paint(sc, out, current, int(tri_limit["limit"]) - eye_room, size, pivot, smooth, shading["shading"], tex,
                                                look, surface["delight"], surface["pbr_fix"], light_after, keep_normal, head_args)
 
         async def paint_body_again(glb_: Path, maps_: dict[str, Path]) -> dict[str, Path]:
@@ -529,6 +532,8 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
         final = {**after_face, **{k: Path(p) for k, p in hd["files"].items() if k in TEXTURE_KEYS}}
         if light_after and final.get("base_color"):
             final = await remove_light(sc, out, final, hf)
+        if eyes_wanted(sc, params) and final.get("base_color"):
+            final = await steptime.run(sc, "eyes", add_eyes(sc, out, final, head_yaw, tex, fdm))
         if (rec.get("surface") or {}).get("colour_per_face") and final.get("base_color"):
             final = await colour_faces(sc, out, final, rec, head_yaw)
         if late_cap:
@@ -624,6 +629,78 @@ async def ship_late(sc: StageContext, glb: Path, maps: dict[str, Path], look: di
         sc.register(key, p)
     sc.set_metrics(**m, texture_painted_size=int(tex))
     return {**maps, **{k: Path(p) for k, p in files.items() if k in TEXTURE_KEYS}}
+
+
+def eyes_wanted(sc: StageContext, params: dict[str, Any]) -> bool:
+    """Whether this clean-up tries separate eyes (vgac/eyes.py)."""
+    return eyes.wanted(sc.asset.category, getattr(sc.asset, "style_preset", None), params,
+                       getattr(sc.asset, "face_matters", None) is not False)
+
+
+async def add_eyes(sc: StageContext, glb: Path, maps: dict[str, Path], head_yaw: float, tex: int,
+                   face_record: dict[str, Any]) -> dict[str, Path]:
+    """Separate eyes (vgac/eyes.py, blender/eyes.py) on the finished clean-up: the lid openings cut into the head, a closed
+    eye set behind each and painted from the picture into free texture space. metrics.eyes: {ran, rects, triangles_added}
+    or {ran: False, reason, message}; a face it cannot use leaves the model as it was. -> the maps from here."""
+    from ..jobs import JobCancelled
+
+    def skip(reason: str, **more: Any) -> dict[str, Path]:
+        sc.set_metrics(eyes={"ran": False, "reason": reason, "message": guidance.eyes_skipped(reason), **more})
+        return maps
+
+    sc.progress(0.96, "Setting the eyes")
+    out_dir = sc.dir / "eyes"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    closeup = sc.dir / "face" / "painted_head_closeup_merged.png"
+    cutout = sc.lineage_file("cutout", ("concept",))
+
+    def prepare() -> tuple[str | None, dict[str, Any]]:
+        picture, source = None, "closeup"
+        if (face_record.get("closeup") or {}).get("used") and closeup.is_file():
+            picture = face.read_rgb(closeup, eyes.RENDER)
+        elif cutout is not None and Path(cutout).is_file():
+            picture, source = eyes.framed_picture(glb, cutout, head_yaw), "picture"
+        if picture is None:
+            return "no_face", {}
+        planned = eyes.plan(glb, maps["base_color"], picture, head_yaw)
+        if not planned["ok"]:
+            return planned["reason"], {}
+        uvmesh = imaging.load_uv_mesh(glb)
+        rects = eyes.place(uvmesh, tex) if uvmesh is not None else None
+        if rects is None:
+            return "no_room", {}
+        painted = eyes.paint_maps(maps, planned, picture, rects, out_dir)
+        (out_dir / "job.json").write_text(json.dumps(eyes.mesh_job(planned, rects)), encoding="utf-8")
+        return None, {"maps": painted, "rects": rects, "source": source}
+
+    new_glb = out_dir / "eyes.glb"
+    try:
+        reason, work = await asyncio.to_thread(prepare)
+        if reason:
+            return skip(reason)
+        report = out_dir / "report.json"
+        await sc.blender("eyes.py", [glb, new_glb, "--job", out_dir / "job.json", "--report", report], log_name="eyes.log",
+                         timeout=sc.settings.blender_timeout_seconds)
+        rep = json.loads(report.read_text(encoding="utf-8"))
+        if not rep.get("ok") or not new_glb.is_file():
+            return skip(rep.get("reason") or "error")
+        painted = work["maps"]
+        await asyncio.to_thread(imaging.glb_replace_images, new_glb, base_color=painted.get("base_color"),
+                                metallic=painted.get("metallic"), roughness=painted.get("roughness"), normal=painted.get("normal"))
+        shutil.copy2(new_glb, glb)
+    except (JobCancelled, asyncio.CancelledError):
+        raise
+    except Exception as e:  # noqa: BLE001  (never fails the step: the clean-up then stands as it was)
+        return skip("error", error=str(e)[:300])
+    finally:
+        new_glb.unlink(missing_ok=True)
+    for key, path in painted.items():
+        sc.register(key, path)
+    added = int(rep.get("triangles_added") or 0)
+    sc.set_metrics(eyes={"ran": True, "rects": work["rects"], "triangles_added": added, "picture": work["source"],
+                         "radius_mm": [e.get("radius_mm") for e in rep.get("eyes") or []]},
+                   triangles=int((sc.version.metrics or {}).get("triangles") or 0) + added)
+    return {**maps, **painted}
 
 
 async def colour_faces(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str, Any], head_yaw: float) -> dict[str, Path]:

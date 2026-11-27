@@ -45,7 +45,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 import numpy as np
 from PIL import Image
@@ -1043,7 +1043,7 @@ def detail_only(v: View, sigma_px: float) -> np.ndarray:
 def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndarray],
           n_primary: int = 1, heads: list[bool] | None = None,
           parts: dict[str, Any] | None = None,
-          shifts: list[np.ndarray | None] | None = None,
+          shifts: list["HeadTone | None"] | None = None,
           layers: list[dict[str, np.ndarray]] | None = None,
           colours: list[np.ndarray] | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Weighted blend of the views (the dominant one counts as weight^BLEND_POW). The first n_primary views are in order
@@ -1094,7 +1094,7 @@ def blend(atlas: Atlas, projs: list[dict[str, np.ndarray]], images: list[np.ndar
         else:
             col = catmull(img, p["sp"][:, 0].reshape(-1, 1), p["sp"][:, 1].reshape(-1, 1))[:, 0]
             if shifts is not None and shifts[i] is not None:  # a three-quarter head view's tone, matched to the front's
-                col = np.clip(col + shifts[i][None], 0.0, 1.0)
+                col = apply_head_tone(col, shifts[i])
         if layers is not None:
             layers.append({"sel": sel, "w": w, "col": col})
         ww = w ** BLEND_POW
@@ -1928,17 +1928,34 @@ HEAD_TONE_SKIN = 20.0     # Lab distance (lightness half) from the front's face 
 HEAD_TONE_MAX = 0.12      # the largest shift per channel (0..1) the match may give
 
 
+class HeadTone(NamedTuple):
+    """A three-quarter head view's tone match: the offset per channel, and the view's own mean skin colour where it was
+    measured."""
+    offset: np.ndarray
+    skin: np.ndarray
+
+
+def apply_head_tone(col: np.ndarray, tone: HeadTone) -> np.ndarray:
+    """col (n,3) with the tone match. A lightening channel is added as it is. A darkening one is taken in full on texels
+    as light as the view's skin or lighter, and in proportion to their lightness below that, so a shadow keeps its
+    detail and is never pushed to black. All channels fade by the same share, so the hue moves no more than before."""
+    share = np.clip(face.luminance(col) / max(float(face.luminance(tone.skin)), 1e-6), 0.0, 1.0)[:, None]
+    off = tone.offset[None]
+    return np.clip(col + np.where(off < 0, off * share, off), 0.0, 1.0)
+
+
 def head_tone_offsets(atlas: Atlas, views: list[View], projs: list[dict[str, np.ndarray]],
-                      images: list[np.ndarray]) -> tuple[list[np.ndarray | None], dict[str, Any]]:
+                      images: list[np.ndarray]) -> tuple[list[HeadTone | None], dict[str, Any]]:
     """For each three-quarter head view, the one colour offset that makes its skin agree with the front head view's
     where both paint the same skin (owner's suggestion, round four). The three-quarter pictures are drawn separately
     and come out lighter or darker than the photo: on the live W2 runs the left one 6 to 9 L lighter where the two
     overlap, which showed as a pale cheek beside the front's. Fitted on skin only (both colours within HEAD_TONE_SKIN of
     the front's face colour, so hair, glasses and collar do not pull it) and applied to the whole view: one offset
     left no gradient across the cheek, where a field fading out from the overlap left the far cheek pale (W2 R4) and a
-    gain moved the clothing's colour as well (M1 R4's jacket went brown). Returns (offset per view or None, record)."""
+    gain moved the clothing's colour as well (M1 R4's jacket went brown). How a darkening offset fades in shadow is
+    apply_head_tone's. Returns (HeadTone per view or None, record)."""
     names = [v.name for v in views]
-    out: list[np.ndarray | None] = [None] * len(views)
+    out: list[HeadTone | None] = [None] * len(views)
     rec: dict[str, Any] = {}
     if HEAD_VIEW not in names or getattr(atlas, "zone", None) is None:
         return out, rec
@@ -1966,7 +1983,7 @@ def head_tone_offsets(atlas: Atlas, views: list[View], projs: list[dict[str, np.
             rec[n] = {"overlap": int(ov.sum()), "matched": False}
             continue
         off = np.clip((cf[ov] - cs[ov]).mean(0), -HEAD_TONE_MAX, HEAD_TONE_MAX)
-        out[i] = off
+        out[i] = HeadTone(off, cs[ov].mean(0))
         rec[n] = {"overlap": int(ov.sum()), "matched": True, "offset": [round(float(x), 4) for x in off]}
     return out, rec
 
@@ -2277,6 +2294,38 @@ def refuse_contradicting_turns(fitted: dict[str, View], front_yaw: float, pictur
     return out
 
 
+LABEL_GUARD_DEG = 45.0  # a creature's drawn view or built-from picture whose fitted turn is further than this from its label
+CREATURE_CATEGORIES = ("quadruped", "winged", "serpent")
+
+
+def refuse_off_label_turns(fitted: dict[str, View], picture_view: View | None, built_from: str | None,
+                           category: str | None) -> dict[str, str]:
+    """Refuse a creature's labelled view whose fitted turn is more than LABEL_GUARD_DEG from the turn its label says: a
+    mirrored or mislabelled drawn view would otherwise paint the far side. The built-from picture takes the turn of the
+    drawn view it was made as (built_from); a picture without a label (built_from None, or not a three-quarter view) is
+    never refused here. Only creature
+    categories. Each refused view gets "refused" and "turn_from_label_deg" in its info and ok False. Returns {view: reason}."""
+    out: dict[str, str] = {}
+    if category not in CREATURE_CATEGORIES:
+        return out
+    labelled: list[tuple[str, View, float]] = [(n, v, INTENDED_TURN[n]) for n, v in fitted.items()
+                                               if n in INTENDED_TURN and v.ok and "yaw" in v.info]
+    if picture_view is not None and picture_view.ok and "yaw" in picture_view.info and built_from in INTENDED_TURN:
+        labelled.append(("picture", picture_view, INTENDED_TURN[built_from]))
+    for n, v, label in labelled:
+        d = _signed(float(v.info["yaw"]) - label)
+        if abs(d) <= LABEL_GUARD_DEG:
+            continue
+        named = f"built-from {built_from}" if n == "picture" else n
+        why = (f"its turn contradicts its label: it fits {float(v.info['yaw']):+.1f} degrees, {abs(d):.0f} degrees from "
+               f"the {label:+.0f} degree turn that its {named} label says")
+        v.ok = False
+        v.info["refused"] = why
+        v.info["turn_from_label_deg"] = round(d, 1)
+        out[n] = why
+    return out
+
+
 # --- WP-61 part D2: a picture that fits at more than one pose is refused only when a far rival paints it differently ---
 
 D2_THRESHOLD = 37.0   # Lab: the largest disagreement over the far rivals that still lets the best pose paint (part_d2_rule.md)
@@ -2328,7 +2377,9 @@ PRIOR_DEG = 30.0      # a pose agrees with the expected turn when its turn is wi
 # a far rival that fits as well and paints differently. Their concept art is three-quarter, not a front view, and the
 # clean-up's quarter-turn facing snap can put any side at turn 0: the WP-50 crate's picture fit at turn 90 (expected 0),
 # the cottage's at 0 and the shop's at 85 (both expected 45), and each was refused for it (bakeoff/posefit).
-OBJECT_CATEGORIES = ("prop_rigid", "prop_articulated", "environment")
+# Vehicles too: painted from the drawn side and back views, a vehicle's solid panels took window frames from the views;
+# from the step 1 picture and the original alone they do not.
+OBJECT_CATEGORIES = ("prop_rigid", "prop_articulated", "environment", "vehicle")
 
 
 def _breadth(turns: list[float]) -> int:
@@ -2769,6 +2820,10 @@ def paint(mesh: dict[str, np.ndarray], tex: np.ndarray, picture: Any, turnaround
             front.info["pose_search"] = {"refused": pv.info.get("refused"), "settled_by": "texfidelity"}
         else:  # the search's answer stands, including a D2 refusal: a refused picture does not paint
             front = pv
+        # a creature's labelled view (or its built-from picture) fitted more than LABEL_GUARD_DEG from its label is refused
+        for n, why in refuse_off_label_turns(fitted, front, built_from, category).items():
+            if log:
+                log(f"view {n}: refused, {why}")
         # a picture whose pose the expected turn decided is checked against the drawn views that see the same texels
         sources = {"picture": picture, **{n: s for n, s, _ in wanted}}
         views_now = {**fitted, "picture": front}

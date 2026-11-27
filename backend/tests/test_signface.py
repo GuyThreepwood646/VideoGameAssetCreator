@@ -8,7 +8,7 @@ import struct
 import numpy as np
 from PIL import Image
 
-from vgac import face, glow, signface, srcproject
+from vgac import face, glow, signface, signkeep, srcproject
 
 CREAM, INK, WALL = (0.95, 0.92, 0.84), (0.20, 0.55, 0.65), (0.30, 0.20, 0.15)
 
@@ -170,3 +170,79 @@ def test_the_flattened_letters_are_not_dark_holes_in_the_glow_map(tmp_path):
 
 def test_no_picture_paint_means_no_picture(tmp_path):
     assert signface.read_picture(tmp_path) is None
+
+
+# --- panels of a picture taken at an angle ------------------------------------------------------------------------
+
+RED = (0.9, 0.1, 0.1)
+
+
+def _angled(glb, size=512):
+    """The board seen from 30 degrees to one side, and the picture from that camera: red on grey inside the panel."""
+    mesh = face.load_mesh(glb)
+    cam = face.Camera(target=np.zeros(3), yaw_deg=30.0, scale=4.4, size=size)
+    tex = np.full((256, 256, 3), 0.5)
+    tex[96:160, 64:192] = RED
+    shot = face.render_view(mesh, tex, cam, background=1.0)
+    frame = signface.camera_frame(cam, np.eye(3), shot["image"], shot["mask"].astype(float))
+    xy, _ = cam.project(np.array([[-1.0, 0.25, 0.0], [1.0, -0.25, 0.0], [-1.0, -0.25, 0.0], [1.0, 0.25, 0.0]]))
+    box = [float(xy[:, 0].min()), float(xy[:, 1].min()), float(xy[:, 0].max()), float(xy[:, 1].max())]
+    mask = np.zeros((size, size), bool)
+    mask[int(box[1]):int(box[3]), int(box[0]):int(box[2])] = True
+    return frame, box, mask
+
+
+def _det(kind, box, mask=None):
+    return {"kind": kind, "box": box, "mask": mask}
+
+
+def test_an_angled_sign_is_flattened_and_takes_the_pictures_colour(tmp_path):
+    glb = tmp_path / "m.glb"
+    _board(glb)
+    frame, box, mask = _angled(glb)
+    base = np.full((256, 256, 3), 0.5)
+    tris, recs = signface.apply_panels(glb, base, frame, [_det("sign", box, mask)], [_det("sign", box, mask)])
+    assert recs[0]["applied"] and recs[0]["vertices_moved"] > 0 and len(tris) > 0
+    assert np.abs(base[128, 128] - RED).max() < 0.08 and np.abs(base[20, 20] - 0.5).max() < 1e-9
+    assert np.abs(face.load_mesh(glb)["verts"][:, 2]).max() < 0.021
+
+
+def test_a_figure_is_painted_without_moving_its_wall(tmp_path):
+    glb = tmp_path / "m.glb"
+    _board(glb)
+    before = glb.read_bytes()
+    frame, box, mask = _angled(glb)
+    base = np.full((256, 256, 3), 0.5)
+    tris, recs = signface.apply_panels(glb, base, frame, [_det("figure", box, mask)], [_det("figure", box, mask)])
+    assert recs[0]["applied"] and glb.read_bytes() == before and np.abs(base[128, 128] - RED).max() < 0.08
+
+
+def test_panels_match_one_to_one_by_kind_and_place():
+    here, there = [10, 10, 50, 90], [300, 10, 340, 90]
+    picture = [_det("sign", here), _det("sign", there), _det("figure", here)]
+    model = [_det("sign", [12, 14, 50, 92]), _det("display", there)]
+    got = signface.match_panels(picture, model)
+    assert [(a["kind"], a["box"]) for _, a, _ in got] == [("sign", here)]
+    # a model box of a very different size is another thing
+    assert signface.match_panels([_det("sign", [0, 0, 100, 100])], [_det("sign", [0, 0, 100, 40])]) == []
+
+
+def test_shelves_count_only_inside_a_machine():
+    shelf, machine = [20, 20, 60, 60], [10, 10, 80, 150]
+    assert signface.match_panels([_det("display", shelf)], [_det("display", shelf)]) == []
+    got = signface.match_panels([_det("display", shelf), _det("case", machine)], [_det("display", shelf)])
+    assert len(got) == 1
+
+
+def test_the_sign_keep_treats_the_panels_of_an_angled_picture(tmp_path, monkeypatch):
+    glb = tmp_path / "m.glb"
+    _board(glb)
+    frame, box, mask = _angled(glb)
+    (tmp_path / "srcproject").mkdir()
+    Image.new("RGB", (64, 64), (255, 255, 255)).save(tmp_path / "srcproject" / "up_source.png")
+    monkeypatch.setattr(signface, "picture_camera", lambda *a: (frame, {"turn": 30.0}))
+    base = np.full((256, 256, 3), 0.5)
+    tris, rec = signkeep.sign_faces(None, glb, base, tmp_path / "signs",
+                                    masks_for=lambda images: [np.zeros(im.shape[:2], bool) for im in images],
+                                    panels_for=lambda images: [[_det("sign", box, mask)]] * len(images))
+    assert rec["panels"][0]["applied"] and rec["kept"] == len(tris) > 0 and rec["camera"]["turn"] == 30.0
