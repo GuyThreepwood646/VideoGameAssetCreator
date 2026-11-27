@@ -1135,8 +1135,8 @@ def _trilinear_all(grid: np.ndarray, f: np.ndarray) -> np.ndarray:
 
 
 # The reach of surface_correction: the share of painted texels round a texel from which its correction fades in.
-# Rigid props use the wider reach (SURFACE_REACH_RIGID): a shorter reach stops the correction washing the far side of a
-# prop, where its picture is not, and keeps the tone match at the edge where the front meets the side.
+# Rigid props start the fade-in at a higher painted share (SURFACE_REACH_RIGID), so the correction stays near painted
+# texels: it keeps the tone match where the front meets the side and stops washing the far side, which no picture shows.
 SURFACE_REACH = (0.03, 0.4)
 SURFACE_REACH_RIGID = (0.15, 0.5)
 
