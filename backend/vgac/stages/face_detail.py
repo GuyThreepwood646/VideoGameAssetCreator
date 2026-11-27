@@ -1089,14 +1089,17 @@ def pic_hair_without_eyes(pic_hair: np.ndarray, fitted: np.ndarray, info: dict[s
 
 def feature_surrounds(lm: dict[str, Any] | None, info: dict[str, Any], mask: np.ndarray) -> np.ndarray:
     """The model's pixels in a box, SURROUND_GROW times face.eye_boxes, round each point MediaPipe finds for those boxes in
-    the fitted picture, and above each box up to BROW_BAND[0] of the face's width over the points' mean height. Points
-    found another way, or none: nothing."""
+    the fitted picture, and above each box, EYE_NOT_HAIR_GROW wide, up to BROW_BAND[0] of the face's width over the
+    points' mean height. Points found another way, or none: nothing."""
     if not lm or lm.get("how") != "mediapipe":
         return np.zeros(mask.shape, dtype=bool)
     wpx = float(info["width_px"])
     box = face.eye_boxes(mask.shape, lm["eyes"], wpx, grow=SURROUND_GROW)
     top = int(max(0, np.mean([e[1] for e in lm["eyes"]]) - BROW_BAND[0] * wpx))
-    box[top:] |= np.logical_or.accumulate(box[top:][::-1], axis=0)[::-1]  # up to BROW_BAND[0], column by column
+    # up to BROW_BAND[0], column by column, in the narrow boxes' columns only: wider, loose strands in the picture were
+    # laid on the model's side as lines
+    narrow = face.eye_boxes(mask.shape, lm["eyes"], wpx, grow=EYE_NOT_HAIR_GROW).any(axis=0)
+    box[top:] |= np.logical_or.accumulate(box[top:][::-1], axis=0)[::-1] & narrow
     return box & mask
 
 

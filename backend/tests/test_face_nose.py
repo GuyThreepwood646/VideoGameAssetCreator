@@ -191,6 +191,9 @@ def test_the_surroundings_reach_up_in_every_column_even_when_the_two_points_diff
     for x in (200, 400):
         column = around[top:300, x]
         assert column.all(), x  # no unpainted row between the band's top and the box
+    wide = fd.face.eye_boxes(mask.shape, eyes, 200.0, grow=fd.SURROUND_GROW)
+    columns = np.nonzero(wide.any(axis=0))[0]
+    assert not around[top, columns[0]] and not around[top, columns[-1]]  # the outer columns do not reach up
     assert not around[:top - 60, 200].any()
 
 
