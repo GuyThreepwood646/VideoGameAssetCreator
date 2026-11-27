@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from vgac import imaging, library
+from vgac import eyes, imaging, library
 from vgac.graphs.qwen_edit import CUT_NODE
 from vgac.db import Asset, Project, Version, session_factory
 from vgac.jobs import JobCancelled, JobContext
@@ -445,7 +445,10 @@ for _stage, _part, _keys in (("turnaround", "files", ["quarter2", "quarter2_cuto
                              ("turnaround", "metrics", ["timing"]), ("mesh", "metrics", ["timing"]), ("prep", "metrics", ["timing"]),
                              # A person's step 3 names no builder, so the category default (four views) is tried first; this harness has
                              # no linked ComfyUI, so the model files are missing and the build says so (mesh.default_builder).
-                             ("mesh", "metrics", ["builder_note"])):
+                             ("mesh", "metrics", ["builder_note"]),
+                             # Separate eyes (PL-156, 2026-11-27): metrics.eyes on every clean-up that tries them, ran or skipped
+                             # with a reason. Not a hair key: the hair checks above still forbid every hair key.
+                             ("prep", "metrics", ["eyes"])):
     GOLDEN_OFF[_stage][_part] = sorted(GOLDEN_OFF[_stage][_part] + _keys)
 # Today's checks that stand back when the model is bald on purpose.
 GONE_ON = {"prep": {"checks": {"hair_matches_picture"}}}
@@ -573,12 +576,13 @@ def test_library_chain_bald_pictures_mesh_and_prep(settings, engines, lane1):
     fit = check(mesh, "hair_fit")
     assert fit["passed"] and fit["value"] == 0.77 and fit["vars"]["step"] == "mesh" and fit["vars"]["candidates"] == 2
 
-    # Clean up: the best style, the body decimated to the budget less the allowance, hair attached after skin metal.
+    # Clean up: the best style, the body decimated to the budget less the allowance and less the eyes' room (the eyes
+    # are added after the decimation and take from the same 20,000), hair attached after skin metal.
     assert prep.params["hair_style"] == CARDS and prep.params["hair_style_source"] == "best"
     allow = expected_allowance()
     assert prep.params["hair_allowance"] == allow and prep.params["hair_cover"] == "normal"
     prep_call = next(a for s, a in engines.blender_calls if s == "prep.py")
-    assert prep_call[prep_call.index("--budget") + 1] == 20000 - allow
+    assert prep_call[prep_call.index("--budget") + 1] == 20000 - allow - eyes.TRIANGLE_RESERVE
     assert prep.metrics["triangle_limit"] == 20000 - allow
     assert prep.metrics["hair_detail"]["skipped"] == "library" and "hair_material" not in prep.metrics
     at = lane1.attach_calls[0]
@@ -1125,7 +1129,7 @@ def test_fixture_ponytail_body_plus_hair_and_cap_is_within_the_budget(settings, 
     prep = w.chain()["prep"]
     hl = prep.metrics["hair_library"]
     assert hl["style"] == CARDS and hl["triangles"] == FIT_TRIS and hl["cap_triangles"] == CAP_TRIS
-    assert prep.metrics["triangles"] == 20000 - prep.params["hair_allowance"]
+    assert prep.metrics["triangles"] == 20000 - prep.params["hair_allowance"] - eyes.TRIANGLE_RESERVE  # the eyes' room, as above
     assert prep.metrics["triangles"] + FIT_TRIS <= 20000
     tri = next(c for c in prep.metrics["checks"] if c["name"] == "hair_triangles")
     assert tri["passed"] and tri["value"] == prep.metrics["triangles"] + FIT_TRIS
