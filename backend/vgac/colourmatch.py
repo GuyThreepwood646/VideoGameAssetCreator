@@ -51,6 +51,9 @@ ROOF_UP_MIN = 0.35        # an island whose UV-area-weighted face normal points 
 ROOF_TEXEL_UP = 0.2       # inside a roof island only texels of faces that point up by at least this much are lifted
 ROOF_MARGIN = 8.0         # an island is lifted only when its mean L* is this far below the picture's roof
 ROOF_CAP = 25.0           # the most the roof lift moves, in L* units
+ROOF_MIN_HEIGHT = 0.6     # a roof island's up-facing surface averages at least this share of the model's height (awnings, ledges, ground sit lower)
+ROOF_TILTS = (20.0,)  # the roof is looked at from above: the render is tilted by this much (a render with no tilt sees a roof edge-on)
+ROOF_SEARCH_SIZE = 256    # render size while the roof's turn and tilt are searched
 ROOF_MIN_PX = 200         # roof pixels in the render, and picture pixels under them, needed to trust the measure
 # The turn the build view's picture shows, in face.Camera yaw (as bakeoff/scorecard/sc_measure.INTENDED).
 VIEW_TURN = {"concept": 0.0, "front": 0.0, "quarter": 45.0, "quarter2": -45.0, "left": 90.0, "right": -90.0, "back": 180.0}
@@ -255,58 +258,108 @@ def chroma_plan(mesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray, p
     return {**out, "mode": "chroma", "reason": "applied"}
 
 
-def roof_islands(uvmesh: dict[str, np.ndarray]) -> list[int]:
-    """Islands that face up: the UV-area-weighted mean of their faces' up component is at least ROOF_UP_MIN."""
+def roof_islands(uvmesh: dict[str, np.ndarray], mesh: dict[str, np.ndarray] | None = None) -> list[int]:
+    """Islands that face up: the UV-area-weighted mean of their faces' up component is at least ROOF_UP_MIN. With `mesh`
+    (the same GLB's geometry) an island is also a roof only when its up-facing area averages at least ROOF_MIN_HEIGHT of
+    the model's height, so an awning, a ledge or the ground slab is not taken for the roof."""
     uv, f = uvmesh["uv"], uvmesh["faces"]
     a, b, c = uv[f[:, 0]], uv[f[:, 1]], uv[f[:, 2]]
     area = np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1])) / 2
     isl = uvmesh["island"]
+    h = None
+    if mesh is not None:
+        lo, hi = float(mesh["verts"][:, imaging.UP_AXIS].min()), float(mesh["verts"][:, imaging.UP_AXIS].max())
+        tri = mesh["verts"][f]
+        h = (tri[:, :, imaging.UP_AXIS].mean(axis=1) - lo) / max(hi - lo, 1e-12)
+        sa = 0.5 * np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1)  # surface area
     out = []
     for i in np.unique(isl):
         m = isl == i
         w = area[m].sum()
         if w > 0 and float((uvmesh["up"][m] * area[m]).sum() / w) >= ROOF_UP_MIN:
+            if h is not None:
+                u = m & (uvmesh["up"] >= ROOF_TEXEL_UP)
+                if sa[u].sum() <= 0 or float((h[u] * sa[u]).sum() / sa[u].sum()) < ROOF_MIN_HEIGHT:
+                    continue
             out.append(int(i))
     return out
+
+
+def _roof_view(mesh: dict[str, np.ndarray], uvmesh: dict[str, np.ndarray], roofs: list[int], tex: np.ndarray,
+               pic_mask: np.ndarray, extent: float, yaw: float, tilt: float, size: int) -> dict[str, Any]:
+    """The flat render at (yaw, tilt), its roof pixels and the outline fit of the picture's cut-out to it."""
+    r = face.render_view(mesh, tex, texfidelity._frame_camera(mesh, yaw, extent * size / L_SIZE, size, tilt), background=0.0)
+    face_roof = np.isin(uvmesh["island"], roofs) & (uvmesh["up"] >= ROOF_TEXEL_UP)
+    roof_px = r["mask"] & face_roof[np.maximum(r["raster"]["tri"], 0)]
+    iou = texfidelity.fit_silhouette(texfidelity._pad_to(pic_mask, size), r["mask"])["iou"]
+    return {"render": r, "roof_px": roof_px, "iou": iou, "yaw": yaw, "tilt": tilt}
+
+
+def roof_pose(mesh: dict[str, np.ndarray], uvmesh: dict[str, np.ndarray], roofs: list[int], tex: np.ndarray,
+              pic_mask: np.ndarray, extent: float, yaw0: float) -> tuple[float, float]:
+    """The (turn, tilt) at which the model's outline best fits the picture's cut-out, from every 45 degrees of turn and
+    the ROOF_TILTS (a render with no tilt sees a roof edge-on; the pictures look down on the building). Turns that fit
+    alike keep the one nearest yaw0, the turn the lightness stage found."""
+    best = None
+    for tilt in ROOF_TILTS:
+        for yaw in L_COARSE:
+            v = _roof_view(mesh, uvmesh, roofs, tex, pic_mask, extent, yaw, tilt, ROOF_SEARCH_SIZE)
+            key = (round(v["iou"], 2), -_turn_gap(yaw, yaw0))
+            if best is None or key > best[0]:
+                best = (key, yaw, tilt)
+    return best[1], best[2]
+
+
+def roof_picture_pixels(pic: np.ndarray, pic_mask: np.ndarray, render_mask: np.ndarray,
+                        roof_px: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+    """The picture's own pixels under the model's roof pixels. The picture is put onto the render by the silhouette fit
+    (scale and shift that maximise the outline overlap, as the fidelity check does), so each roof pixel meets the picture
+    pixel at the same place on the building, not at the same place in the bounding box. Only roof pixels with the cut-out
+    under them, away from its edge, count. -> (picture in the render's frame (S,S,3), mask of roof pixels with picture
+    under them), or None when fewer than ROOF_MIN_PX remain."""
+    size = render_mask.shape[0]
+    mask_sq = texfidelity._pad_to(pic_mask, size)
+    fit = texfidelity.fit_silhouette(mask_sq, render_mask)
+    img = Image.fromarray(face.to_uint8(texfidelity._pad_square(pic))).resize((size, size), Image.LANCZOS)
+    warped = np.asarray(texfidelity._warp(img, size, fit["scale"], fit["tx"], fit["ty"], Image.BICUBIC), dtype=np.float64) / 255.0
+    wmask = np.asarray(texfidelity._warp(Image.fromarray((mask_sq * 255).astype(np.uint8)), size, fit["scale"], fit["tx"],
+                                         fit["ty"], Image.BILINEAR)) >= 128
+    inside = roof_px & face.erode(wmask, texfidelity.BORDER_PX)
+    if inside.sum() < ROOF_MIN_PX:
+        return None
+    return warped, inside
 
 
 def roof_lift_plan(mesh: dict[str, np.ndarray], uvmesh: dict[str, np.ndarray], tex: np.ndarray, pic: np.ndarray,
                    pic_mask: np.ndarray, view: str | None = None, yaw: float | None = None,
                    cap: float = ROOF_CAP) -> dict[str, Any]:
     """The roof lift: which islands to lift and by how much (L*). `tex` is the base colour after the global shift.
-    The model's roof pixels are found in a flat render at `yaw` (default: the build view's turn); each pixel's place in
-    the model's silhouette bounding box is carried to the picture's cut-out bounding box, and the picture's mean L*
-    there is the target. Islands whose own mean L* is at least ROOF_MARGIN below the target are lifted by the gap
+    The roof is the up-facing surface in the top of the model (roof_islands); its pixels are found in a flat render
+    at the turn and tilt that fit the picture's outline best (roof_pose; `yaw`, default the build view's turn, breaks ties); the picture is put
+    onto that render by the outline fit (roof_picture_pixels), and the picture's mean L* under the roof pixels is the
+    target (the render's roof mean is taken over the same pixels). Islands whose own mean L* is at least ROOF_MARGIN below the target are lifted by the gap
     between the target and the roof pixels' mean, capped. -> {mode: none|roof_lift, shift, islands, target_L, roof_L,
     island_L, reason}."""
-    roofs = roof_islands(uvmesh)
+    roofs = roof_islands(uvmesh, mesh)
     if not roofs:
         return {"mode": "none", "reason": "no_roof_island"}
     ys, xs = np.nonzero(pic_mask)
     if len(ys) < 100:
         return {"mode": "none", "reason": "no_cutout"}
-    yaw = VIEW_TURN.get(view or "front", 0.0) if yaw is None else yaw
+    yaw0 = VIEW_TURN.get(view or "front", 0.0) if yaw is None else yaw
     extent = float(max(np.ptp(xs), np.ptp(ys)) + 1) * L_SIZE / max(pic.shape[:2])
-    cam = texfidelity._frame_camera(mesh, yaw, extent, L_SIZE)
-    r = face.render_view(mesh, tex, cam, background=0.0)
-    face_roof = np.isin(uvmesh["island"], roofs) & (uvmesh["up"] >= ROOF_TEXEL_UP)
-    rm = r["mask"]
-    roof_px = rm & face_roof[np.maximum(r["raster"]["tri"], 0)]
+    yaw, tilt = roof_pose(mesh, uvmesh, roofs, tex, pic_mask, extent, yaw0)
+    v = _roof_view(mesh, uvmesh, roofs, tex, pic_mask, extent, yaw, tilt, L_SIZE)
+    r, roof_px = v["render"], v["roof_px"]
     if roof_px.sum() < ROOF_MIN_PX:
         return {"mode": "none", "reason": "roof_not_visible"}
-    ry, rx = np.nonzero(rm)
-    py0, py1, px0, px1 = ys.min(), ys.max(), xs.min(), xs.max()
-    qy, qx = np.nonzero(roof_px)
-    u = (qx - rx.min() + 0.5) / max(np.ptp(rx) + 1, 1)
-    v = (qy - ry.min() + 0.5) / max(np.ptp(ry) + 1, 1)
-    sx = np.clip(np.round(px0 + u * (px1 - px0 + 1) - 0.5).astype(int), 0, pic.shape[1] - 1)
-    sy = np.clip(np.round(py0 + v * (py1 - py0 + 1) - 0.5).astype(int), 0, pic.shape[0] - 1)
-    inside = pic_mask[sy, sx]
-    if inside.sum() < ROOF_MIN_PX:
+    picked = roof_picture_pixels(pic, pic_mask, r["mask"], roof_px)
+    if picked is None:
         return {"mode": "none", "reason": "picture_roof_not_found"}
-    target = float(face.to_lab(pic[sy[inside], sx[inside]])[:, 0].mean())
+    warped, inside = picked
+    target = float(face.to_lab(warped)[..., 0][inside].mean())
     rlab = face.to_lab(r["image"])[..., 0]
-    roof_l = float(rlab[roof_px].mean())
+    roof_l = float(rlab[inside].mean())
     # each roof island's own mean over its up-facing texels
     ras = imaging.rasterise_uv(uvmesh, tex.shape[0])
     tl = face.to_lab(tex)[..., 0]
@@ -318,7 +371,8 @@ def roof_lift_plan(mesh: dict[str, np.ndarray], uvmesh: dict[str, np.ndarray], t
     lift = [i for i, l in island_l.items() if l < target - ROOF_MARGIN]
     gap = target - roof_l
     out = {"target_L": round(target, 2), "roof_L": round(roof_l, 2), "gap": round(gap, 2),
-           "island_L": {str(i): round(l, 2) for i, l in island_l.items()}, "yaw": yaw}
+           "island_L": {str(i): round(l, 2) for i, l in island_l.items()}, "yaw": yaw, "tilt": tilt,
+           "fit_iou": round(v["iou"], 3)}
     if not lift or gap < ROOF_MARGIN:
         return {**out, "mode": "none", "reason": "roof_matches", "islands": []}
     shift = float(np.clip(gap, 0.0, cap))
