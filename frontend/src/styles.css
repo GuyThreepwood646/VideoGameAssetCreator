@@ -2718,12 +2718,16 @@ button.btn-lg {
 /* Thumbs up and down on a version */
 .feedback-group {
   gap: var(--s1);
+  flex-wrap: wrap;
 }
+/* A label stays on one line and the button grows to fit it; the group wraps the note onto its own line in a narrow window. */
 .thumb-btn {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: var(--s1);
   padding: 3px var(--s2);
+  white-space: nowrap;
 }
 .thumb-icon {
   flex: none;

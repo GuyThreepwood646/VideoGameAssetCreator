@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-from vgac import jobs
+from vgac import comfy, jobs
 from vgac.comfy import ComfyClient
 from vgac.db import Job
 from test_host_lanes import add_job, make_assets
@@ -98,36 +98,58 @@ def test_route_without_a_reading_is_unchanged(settings):
     assert jobs.spread_by_load("b", ["a", "b"], {"a": (0, 0), "b": (0, 4)}) == "b"   # no foreign work on b: stay
 
 
-def test_a_down_engine_loses_its_reading_quickly(settings):
+def record_read_timeouts(monkeypatch):
+    """Wrap ComfyClient.foreign_count to log the timeout each poll passes. The bound is checked on that value,
+    not on the clock, so a loaded machine cannot fail it."""
+    seen = []
+    real = ComfyClient.foreign_count
+
+    async def spy(self, timeout=comfy.FOREIGN_READ_SECONDS):
+        seen.append(timeout)
+        return await real(self, timeout)
+
+    monkeypatch.setattr(ComfyClient, "foreign_count", spy)
+    return seen
+
+
+def test_a_down_engine_loses_its_reading_quickly(settings, monkeypatch):
+    seen = record_read_timeouts(monkeypatch)
+
     async def main():
         q = jobs.JobQueue(settings)
         q.clients = {"a": ComfyClient("http://127.0.0.1:1", name="a"), "b": ComfyClient("http://127.0.0.1:1", name="b")}
         q.foreign = {"a": (1, time.monotonic())}
-        t = time.monotonic()
         await q.poll_foreign_once()
-        assert time.monotonic() - t < 2.5
         assert q.foreign == {}
         assert place(q) == "b"
         for c in q.clients.values():
             await c.aclose()
     asyncio.run(main())
+    assert len(seen) == 2 and all(0 < t <= comfy.FOREIGN_READ_SECONDS for t in seen)   # each read is capped
 
 
-def test_a_slow_engine_is_given_up_within_two_seconds(settings):
+def test_a_slow_engine_is_given_up_at_its_read_cap(settings, monkeypatch):
+    seen = record_read_timeouts(monkeypatch)
+    cancelled = []
+
     class Slow:
         async def get(self, *a, **k):
-            await asyncio.sleep(30)
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
 
     async def main():
         q = jobs.JobQueue(settings)
         c = ComfyClient("http://127.0.0.1:1", name="a")
         c._client = lambda: Slow()
         q.clients = {"a": c}
-        t = time.monotonic()
         await q.poll_foreign_once()
-        assert time.monotonic() - t < 3.0
         assert "a" not in q.foreign
     asyncio.run(main())
+    assert seen == [comfy.FOREIGN_READ_SECONDS]     # the read was started with the cap
+    assert cancelled == [True]                      # and the slow read was cut off, not waited out
 
 
 def test_only_prompts_the_app_did_not_send_count(settings):
