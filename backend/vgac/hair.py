@@ -877,6 +877,7 @@ ROUGH = {"painted": 0.55, "photoreal": 0.45}
 ROUGH_SWING = 0.06
 HAIRLINE_M = 0.0035  # the softened band where hair meets skin (metres, hair side)
 HAIRLINE_MIX = 0.45  # the most a hairline texel moves toward the skin next to it
+STREAK_SHORTFALL = (0.005, 0.02)  # strand contrast the bake lacks against the pictures: none to this much, the streaks fade in
 STRAND_TEXELS = 3.0  # strands are never finer than this many texels (finer ones break into stair steps)
 
 
@@ -897,6 +898,21 @@ def picture_stats(picture: np.ndarray, hair_px: np.ndarray, px_per_strand: float
             "clump_contrast": round(float(broad[inner].std()) / max(mean, 1e-3), 4),
             "highlight_rgb": [round(float(v), 4) for v in picture[inner & hi].mean(axis=0)],
             "mean_rgb": [round(float(v), 4) for v in picture[inner].mean(axis=0)]}
+
+
+def baked_strand_shortfall(mesh: dict[str, np.ndarray], base: np.ndarray, flow_pictures: list[dict[str, Any]]) -> float | None:
+    """How much strand contrast the pictures show that the baked colour does not: for each picture, its strand contrast
+    against the baked colour's, rendered from the picture's camera over the same hair pixels; the largest difference.
+    None when no picture shows enough hair on the model."""
+    out = None
+    for fp in flow_pictures:
+        view = face.render_view(mesh, base, fp["cam"])
+        px = fp["hair_px"] & view["mask"]
+        pic = picture_stats(fp["picture"], px).get("strand_contrast")
+        baked = picture_stats(view["image"], px).get("strand_contrast")
+        if pic is not None and baked is not None:
+            out = max(out if out is not None else -1.0, float(pic) - float(baked))
+    return None if out is None else round(out, 4)
 
 
 def edge_along_flow(path: list[np.ndarray], step: float, hair_frac: Grid, Hf: np.ndarray, reach: float = EDGE_REACH) -> np.ndarray:
@@ -999,6 +1015,10 @@ def paint_hair(mesh: dict[str, np.ndarray], maps: dict[str, np.ndarray | None], 
     clump = normalise(lic_paths(pos[W], paths_w, CLUMP_CELL, seed + 1, int(round(CLUMP_LEN / step)), every=2)) if W.any() else np.zeros(0)
     st = stats or {}
     amp = float(np.clip(1.6 * float(st.get("strand_contrast") or 0.0), *STREAK_AMP)) if st else STREAK_AMP[0] + 0.03
+    # the baked colour already shows the pictures' strands: painted ones (and a band broken by them) would cross them
+    short = st.get("baked_strand_shortfall")
+    streaks = 1.0 if short is None else float(face.smoothstep(*STREAK_SHORTFALL, np.asarray(float(short))))
+    amp *= streaks
     height = 0.6 * strand + 0.4 * clump
     lmul = 1.0 + amp * np.clip(0.6 * strand + 0.45 * clump, -2.5, 2.5)
     lmul -= CLUMP_GROOVE * face.smoothstep(0.4, 1.6, -clump)
@@ -1058,7 +1078,7 @@ def paint_hair(mesh: dict[str, np.ndarray], maps: dict[str, np.ndarray | None], 
         centre_xz = crown[[0, 2]]
         outward = (nrm[:, [0, 2]] * (pos[:, [0, 2]] - centre_xz)).sum(axis=1) >= -0.002
         band = np.exp(-((up - HIGHLIGHT_UP[0]) / HIGHLIGHT_UP[1]) ** 2) * outward
-        band *= np.clip(0.55 + 0.45 * strand, 0.0, 1.0)  # broken by the strands
+        band *= np.clip(0.55 + 0.45 * streaks * strand, 0.0, 1.0)  # broken by the strands
         new = new * (1 - HIGHLIGHT * band[:, None]) + hl[None] * (HIGHLIGHT * band[:, None]) * lmul[:, None].clip(0.6, 1.2)
     # 5. the hairline: hair texels next to skin lean toward the skin there, thinning out between strands
     skin = tm["skin"]

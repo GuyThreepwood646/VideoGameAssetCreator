@@ -181,6 +181,30 @@ def test_paint_adds_streaks_shading_bump_and_hair_roughness():
     assert not np.any(r["maps"]["base_color"][~face.dilate_mask(mask, 4)] != mp["base_color"][~face.dilate_mask(mask, 4)])
 
 
+def test_no_streaks_where_the_baked_colour_already_shows_the_strands():
+    """Painted streaks cross the strands a bake already carries (a woven look): when the pictures show no strand
+    contrast the bake lacks, the streaks are left out and the highlight band is not broken by them."""
+    m = cap(20)
+    head = face.find_head(m["verts"])
+    cam = face.head_camera(head, 0, 256)
+    T = 128
+    Y, X = np.mgrid[0:T, 0:T]
+    stripes = np.array(HAIR_RGB)[None, None] * (0.7 + 0.3 * np.sin(2 * math.pi * X / 3.0))[..., None]
+    flat = maps(T)["base_color"]
+    view = face.render_view(m, stripes, cam)
+    pic = [{"picture": view["image"], "hair_px": view["mask"], "cam": cam}]
+    assert hair.baked_strand_shortfall(m, stripes, pic) < hair.STREAK_SHORTFALL[0]  # the bake shows the picture's strands
+    assert hair.baked_strand_shortfall(m, flat, pic) > hair.STREAK_SHORTFALL[1]  # a flat bake lacks them
+    stats = {"strand_contrast": 0.1}
+    off = hair.paint_hair(m, maps(), np.ones(len(m["faces"]), dtype=bool), centres(), 0, 1, seed=5, highlight=False,
+                          stats={**stats, "baked_strand_shortfall": -0.05})
+    on = hair.paint_hair(m, maps(), np.ones(len(m["faces"]), dtype=bool), centres(), 0, 1, seed=5, highlight=False,
+                         stats={**stats, "baked_strand_shortfall": 0.05})
+    assert off["measures"]["streak_amplitude"] == 0.0 and on["measures"]["streak_amplitude"] > 0.1
+    mask = on["mask"]
+    assert face.luminance(on["maps"]["base_color"][mask]).std() > face.luminance(off["maps"]["base_color"][mask]).std()
+
+
 def test_the_same_seed_gives_the_same_hair_and_another_seed_another():
     a, b, c = paint(seed=11), paint(seed=11), paint(seed=12)
     assert np.array_equal(a["maps"]["base_color"], b["maps"]["base_color"])

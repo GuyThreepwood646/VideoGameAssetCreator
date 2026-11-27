@@ -364,6 +364,8 @@ def paint(glb: Path, maps: dict[str, Path], points: Path, find_json: Path, out_d
         if srcs:
             last = flow_pics[-1]
             stats = hair.picture_stats(last["picture"], last["hair_px"])
+            if stats:
+                stats["baked_strand_shortfall"] = hair.baked_strand_shortfall(mesh, base, flow_pics)
     T = base.shape[0]
     same = {k: v for k, v in arrays.items() if v is not None and v.shape[0] == T}
     res = hair.paint_hair(mesh, same, tris, centres, int(fj["hair_i"]), int(fj["skin_i"]), strength=strength, seed=seed,
