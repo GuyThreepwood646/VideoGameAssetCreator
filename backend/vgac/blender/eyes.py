@@ -4,32 +4,43 @@ Run: blender -b --python eyes.py -- <in.glb> <out.glb> --job <json> --report <js
 
 The job (vgac/eyes.py mesh_job) is in the head camera's frame: u right, v up, w away from the camera, metres from the
 target. For each eye the faces that the lid outline crosses are split exactly along it (no other face changes), what lies
-inside is removed, the cut edge is turned inward and closed behind into a socket, and a separate closed piece is added.
-Its front is a ball fitted to the depth of the lid edge, tucked behind the skin on the lid line, so no socket wall
-shows beside it in a turned view; past the opening it stays behind the skin. Both stay closed surfaces. Their faces use
-the squares of texture the job names. The model is written only when it has no more open edges than it had.
+inside is removed. A ball is fitted to the depth of the lid edge and the skin near the opening moves in depth onto
+it (the front view is unchanged, and the skin keeps its shading). The cut edge is turned inward and closed behind into a
+socket, and a separate closed piece is added: its front is that ball, and past the opening it stays behind the skin.
+Both stay closed surfaces. Their faces use the squares of texture the job names. The model is written only when it has no
+more open edges than it had.
 """
 import json
 import math
 import os
 import sys
 
-BEHIND_EDGE_M = 0.0003  # the eye's front is this far behind the lid edge, in the middle of the fit
-CLEAR_M = 0.0007  # past the opening the eye stays this far behind the skin
+CLEAR_M = 0.0012  # past the opening the eye stays this far behind the skin
 RIM_BEHIND_M = 0.0004  # the socket wall ends this far behind the eye's front
-UNDER_LID_M = 0.002  # the eye reaches this far past the opening, under the lids
-AT_EDGE_M = 0.0002  # on the lid line the eye is at least this far behind the skin
+UNDER_LID_M = 0.0012  # the eye reaches this far past the opening, under the lids
 DEPTH_WINDOW_M = 0.02
 WELD_M = 0.00005
-RADIUS_OF_WIDTH = (0.6, 2.4)  # the ball's radius is fitted within these shares of the eye's width
-FORWARD_M = 0.0012  # the eye comes no further than this in front of the surface it replaces
-INNER_SHARES = (0.0, 0.35, 0.65)  # rows inside the opening whose depth the ball also follows
-EDGE_SHARE = 0.8  # the ball is set so this share of the surface it follows is in front of it (a deeper eye leaves the
-# lids standing as thin flaps)
+RADIUS_OF_WIDTH = (0.8, 2.2)  # the ball's radius is fitted within these shares of the eye's width
+EDGE_SHARE = 0.35  # the ball is set so this share of the lid edge is in front of it
+LID_REACH_M = 0.007  # skin this near the opening moves onto the ball, easing out to nothing
+LID_FRONT_M = 0.0003  # the lid edge lies this far in front of the ball
+LID_SAMPLES = 96
 RINGS = 3  # rows of the eye from its middle to the lid line (one more goes under the lids)
-SEGMENTS = 36
-SMOOTH_PASSES = 6  # the front is evened out this many times, so the iris is not bent by the old surface's lumps
+SEGMENTS = 32
 SKIN, RIM, EYE = 0, 1, 2
+
+
+def lid_moves(points):
+    """How far each point round the lid edge moves in depth, evened out along the edge. None: that point has no surface."""
+    moves = [0.0 if m is None else m for m in points]
+    n = len(moves)
+    return [sum(moves[(i + j) % n] for j in range(-2, 3)) / 5 for i in range(n)]
+
+
+def eased(distance, reach=LID_REACH_M):
+    """The share of the lid edge's move that skin this far from the opening takes."""
+    t = max(0.0, 1.0 - distance / reach)
+    return t * t * (3 - 2 * t)
 
 
 def inside(poly, u, v):
@@ -82,23 +93,6 @@ def fit_ball(points, mid_u, mid_v, width, share=EDGE_SHARE):
                 if best is None or miss < best[0]:
                     best = (miss, cu, cv, cw, radius)
     return best[1], best[2], best[3], best[4]
-
-
-def smoothed(middle, rows, passes=SMOOTH_PASSES):
-    """The depths of the eye's front, evened out: the middle one and the rows round it, the last row (on the lid line)
-    held. -> (middle, rows)."""
-    rows = [list(r) for r in rows]
-    for _ in range(passes):
-        out = [list(r) for r in rows]
-        n = len(rows[0])
-        for i in range(len(rows) - 1):
-            for j in range(n):
-                inner = middle if i == 0 else rows[i - 1][j]
-                around = (rows[i][(j - 1) % n] + rows[i][(j + 1) % n] + inner + rows[i + 1][j]) / 4
-                out[i][j] = (rows[i][j] + around) / 2
-        middle = (middle + sum(rows[0]) / n) / 2
-        rows = out
-    return middle, rows
 
 
 def resample(poly, count):
@@ -193,6 +187,11 @@ def main():  # pragma: no cover - runs inside Blender
             loop[uvl].uv = uv
         return f
 
+    came = {}  # where each moved vertex was, so it keeps the shading it had there
+
+    def spot(co):
+        return tuple(round(c, 5) for c in co)
+
     for eye in job["eyes"]:
         poly = [tuple(p) for p in eye["outline"]]
         cu, cv = eye["centre"]
@@ -261,32 +260,44 @@ def main():  # pragma: no cover - runs inside Blender
         touched = [v for v in bm.verts if (MW @ v.co - (T + R * cu + U * cv + F * lid)).length < 0.05]
         bmesh.ops.remove_doubles(bm, verts=touched, dist=0.000002)
 
-        # 2. where the eye sits: the depth of the lid edge carried across the opening, with a bulge in the middle
+        # 2. the ball: fitted to the depth of the lid edge; then the lids come onto it
         edge_depth = [(u, v, w) for u, v, w in ((p[0], p[1], skin_depth(p[0], p[1], lid)) for p in resample(poly, 64))
                       if w is not None and abs(w - lid) <= DEPTH_WINDOW_M]
         if len(edge_depth) < 32:
             report["reason"] = "no_surface"
             break
-        centre = (sum(p[0] for p in poly) / len(poly), sum(p[1] for p in poly) / len(poly))
-        within = [(centre[0] + (u - centre[0]) * k, centre[1] + (v - centre[1]) * k)
-                  for k in INNER_SHARES for u, v in resample(poly, 16)]
-        followed = edge_depth + [(u, v, w) for u, v, w in ((u, v, skin_depth(u, v, lid)) for u, v in within)
-                                 if w is not None and abs(w - lid) <= DEPTH_WINDOW_M]
-        ball_u, ball_v, ball_w, radius = fit_ball(followed, (hi_u + lo_u) / 2, (hi_v + lo_v) / 2, eye["width"])
+        ball_u, ball_v, ball_w, radius = fit_ball(edge_depth, (hi_u + lo_u) / 2, (hi_v + lo_v) / 2, eye["width"])
+
+        def ball_at(u, v):
+            return ball_w - dome(u, v, ball_u, ball_v, radius)
+
+        samples = resample(poly, LID_SAMPLES)
+        depths_now = [skin_depth(u, v, lid) for u, v in samples]
+        moves = lid_moves([None if w is None or abs(w - lid) > DEPTH_WINDOW_M else ball_at(u, v) - LID_FRONT_M - w
+                           for (u, v), w in zip(samples, depths_now)])
+        for vert in bm.verts:
+            if any(f[tag] != SKIN for f in vert.link_faces):
+                continue
+            u, v, w = uvw(vert.co)
+            if abs(w - lid) > DEPTH_WINDOW_M or math.hypot(u - cu, v - cv) > eye["width"]:
+                continue
+            d = distance_to(poly, u, v)
+            if d >= LID_REACH_M or (d > 0.0001 and inside(poly, u, v)):
+                continue
+            i = min(range(LID_SAMPLES), key=lambda k: (samples[k][0] - u) ** 2 + (samples[k][1] - v) ** 2)
+            was = vert.co.copy()
+            vert.co = local(u, v, w + moves[i] * eased(d))
+            came[spot(vert.co)] = was
+        bm.normal_update()
+        moved = BVHTree.FromBMesh(bm)
 
         def eye_depth(u, v):
-            """The ball, never far in front of the surface it replaces, tucked behind the skin on the lid line and past
-            it."""
-            depth = ball_w - dome(u, v, ball_u, ball_v, radius) + BEHIND_EDGE_M
-            on_line = distance_to(poly, u, v) < 0.0001
-            skin = skin_depth(u, v, lid)
-            if skin is not None and abs(skin - lid) <= DEPTH_WINDOW_M:
-                if on_line:
-                    depth = max(depth, skin + AT_EDGE_M)
-                elif inside(poly, u, v):
-                    depth = max(depth, skin - FORWARD_M)
-                else:
-                    depth = max(depth, skin + CLEAR_M)
+            """The ball; past the opening it stays behind the skin."""
+            depth = ball_at(u, v)
+            if not inside(poly, u, v) and distance_to(poly, u, v) > 0.0001:
+                hit = moved.ray_cast(local(u, v, lid - 0.05), forward)
+                if hit[0] is not None and abs(uvw(hit[0])[2] - lid) <= DEPTH_WINDOW_M:
+                    depth = max(depth, uvw(hit[0])[2] + CLEAR_M)
             return depth
 
         # 3. the socket: the cut edge turned inward, closed behind
@@ -343,10 +354,8 @@ def main():  # pragma: no cover - runs inside Blender
         def put(u, v, w):
             return bm.verts.new(local(u, v, w)), eye_uv(u, v)
 
-        mid_depth, depths = smoothed(eye_depth(*mid), [[eye_depth(u, v) for u, v in row] for row in spots[:RINGS]])
-        depths.append([eye_depth(u, v) for u, v in spots[-1]])
-        front = put(mid[0], mid[1], mid_depth)
-        rows = [[put(u, v, w) for (u, v), w in zip(row, ws)] for row, ws in zip(spots, depths)]
+        front = put(mid[0], mid[1], eye_depth(*mid))
+        rows = [[put(u, v, eye_depth(u, v)) for u, v in row] for row in spots]
         back = put(mid[0], mid[1], max(uvw(v.co)[2] for v, _ in rows[-1]) + 0.001)
         # the winding that faces the camera for an outline given in either direction
         turn = sum(edge[i][0] * edge[(i + 1) % SEGMENTS][1] - edge[(i + 1) % SEGMENTS][0] * edge[i][1] for i in range(SEGMENTS))
@@ -364,7 +373,7 @@ def main():  # pragma: no cover - runs inside Blender
                 tri(rows[i][j], rows[i + 1][k], rows[i][k])
             tri(back, rows[-1][k], rows[-1][j])
         report["eyes"].append({"rim_edges": len(rim), "radius_mm": round(radius * 1000, 2),
-                               "sphere": [ball_u, ball_v, ball_w + BEHIND_EDGE_M]})
+                               "sphere": [ball_u, ball_v, ball_w]})
 
     after = counts()
     report.update(open_edges_after=after[0], over_shared_after=after[1], faces_after=after[2],
@@ -388,7 +397,7 @@ def main():  # pragma: no cover - runs inside Blender
                 co = me.vertices[me.loops[li].vertex_index].co
                 n = poly_.normal.copy()
                 if kind == SKIN:
-                    hit, _n, idx, dist = old_tree.find_nearest(co)
+                    hit, _n, idx, dist = old_tree.find_nearest(came.get(spot(co), co))
                     if dist is not None and dist < 0.0004:
                         a, b, c = (old_v[i] for i in old_tri[idx])
                         na, nb, nc = (old_n[i] for i in old_loops[idx])

@@ -87,6 +87,13 @@ def test_the_ball_fitted_to_a_lid_edge_follows_it():
     assert max(miss) < 0.0006
 
 
+def test_the_lids_move_onto_the_eye_and_ease_out_with_distance():
+    assert mesh_work.eased(0.0) == 1.0 and mesh_work.eased(mesh_work.LID_REACH_M) == 0.0
+    assert 0.0 < mesh_work.eased(mesh_work.LID_REACH_M / 2) < 1.0
+    moves = mesh_work.lid_moves([None] + [0.002] * 20)
+    assert len(moves) == 21 and moves[10] == pytest.approx(0.002) and 0 < moves[0] < 0.002
+
+
 def test_eye_vertices_and_their_neighbours_in_place_go_to_the_head():
     rects = [[0.1, 0.1, 0.05]]
     uv = [(0.12, 0.12), (0.5, 0.5), (0.151, 0.1)]
