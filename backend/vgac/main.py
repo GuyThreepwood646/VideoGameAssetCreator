@@ -1585,14 +1585,24 @@ def library_file(path: str) -> FileResponse:
 
 class SpaStaticFiles(StaticFiles):
     """The built app with client-side routes: any path that is not a real file gets index.html, so deep links
-    such as /gallery or /assets/<id> and a browser refresh work (the API keeps its own 404s)."""
+    such as /gallery or /assets/<id> and a browser refresh work (the API keeps its own 404s). A missing file under
+    assets/ is a 404. index.html is never reused without asking: it names the built files of the current build."""
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):  # type: ignore[override]
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        if os.path.basename(full_path) == "index.html":
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     async def get_response(self, path: str, scope):  # type: ignore[override]
         try:
             return await super().get_response(path, scope)
         except StarletteHTTPException as e:
             # Starlette joins the path with the OS separator, so it is "api\x" on Windows.
-            if e.status_code == 404 and not path.replace("\\", "/").lstrip("/").startswith("api/"):
+            route = path.replace("\\", "/").lstrip("/")
+            # the built files and the asset pages share assets/: only a file name has a dot
+            built_file = route.startswith("assets/") and "." in route.rsplit("/", 1)[-1]
+            if e.status_code == 404 and not route.startswith("api/") and not built_file:
                 return await super().get_response("index.html", scope)
             raise
 

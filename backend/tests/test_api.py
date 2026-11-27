@@ -554,6 +554,19 @@ def test_spa_fallback(tmp_path):
         assert c.get("/api/ping").json() == {"ok": True}
         assert c.get("/api/nope").status_code == 404
 
+        # index.html is asked about every time, however it is reached, also when the answer is "not modified"
+        for path in ("/", "/index.html", "/gallery", "/assets/abc"):
+            assert c.get(path).headers["cache-control"] == "no-cache", path
+        etag = c.get("/").headers["etag"]
+        again = c.get("/", headers={"If-None-Match": etag})
+        assert again.status_code == 304 and again.headers["cache-control"] == "no-cache"
+        assert "cache-control" not in c.get("/assets/x.js").headers
+
+        # a built file that is gone is a 404; an asset page address under assets/ is still the app
+        assert c.get("/assets/index-gone.js").status_code == 404
+        assert c.get("/assets/index-gone.css").status_code == 404
+        assert c.get("/assets/abc/rig").text == "<html>app</html>"
+
 
 def test_stages_serve_option_labels_and_category_knobs(client):
     st = client.get("/api/stages").json()

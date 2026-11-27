@@ -431,6 +431,7 @@ namespace Vgac.Starter
     public enum RestartStart { Go, Refused, BuildRunning }
     public enum FrontWindow { App, Status }
     public enum ShortcutAction { None, Quit, StatusWindow, Fullscreen }
+    public enum PageAction { Done, Reload, GiveUp }
 
     public static class LauncherRules
     {
@@ -453,6 +454,14 @@ namespace Vgac.Starter
         public static bool WebViewStartRetry(int hresult, int attempt)
         {
             return attempt == 1 && hresult == unchecked((int)0x800700AA);
+        }
+
+        // What follows a finished load of the app's page. `drawn` is the page's own answer: "false" when the app's root
+        // element is there and empty. A page without that element is left alone. At most three reloads in a row.
+        public static PageAction PageCheck(bool loaded, string drawn, int reloads)
+        {
+            if (loaded && drawn != "false") return PageAction.Done;
+            return reloads < 3 ? PageAction.Reload : PageAction.GiveUp;
         }
 
         // The app window's X always means "quit" (asked first), never a plain close, unless quitting is already under way.

@@ -611,7 +611,8 @@ async def _head_build(sc: StageContext, params: dict[str, Any], src: Path, seed:
         joined = hdir / "joined"
         joined.mkdir(parents=True, exist_ok=True)
         await sc.blender("headjoin.py", [g["glb"], joined / "model.glb", "--maps", mj, "--tex", tex, "--padding", unwrap_padding(tex),
-                                         "--margin", dilation_px(tex)], log_name="headjoin.log", timeout=sc.settings.blender_timeout_seconds)
+                                         "--margin", dilation_px(tex), "--strip", int(g["metrics"].get("strip_faces") or 0)],
+                       log_name="headjoin.log", timeout=sc.settings.blender_timeout_seconds)
         if not (joined / "model.glb").is_file() or not (joined / "base_color.png").is_file():
             rec["reason"] = "join"
             return
