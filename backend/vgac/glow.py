@@ -91,7 +91,7 @@ def mask_picture(img: np.ndarray, alpha: np.ndarray | None = None) -> tuple[np.n
 def finder_gains(settings: Any, kept: dict[str, Any], work: Path) -> tuple[list[np.ndarray] | None, dict[str, Any]]:
     """With the item finder installed (item_suggest.installed: Grounding DINO tiny and SAM 2.1 small, both Apache-2.0, in their own
     Python), the parts the pictures show lit are named by a text prompt (neon signs, neon figures, lit windows) and only those
-    glow (glow_worker.py): one gain picture per fitted view. -> (gains, record), or (None, record) when the finder is not
+    glow (finder_worker.py, glow mode): one gain picture per fitted view. -> (gains, record), or (None, record) when the finder is not
     installed or fails, and the caller uses the no-download rule (mask_picture)."""
     import subprocess
 
@@ -112,9 +112,9 @@ def finder_gains(settings: Any, kept: dict[str, Any], work: Path) -> tuple[list[
         pic.save(work / f"view_{i}.png")
     env = {**os.environ, "OMP_NUM_THREADS": "2", "MKL_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "2"}   # two cores, not all
     t0 = time.time()
-    r = subprocess.run([str(item_suggest.finder_python(settings)), str(Path(__file__).with_name("glow_worker.py")), str(work),
+    r = subprocess.run([str(item_suggest.finder_python(settings)), str(Path(__file__).with_name("finder_worker.py")), "glow", str(work),
                         str(len(shapes)), str(item_suggest.finder_models(settings))], capture_output=True, text=True, timeout=1800, env=env)
-    if r.returncode != 0 or "GLOW_OK" not in r.stdout:
+    if r.returncode != 0 or "FINDER_OK" not in r.stdout:
         return None, {"method": "colour rule", "finder": "failed: " + (r.stderr or r.stdout)[-160:].strip()}
     gains = []
     for i, (h, w) in enumerate(shapes):

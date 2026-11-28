@@ -505,3 +505,41 @@ def test_stray_skin_owned_by_a_foot_bone_does_not_swing_the_foot_shape():
     res = hb.fit(bones, V2, owner2, None, "humanoid", "detailed")
     foot = next(s for s in res["shapes"] if s.get("name") == "Hit_Foot_R")
     assert foot["height"] < 0.5 and foot["radius"] < 0.15  # a foot, not a pole up to the stray skin
+
+
+def test_a_missing_part_box_fails_the_check_whatever_the_rest_covers():
+    """A head, arm, shin or foot with no box of its own is 0 cover: a share over the whole body let these pass (0.91 to 0.94)."""
+    bones = _humanoid()
+    V, owner = _body(bones, _human_radii(bones))
+    full = hb.fit(bones, V, owner, None, "humanoid", "detailed")
+    assert full["missing"] == [] and full["cover"] > 0.85
+    for rid in ("head", "forearm_l", "upper_arm_r", "shin_l", "thigh_r", "chest"):
+        kept = [s for s in full["shapes"] if s["region"] != rid]
+        sc = hb.score(kept, V, full["mesh_volume"], expected=full["expected"])
+        assert sc["missing"] == [rid] and sc["cover"] == 0.0, rid
+    assert hb.score(full["shapes"], V, full["mesh_volume"], expected=full["expected"])["missing"] == []
+    # A foot box the clean fit made is an expected part too: removing it is a missing box, not a free extra.
+    for s in (s for s in full["shapes"] if s.get("foot")):
+        kept = [x for x in full["shapes"] if x is not s]
+        assert hb.score(kept, V, full["mesh_volume"], expected=full["expected"])["missing"] == ["foot:" + s["region"]]
+
+
+def test_a_part_the_user_leaves_out_is_missing():
+    bones = _humanoid()
+    V, owner = _body(bones, _human_radii(bones))
+    full = hb.fit(bones, V, owner, None, "humanoid", "detailed")
+    partial = hb.fit(bones, V, owner, None, "humanoid", "detailed", keep_regions=["head", "hips"])
+    assert "chest" in partial["missing"] and partial["cover"] == 0.0
+    doc = hb.to_json(partial, bones)
+    assert "chest" in doc["missing"] and doc["cover"] == 0.0 and doc["expected"] == full["expected"]
+
+
+def test_expected_parts_follow_each_categorys_body_plan():
+    quad = ["head", "neck", "body", "leg_fl", "leg_fr", "leg_bl", "leg_br"]
+    assert hb.expected_parts("quadruped", "detailed", quad) == quad
+    assert hb.expected_parts("quadruped", "detailed", ["head", "body"]) == ["head", "neck", "body", "leg_fl", "leg_fr", "leg_bl", "leg_br"]
+    assert hb.expected_parts("humanoid", "simple", ["head", "body"]) == ["head", "body"]
+    assert hb.expected_parts("serpent", "detailed", ["head", "spine_1", "spine_2"]) == ["head", "spine_1", "spine_2"]
+    humanoid = hb.expected_parts("humanoid", "detailed", ["head", "chest"])
+    assert humanoid[:9] == ["head", "upper_arm_l", "upper_arm_r", "forearm_l", "forearm_r", "thigh_l", "thigh_r", "shin_l", "shin_r"]
+    assert humanoid[-1] == "chest"
