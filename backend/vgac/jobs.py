@@ -79,6 +79,14 @@ CAPABILITY_PLAIN = {"concept": "making pictures", "turnaround": "drawing all sid
                     "rig": "rigging", "material": "making materials", JUDGE: "judging pictures"}
 
 
+def client_output_dir(inst: Any) -> Path | None:
+    """The folder a card's client reads SkinToken's rigged GLB from: the instance's own output_dir, else the engine's
+    (the folder the app starts ComfyUI with). Without it the rig step cannot place the file, and the rig fails."""
+    if inst.output_dir is not None:
+        return inst.output_dir
+    return inst.engine.output_dir if inst.engine is not None else None
+
+
 def instance_for(stage: str, category: str, settings: Settings | None = None) -> str:
     """Which instance runs `stage` (Settings.stage_instances, or material_stage_instances for the material category)."""
     settings = settings or get_settings()
@@ -1165,7 +1173,7 @@ class JobQueue:
         # Leftover inputs from earlier runs and deleted projects (only the app's own "vgac_" files).
         await asyncio.to_thread(comfy_inputs.sweep_now, self.settings.comfy_input_dir)
         for name, inst in self.settings.instances.items():
-            self.clients[name] = ComfyClient(inst.url, name=name, input_dir=self.settings.comfy_input_dir, output_dir=inst.output_dir)
+            self.clients[name] = ComfyClient(inst.url, name=name, input_dir=self.settings.comfy_input_dir, output_dir=client_output_dir(inst))
         self.supervisor = Supervisor(self.settings, self.clients, on_change=lambda _n: self.publish_gpus())
         self.supervisor.busy = self.card_in_use
         self.supervisor.keep_loaded = lambda n: self.keep_loaded.get(n, True)
