@@ -717,10 +717,13 @@ CHECK_GUIDE: dict[str, dict[str, Any]] = {
         "severity": "warn",
         # Both faults on one skeleton (rig.hitbox_checks, vars both): one item. Bigger and smaller would undo each other, so
         # the one fix is a re-fit with the normal setting; the sentence does not promise that it will fix it (the check re-measures).
+        # A part of the body with no box of its own reads as cover 0%: the check cannot tell a head from a shin by share alone.
         "ok": "{n} hit boxes cover {cover} of the body and follow the skeleton.",
-        "fail": lambda c: ("The hit boxes are the wrong size in places: they cover only {cover} of the body, so some hits would pass through, "
-                           "and some boxes stick out {times} times the body's size, so other hits would land in thin air."
-                           if _var(c, "both") else "The hit boxes cover only {cover} of the body, so some hits would pass through."),
+        "fail": lambda c: ("The hit boxes are the wrong size in places: they cover only {cover} of the body (0% means a part has no box), so some hits "
+                           "would pass through, and some boxes stick out {times} times the body's size, so other hits would land in thin air."
+                           if _var(c, "both") else
+                           "A part of the body has no hit box, or its boxes miss much of it, so hits there would pass through. "
+                           "Cover is {cover} (0% means a part has no box at all)."),
         "fix": lambda c: ({"stage": "rig", "params": {"hitbox_fit": "normal"}} if _var(c, "both")
                           else {"stage": "rig", "params": {"hitbox_fit": "loose"}}),
         "fix_label": lambda c: "Fit the hit boxes again" if _var(c, "both") else "Make the hit boxes bigger",

@@ -732,6 +732,25 @@ def classify(sk, lo, hi, category, mode):
     return regions, kind
 
 
+# The parts a rig of each category must have a box for (its body plan, detailed fit). A part the skeleton defines
+# also needs a box, so every classified region is expected too. Simple and fallback fits keep only the head and body.
+BODY_PLAN = {
+    "humanoid": ["head", "upper_arm_l", "upper_arm_r", "forearm_l", "forearm_r", "thigh_l", "thigh_r", "shin_l", "shin_r"],
+    "quadruped": ["head", "neck", "body", "leg_fl", "leg_fr", "leg_bl", "leg_br"],
+    "multileg": ["head", "body"],
+    "winged": ["head", "body"],
+    "serpent": ["head"],
+}
+SIMPLE_PLAN = ["head", "body"]
+
+
+def expected_parts(category, mode, classified):
+    """-> the region ids that need their own box: the category's body plan (or the simple plan) plus every region the
+    skeleton classified, in that order without repeats."""
+    plan = SIMPLE_PLAN if mode != "detailed" and category != "serpent" else BODY_PLAN.get(category, SIMPLE_PLAN)
+    return list(dict.fromkeys([*plan, *classified]))
+
+
 def _fallback(sk, V, owner_names, category, factor, lo, hi):
     """One capsule around the whole body and one sphere at the head end (top when standing, front when lying)."""
     dims = hi - lo
@@ -850,6 +869,7 @@ def fit(bones, V, owner, tris, category, mode="detailed", fit_name="normal", kee
                 foot_shape = _foot_shape(sk, rid, r, m, V, owner_names, factor, min_verts)
                 if foot_shape is not None:
                     foot_shape.pop("mask")  # the shin keeps its own fit (feet and all); the foot gets a shape of its own on top
+                    foot_shape["foot"] = True  # a foot box does not stand in for a missing shin box
             P = V[m]
             if r.get("kind") == "box":
                 s = fit_box(P, factor)
@@ -876,6 +896,9 @@ def fit(bones, V, owner, tris, category, mode="detailed", fit_name="normal", kee
             shapes = []
         else:
             result["regions_found"] = [s["region"] for s in shapes]
+            # Checked before a kept-out part is dropped: a part the user leaves out has no box and fails the check.
+            # A foot box the clean fit made is expected too ("foot:<shin region>"): removing it is a missing box.
+            result["expected"] = expected_parts(category, mode, list(regions)) + ["foot:" + s["region"] for s in shapes if s.get("foot")]
             if keep_regions:
                 keep = set(keep_regions)
                 shapes = [s for s in shapes if s["region"] in keep]
@@ -888,21 +911,30 @@ def fit(bones, V, owner, tris, category, mode="detailed", fit_name="normal", kee
         if keep_regions:
             shapes = [s for s in shapes if s["region"] in set(keep_regions)]
     result["shapes"] = shapes
-    result.update(score(shapes, V[covered_mask] if covered_mask is not None else V, result["mesh_volume"]))
+    result.update(score(shapes, V[covered_mask] if covered_mask is not None else V, result["mesh_volume"],
+                        expected=None if result["fallback"] else result.get("expected")))
     return result
 
 
-def score(shapes, V, mesh_vol):
-    """cover: share of the vertices inside a shape (within COVER_TOLERANCE of its radius). overreach: the shapes'
-    union volume (overlaps counted once) over the mesh volume; None when the mesh has no measurable volume."""
+def score(shapes, V, mesh_vol, expected=None):
+    """cover: share of the vertices inside a shape (within COVER_TOLERANCE of its radius). overreach: the shapes' union
+    volume (overlaps counted once) over the mesh volume; None when the mesh has no measurable volume. expected: the
+    region ids that need a box of their own (expected_parts), and "foot:<region>" for a foot box; when one has none,
+    cover is 0 and the ids are in missing. The check reads one number, and a share over the whole body cannot see a head or a shin (about 10 percent
+    of the skin, so 0.91 to 0.94 with the box gone), so a missing part is no cover at all."""
+    missing = []
+    if expected:
+        have = {"foot:" + s["region"] if s.get("foot") else s["region"] for s in shapes}
+        missing = [rid for rid in expected if rid not in have]
     if not shapes or len(V) == 0:
-        return {"cover": 0.0, "overreach": None, "shapes_volume": 0.0, "shapes_volume_sum": 0.0}
+        return {"cover": 0.0, "overreach": None, "shapes_volume": 0.0, "shapes_volume_sum": 0.0, "missing": missing}
     hit = np.zeros(len(V), bool)
     for s in shapes:
         hit |= inside(s, V, COVER_TOLERANCE)
     uv = union_volume(shapes)
-    return {"cover": round(float(hit.mean()), 4), "overreach": round(uv / mesh_vol, 3) if mesh_vol > 1e-9 else None,
-            "shapes_volume": round(uv, 6), "shapes_volume_sum": round(sum(shape_volume(s) for s in shapes), 6)}
+    cover = 0.0 if missing else float(hit.mean())
+    return {"cover": round(cover, 4), "overreach": round(uv / mesh_vol, 3) if mesh_vol > 1e-9 else None,
+            "shapes_volume": round(uv, 6), "shapes_volume_sum": round(sum(shape_volume(s) for s in shapes), 6), "missing": missing}
 
 
 def _shape_json(s, sk=None):
@@ -969,6 +1001,8 @@ def to_json(result, bones):
         "shapes_volume_sum": result.get("shapes_volume_sum"),
         "mesh_volume": round(float(result.get("mesh_volume") or 0.0), 6),
         "verts": result["verts"],
+        "expected": list(result.get("expected") or []),
+        "missing": list(result.get("missing") or []),
         "cover_min": limits(result["mode"], result["fallback"])[0],
         "overreach_max": limits(result["mode"], result["fallback"])[1],
     }
