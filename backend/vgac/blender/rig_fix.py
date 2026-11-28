@@ -357,7 +357,9 @@ def role_geometry_problems(bs, roles, chest, lat, height):
         sh = roles[side + "Shoulder"]
         if z(sh) >= head_top - 0.02 * height:
             problems.append(f"the {side.lower()} shoulder is not below the top of the head")
-        if abs(lat(sh)) < 0.03 * height:
+        # A collar root closer than 2% of the height to the spine line is on the spine, not beside it. The tolerance was
+        # 3%, which refused a narrow-chested skeleton whose collar root sat 4.7 cm out (1.9 mm inside the line).
+        if abs(lat(sh)) < 0.02 * height:
             problems.append(f"the {side.lower()} shoulder is not beside the spine")
     if abs(z(roles["LeftShoulder"]) - z(roles["RightShoulder"])) > 0.08 * height:
         problems.append("the two shoulders are not level")

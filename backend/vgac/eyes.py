@@ -52,7 +52,7 @@ SKIN_FLOOR = 0.6  # the colour beside the eye counts as no darker than this shar
 LID_EDGE_M = 0.0008  # the lid's own colour is read this far past the opening
 LID_LIGHT_M = 0.002  # light paint is taken off the skin this far outside the opening
 LASH_M = 0.0011  # the upper lash line on the skin
-LASH = 0.45
+LASH = 0.2
 SKIN_RING_M = (0.0025, 0.0055)
 SKIN_FROM_M = 0.0035  # the lid takes its colour from this far past the opening
 TONE_PERCENTILE = 90
@@ -405,6 +405,32 @@ def rim_swatch(render: np.ndarray, eye: dict[str, Any], px_m: float, size: int) 
     skin = lid_colour(render, eye, px_m)
     fall = np.linspace(1.0, 0.75, size)[:, None, None]
     return np.clip(np.broadcast_to(skin, (size, size, 3)) * fall, 0, 1)
+
+
+# The skip reasons that the picture and the mesh settle before the paint (so before the decimation).
+EARLY_SETTLED = ("no_face", "no_eyes", "closed", "covered")
+
+
+def early_reason(glb: Path | str, base_color: Path | str | None, cutout: Path | str | None, head_yaw: float) -> str | None:
+    """The skip reason that the mesh (before decimation, with its own base colour) and the step 1 cutout settle, or None.
+    None keeps the triangle reserve: no own colour, no cutout, or a reason that needs the painted model (no_room, ...)."""
+    if base_color is None or cutout is None or not Path(cutout).is_file():
+        return None
+    try:  # a mesh or picture this cannot read keeps the reserve (the late step then says why the eyes did not run)
+        picture = framed_picture(glb, cutout, head_yaw)
+        if picture is None:
+            return "no_face"
+        planned = plan(glb, base_color, picture, head_yaw)
+    except Exception:  # noqa: BLE001
+        return None
+    if planned["ok"]:
+        return None
+    return planned["reason"] if planned["reason"] in EARLY_SETTLED else None
+
+
+def reserve_for(early: str | None, wanted: bool) -> int:
+    """The triangles the body budget leaves for the eyes: the reserve when eyes are tried and not settled as skipped."""
+    return TRIANGLE_RESERVE if wanted and early is None else 0
 
 
 def place(uvmesh: dict[str, np.ndarray], tex: int) -> list[list[float]] | None:
