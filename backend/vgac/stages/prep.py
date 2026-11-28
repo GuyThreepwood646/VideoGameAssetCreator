@@ -353,7 +353,16 @@ async def _prep(sc: StageContext, params: dict[str, Any]) -> None:
     args: list[Any] = [src, out, "mesh", "--size", size["size_m"], "--size-axis", size["size_axis"], "--yaw", facing_["face_yaw_applied"],
                        "--pivot", pivot, "--smooth-angle", smooth, "--shading", shading["shading"]]
     budget_now = None if paints_full_first(mesh_v, own_texture_maps(mesh_v, ["base_color"], sc.settings)[0]) else tri_limit["limit"]
-    eye_room = eyes.TRIANGLE_RESERVE if eyes_wanted(sc, params) else 0  # the separate eyes are added after the paint
+    # The separate eyes are added after the paint. The reserve is released early only when the picture and the mesh settle
+    # that they cannot run (eyes.early_reason, before the decimation); a later skip (no_room, or a reason that needs the
+    # painted model) keeps the reserve, so the model ends that much under its budget: recorded as eye_reserve.
+    wanted_eyes = eyes_wanted(sc, params)
+    own_base = own_texture_maps(mesh_v, ["base_color"], sc.settings)[0].get("base_color") if wanted_eyes else None
+    early_skip = (await asyncio.to_thread(eyes.early_reason, src, own_base, sc.lineage_file("cutout", ("concept",)),
+                                          face_detail.head_yaw_from_remainder(facing_.get("face_remainder_deg")))) if own_base else None
+    eye_room = eyes.reserve_for(early_skip, wanted_eyes)
+    if wanted_eyes:
+        sc.set_metrics(eye_reserve=eye_room, eye_early_skip=early_skip)
     if budget_now:
         budget_now = max(int(budget_now) - eye_room, 1)
     if budget_now:

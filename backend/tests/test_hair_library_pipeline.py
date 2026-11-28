@@ -448,7 +448,9 @@ for _stage, _part, _keys in (("turnaround", "files", ["quarter2", "quarter2_cuto
                              ("mesh", "metrics", ["builder_note"]),
                              # Separate eyes (PL-156, 2026-11-27): metrics.eyes on every clean-up that tries them, ran or skipped
                              # with a reason. Not a hair key: the hair checks above still forbid every hair key.
-                             ("prep", "metrics", ["eyes"])):
+                             ("prep", "metrics", ["eyes"]),
+                             # The eyes' triangle reserve and the early skip reason (eyes.early_reason), on eyes-wanted cleanups.
+                             ("prep", "metrics", ["eye_reserve", "eye_early_skip"])):
     GOLDEN_OFF[_stage][_part] = sorted(GOLDEN_OFF[_stage][_part] + _keys)
 # Today's checks that stand back when the model is bald on purpose.
 GONE_ON = {"prep": {"checks": {"hair_matches_picture"}}}

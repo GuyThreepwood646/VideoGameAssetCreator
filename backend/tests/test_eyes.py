@@ -154,3 +154,21 @@ def test_blender_cuts_the_openings_and_leaves_closed_surfaces(tmp_path):
     assert report["over_shared_after"] == 0
     assert 0 < report["triangles_added"] <= eyes.TRIANGLE_RESERVE
     assert dst.is_file()
+
+
+def test_the_reserve_is_released_only_when_the_picture_settles_the_skip():
+    # The eyes' triangles are kept back from the body budget unless the early decision settles a skip.
+    assert eyes.reserve_for(None, True) == eyes.TRIANGLE_RESERVE
+    for early in eyes.EARLY_SETTLED:
+        assert eyes.reserve_for(early, True) == 0
+    assert eyes.reserve_for(None, False) == 0
+    assert set(eyes.EARLY_SETTLED) == {"no_face", "no_eyes", "closed", "covered"}
+    assert "no_room" not in eyes.EARLY_SETTLED  # needs the painted model: the reserve stays and is recorded
+
+
+def test_the_early_decision_keeps_the_reserve_without_an_own_colour_or_a_cutout(tmp_path):
+    glb = tmp_path / "m.glb"
+    _face_like_surface(glb)
+    assert eyes.early_reason(glb, None, tmp_path / "cutout.png", 0.0) is None  # no own colour (a Hunyuan3D mesh)
+    assert eyes.early_reason(glb, tmp_path / "base.png", None, 0.0) is None  # no cutout to read the picture from
+    assert eyes.early_reason(glb, tmp_path / "base.png", tmp_path / "missing.png", 0.0) is None
