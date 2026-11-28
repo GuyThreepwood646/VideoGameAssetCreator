@@ -471,6 +471,19 @@ def tri_mask(mesh: dict[str, np.ndarray], tris: np.ndarray, T: int) -> np.ndarra
     return np.asarray(im) > 0
 
 
+MATTE_ROUGHNESS = 1.0  # hair the paint pass does not run on: matte, so a glossy sheen and a hairline band do not show
+
+
+def matte_hair(mesh: dict[str, np.ndarray], tris: np.ndarray, rough: np.ndarray) -> tuple[np.ndarray, int]:
+    """The roughness map with MATTE_ROUGHNESS on the texels of the given triangles, and nothing else changed.
+    rough (T,T) float 0..1. -> (new roughness (T,T), texels set)."""
+    T = rough.shape[0]
+    m = tri_mask(mesh, np.asarray(tris, dtype=bool), T)
+    out = rough.copy()
+    out[m] = MATTE_ROUGHNESS
+    return out, int(m.sum())
+
+
 def verdict(m: dict[str, Any]) -> str | None:
     """Why the hair cannot be found with confidence (a REASONS key), from find_hair's measures so far, or None. In
     the order a person would ask: is the top of the head one hair colour, can it be told from the skin, is there

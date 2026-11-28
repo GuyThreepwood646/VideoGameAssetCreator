@@ -229,7 +229,9 @@ async def find(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str
                 files["hair_mask"] = await asyncio.to_thread(skipped_mask, glb, Path(base), found["tris"], out_dir / "hair_mask.png")
             except Exception:  # noqa: BLE001
                 pass
-        return {"plan": None, "files": files, "record": {"ran": False, "skipped": found.get("reason") or "error", "find": measures,
+        # the finder's outline decided the hair (its triangles are kept for the matte step, see matte_skipped)
+        hair_tris = found.get("tris") if (found.get("outline") or {}).get("used") else None
+        return {"plan": None, "files": files, "hair_tris": hair_tris, "record": {"ran": False, "skipped": found.get("reason") or "error", "find": measures,
                                                          "find_seconds": round(time.time() - t0, 1)}, "t0": t0}
     mesh = face.load_mesh(glb)
     T = int(imaging.image_size(base)[0])
@@ -277,6 +279,37 @@ def material_plan(sc: Any, mesh: dict[str, np.ndarray], found: dict[str, Any], b
     p = out_dir / "hair_material_points.json"
     p.write_text(json.dumps(hair.hair_points(mesh, sel["tris"])), encoding="utf-8")
     return {"points": p, "record": rec}
+
+
+MATTE_MIN_TEXELS = 50  # fewer hair texels than this and the matte is not worth a new map
+
+
+async def matte_skipped(sc: StageContext, glb: Path, maps: dict[str, Path], tris: np.ndarray) -> dict[str, Any]:
+    """The hair pass did not run, but the finder's outline found the hair (tris). Those texels get a
+    matte roughness (hair.MATTE_ROUGHNESS), so the glossy sheen and the hairline band go whether or not the pass runs.
+    Only the roughness map changes, and only on those texels. Never raises: a failure leaves the maps as they are."""
+    if maps.get("roughness") is None:
+        return {"files": {}, "record": {"applied": False, "reason": "no_roughness_map"}}
+    out_dir = sc.dir / "hair"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def work() -> dict[str, Any]:
+        mesh = face.load_mesh(glb)
+        rough = _read_map(maps["roughness"], grey=True)
+        if mesh is None or rough is None:
+            return {"files": {}, "record": {"applied": False, "reason": "no_mesh_or_map"}}
+        new, n = hair.matte_hair(mesh, np.asarray(tris, dtype=bool), rough)
+        T = rough.shape[0]
+        if n < MATTE_MIN_TEXELS:
+            return {"files": {}, "record": {"applied": False, "reason": "too_few_texels", "texels": n, "texture_size": T}}
+        p = _write(new, out_dir / "roughness_matte.png")
+        return {"files": {"roughness": p}, "record": {"applied": True, "texels": n, "share": round(n / float(T * T), 4),
+                                                      "value": hair.MATTE_ROUGHNESS, "texture_size": T}}
+
+    try:
+        return await asyncio.to_thread(work)
+    except Exception as e:  # noqa: BLE001  (never fails the clean-up step)
+        return {"files": {}, "record": {"applied": False, "reason": "error", "error": str(e)[:300]}}
 
 
 def skipped_mask(glb: Path, base: Path, tris: np.ndarray, dest: Path) -> Path:
@@ -424,7 +457,14 @@ async def run(sc: StageContext, glb: Path, maps: dict[str, Path], rec: dict[str,
     if plan is None:
         record.setdefault("ran", False)
         record["seconds"] = round(float(record.get("find_seconds") or 0.0), 1)
-        return {"files": dict(found.get("files") or {}), "metrics": {"hair_detail": record}, "relayout": False}
+        files = dict(found.get("files") or {})
+        if found.get("hair_tris") is not None:
+            matte = await matte_skipped(sc, glb, maps, found["hair_tris"])
+            record["matte"] = matte["record"]
+            if matte["files"]:
+                files.update(matte["files"])
+                await asyncio.to_thread(imaging.glb_replace_images, glb, roughness=matte["files"]["roughness"])
+        return {"files": files, "metrics": {"hair_detail": record}, "relayout": False}
     out_dir = sc.dir / "hair"
     strength = strength_of(params)
     look = look_of(sc.style, rec)

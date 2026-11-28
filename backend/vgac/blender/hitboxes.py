@@ -6,7 +6,7 @@ Run: blender -b --python hitboxes.py -- <rigged.glb> <out.json> [--category huma
 Regions come from Mixamo bone names, or for other skeletons from the bone chains found by geometry (legs end near
 the ground, the spine runs from the root to the highest leaf, the tail is the rearmost chain, wings reach far to the
 side), the same rules procanim.py uses. Each region gets the vertices whose strongest bone belongs to it. A capsule's
-axis runs along the region's bone chain, through the middle of those vertices; its radius is the 80th-percentile
+axis runs along the region's bone chain, through the middle of those vertices; its radius is the 85th-percentile
 vertex distance from the axis times the "how snug" factor; its ends are the bone chain extended by the radius and
 clipped to the vertices' extent. Wings get an oriented box at least 5 cm thick. When the regions cannot be told apart
 the result is one capsule around the whole body and one sphere at the head end.
@@ -28,7 +28,10 @@ FIT_FACTORS = {"snug": 0.9, "normal": 1.0, "loose": 1.15}
 MODES = ("detailed", "simple", "none")
 STANDING = {"humanoid", "winged"}  # standing capsule for moving; the rest lie along the body
 HITBOX_CATEGORIES = ("humanoid", "quadruped", "multileg", "winged", "serpent")
-PERCENTILE = 80.0
+# Radius percentile: the share of a part's skin that its capsule or sphere reaches. At 80 a fifth of every capsule-fitted
+# part lay outside its shape by construction (the head and chest most, round torso and wide shoulders), which kept
+# good fits near the cover mark; 85 reaches that skin and the outlier skin the percentile exists to drop stays out.
+PERCENTILE = 85.0
 MIN_BOX_THICKNESS = 0.05
 # A surface vertex counts as covered when it lies inside a shape or within this fraction of the shape's radius
 # (half the box thickness for boxes) of it: hits "land where they look" to within a few millimetres to centimetres.
