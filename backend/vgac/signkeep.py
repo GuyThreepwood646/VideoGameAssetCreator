@@ -3,7 +3,7 @@
 The look's one colour per triangle (looktex.colour_per_face) flattens a triangle to its median colour unless it is
 "detailed"; a sign's letters are cut across many small triangles, most holding only a sliver of a stroke, so they were
 flattened and the sign read "CORNER SHOA" although the picture paint had drawn it cleanly. The item finder (the same one the
-glow map uses, item_suggest.py) finds the sign boards on renders of the painted model (sign_worker.py); the triangles under them go
+glow map uses, item_suggest.py) finds the sign boards on renders of the painted model (finder_worker.py, sign mode); the triangles under them go
 into colour_per_face's `keep` list and stay as painted. Without the finder, without a sign, or with a mask that covers too
 much of the painted texture, nothing is kept and the clean-up runs as it always did.
 
@@ -46,10 +46,10 @@ def finder_masks(settings: Any, images: list[np.ndarray], work: Path,
         Image.fromarray((np.clip(im, 0.0, 1.0) * 255).astype(np.uint8), "RGB").save(work / f"view_{i}.png")
     env = {**os.environ, "OMP_NUM_THREADS": "2", "MKL_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "2"}
     t0 = time.time()
-    r = subprocess.run([str(item_suggest.finder_python(settings)), str(Path(__file__).with_name("sign_worker.py")), str(work),
+    r = subprocess.run([str(item_suggest.finder_python(settings)), str(Path(__file__).with_name("finder_worker.py")), "sign", str(work),
                         str(len(images)), str(item_suggest.finder_models(settings)),
                         str(len(images) if panels_from is None else panels_from)], capture_output=True, text=True, timeout=1800, env=env)
-    if r.returncode != 0 or "SIGN_OK" not in r.stdout:
+    if r.returncode != 0 or "FINDER_OK" not in r.stdout:
         return None, {"finder": "failed: " + (r.stderr or r.stdout)[-160:].strip()}
     masks = [np.load(work / f"view_{i}_sign.npy") for i in range(len(images))]
     rec = {"finder": "ok", "finder_seconds": round(time.time() - t0, 1), "found": json.loads((work / "sign_report.json").read_text())}

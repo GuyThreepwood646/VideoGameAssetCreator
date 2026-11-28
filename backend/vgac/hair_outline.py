@@ -41,7 +41,7 @@ def find(settings: Any, pictures: dict[str, Path], work: Path) -> tuple[dict[str
     env = {**os.environ, "OMP_NUM_THREADS": "2", "MKL_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "2"}  # two cores, not all
     t0 = time.time()
     try:
-        r = subprocess.run([str(item_suggest.finder_python(settings)), str(item_suggest.WORKER), str(work), PHRASE,
+        r = subprocess.run([str(item_suggest.finder_python(settings)), str(item_suggest.WORKER), "hair", str(work), PHRASE,
                             str(item_suggest.finder_models(settings)), ",".join(sizes)],
                            capture_output=True, text=True, timeout=1800, env=env)
     except (OSError, subprocess.SubprocessError) as e:

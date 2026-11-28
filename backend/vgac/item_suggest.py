@@ -157,7 +157,7 @@ def compute(settings: Any, rig_glb: Path, work: Path, item: dict[str, str], ctx:
         if ctx is not None:
             ctx.check_cancelled()
         phrase = PHRASE_WORDS.format(item=item["label"])
-        cmd = [str(finder_python(settings)), str(WORKER), str(work), phrase, str(finder_models(settings))]
+        cmd = [str(finder_python(settings)), str(WORKER), "hair", str(work), phrase, str(finder_models(settings))]
         run_process(cmd, log_path=work / "finder.log", timeout=1800, on_start=on_start)
         return _vote(work, item, phrase)
     finally:

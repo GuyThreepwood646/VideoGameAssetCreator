@@ -97,7 +97,7 @@ def test_share_guard_holds_the_colour_rule_but_not_the_finders_named_parts(monke
 def test_window_glows_only_where_lit():
     from PIL import Image
 
-    from vgac import glow_worker
+    from vgac import finder_worker
 
     rgb = np.full((40, 40, 3), 0.7, np.float32)          # a pale wall
     rgb[10:20, 10:20] = 0.2                              # dark glass
@@ -105,7 +105,7 @@ def test_window_glows_only_where_lit():
     hsv = np.asarray(Image.fromarray((rgb * 255).astype(np.uint8), "RGB").convert("HSV"))
     mask = np.zeros((40, 40), bool)
     mask[8:37, 8:22] = True
-    lit = glow_worker.lit_pixels(rgb, hsv, (8, 8, 22, 37), mask)
+    lit = finder_worker.lit_pixels(rgb, hsv, (8, 8, 22, 37), mask)
     assert not lit[10:20, 10:20].any() and lit[25:35, 10:20].all()
 
     # a pale cream pane beside a bright wall is lit (bright and warm); a shaded brown patch and a grey-green pane are not
@@ -116,14 +116,14 @@ def test_window_glows_only_where_lit():
     hsv = np.asarray(Image.fromarray((rgb * 255).astype(np.uint8), "RGB").convert("HSV"))
     mask[:] = False
     mask[8:37, 8:37] = True
-    lit = glow_worker.lit_pixels(rgb, hsv, (8, 8, 37, 37), mask)
+    lit = finder_worker.lit_pixels(rgb, hsv, (8, 8, 37, 37), mask)
     assert lit[10:20, 10:20].all() and not lit[25:35, 10:20].any() and not lit[10:20, 25:35].any()
 
 
 def test_window_is_decided_whole_by_its_lit_share():
     from PIL import Image
 
-    from vgac import glow_worker
+    from vgac import finder_worker
 
     def share(lit_cols):
         rgb = np.full((40, 40, 3), 0.5, np.float32)             # a mid wall
@@ -132,15 +132,15 @@ def test_window_is_decided_whole_by_its_lit_share():
         hsv = np.asarray(Image.fromarray((rgb * 255).astype(np.uint8), "RGB").convert("HSV"))
         mask = np.zeros((40, 40), bool)
         mask[10:30, 10:30] = True
-        return glow_worker.window_lit_share(rgb, hsv, (10, 10, 30, 30), mask)
+        return finder_worker.window_lit_share(rgb, hsv, (10, 10, 30, 30), mask)
 
-    assert share(12) >= glow_worker.WINDOW_LIT_SHARE > share(4)
+    assert share(12) >= finder_worker.WINDOW_LIT_SHARE > share(4)
 
 
 def test_missed_windows_are_caught_only_when_window_shaped_and_like_the_named_ones():
     from PIL import Image
 
-    from vgac import glow_worker
+    from vgac import finder_worker
 
     rgb = np.full((120, 160, 3), 0.45, np.float32)            # a mid wall
     warm = (1.0, 0.7, 0.2)
@@ -156,6 +156,6 @@ def test_missed_windows_are_caught_only_when_window_shaped_and_like_the_named_on
     rgb[60:64, 40:140] = warm                                  # a long thin warm bar: not a window
     rgb[90:110, 100:112] = (1.0, 0.2, 0.2)                     # a bright red patch: not the windows' colour
     hsv = np.asarray(Image.fromarray((rgb * 255).astype(np.uint8), "RGB").convert("HSV"))
-    found = glow_worker.missed_windows(rgb, hsv, named, lit)
+    found = finder_worker.missed_windows(rgb, hsv, named, lit)
     assert len(found) == 1 and found[0][1][60:80, 10:22].all() and not found[0][1][60:64, 40:140].any()
-    assert glow_worker.missed_windows(rgb, hsv, named, lit[:4]) == []   # too few named windows to learn from
+    assert finder_worker.missed_windows(rgb, hsv, named, lit[:4]) == []   # too few named windows to learn from
